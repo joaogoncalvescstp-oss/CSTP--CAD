@@ -1,0 +1,392 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CSTP CAD Viewer</title>
+<style>
+:root{--bg:#0b0f1a;--panel:#0f1424;--panel2:#141b30;--rule:#232c47;--gold:#f1b434;--mut:#8a99b8;--text:#e7ecf7;--accent:#7fd4ff}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:13px/1.4 ui-monospace,monospace}
+.app{display:flex;flex-direction:column;height:100vh}
+.bar{display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--panel);border-bottom:1px solid var(--rule);overflow-x:auto}
+.bar>*{flex-shrink:0}
+.brand{font-weight:700;letter-spacing:.04em;margin-right:6px;white-space:nowrap}
+.brand .t{color:var(--gold)}
+.grow{flex:1}
+.btn{background:var(--panel2);border:1px solid var(--rule);color:var(--text);border-radius:6px;padding:7px 11px;font:600 12px ui-monospace,monospace;cursor:pointer}
+.btn:hover:not(:disabled){border-color:var(--gold)}
+.btn:disabled{opacity:.35;cursor:default}
+.btn.gold{background:var(--gold);color:#231a04;border-color:var(--gold)}
+.btn.on{background:var(--gold);color:#231a04;border-color:var(--gold)}
+.btn.file{position:relative;overflow:hidden}
+.btn.file input{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer}
+.pill{background:var(--panel2);border:1px solid var(--rule);border-radius:20px;padding:4px 10px;font-size:11px;color:var(--mut);white-space:nowrap}
+.main{position:relative;flex:1;overflow:hidden}
+canvas{display:block;width:100%;height:100%;background:var(--bg);cursor:crosshair;touch-action:none}
+.hud{position:absolute;left:12px;bottom:10px;right:12px;font:12px ui-monospace,monospace;color:var(--mut);background:rgba(7,11,22,.7);padding:5px 9px;border-radius:6px;pointer-events:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.legend{position:absolute;right:12px;top:12px;background:rgba(7,11,22,.85);border:1px solid var(--rule);border-radius:8px;padding:8px 10px;font-size:11px;color:var(--mut);display:flex;flex-direction:column;gap:4px}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;vertical-align:-1px}
+.panel{position:absolute;top:12px;left:12px;width:300px;max-width:calc(100% - 24px);max-height:calc(100% - 24px);overflow:auto;background:rgba(7,11,22,.94);border:1px solid var(--rule);border-radius:10px;padding:10px;display:none}
+.panel.show{display:block}
+.panel h4{margin:0 0 8px;display:flex;align-items:center;justify-content:space-between;font-size:13px}
+.panel h4 button{background:none;border:none;color:var(--mut);cursor:pointer;font-size:15px;line-height:1}
+.panel h4 button:hover{color:var(--gold)}
+.layerRow{display:flex;align-items:center;gap:7px;background:var(--panel2);border:1px solid var(--rule);border-radius:6px;padding:6px 8px;margin-bottom:5px}
+.layerRow i.sw{width:11px;height:11px;border-radius:3px;flex-shrink:0}
+.layerRow .name{flex:1;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.layerRow .cnt{font-size:10px;color:var(--mut);flex-shrink:0}
+.layerRow label{display:flex;align-items:center;gap:2px;cursor:pointer;font-size:12px;flex-shrink:0}
+.layerRow input{margin:0}
+.note{font-size:11px;color:var(--mut);line-height:1.5;margin:0}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="bar">
+    <div class="brand"><span>CSTP</span> <span class="t">CAD Viewer</span></div>
+    <span class="pill" id="jobpill">no drawing loaded</span>
+    <div class="grow"></div>
+    <label class="btn file" title="Import a DXF drawing — LINE, LWPOLYLINE, POLYLINE, POINT, CIRCLE, 3DFACE entities each become part of their own DXF layer, shown/hidden/locked from the Layers panel.">↥ Import DXF<input type="file" id="dxfInput" accept=".dxf"></label>
+    <label class="btn file" title="Import a LandXML surface (TIN) and/or CgPoints. The surface becomes a toggleable layer of its own; CgPoints (COGO/survey points) are plotted as points. Use ⛰ Elevation afterward to click the surface and read an interpolated Z there.">↥ Import LandXML (TIN)<input type="file" id="landxmlInput" accept=".xml,.landxml"></label>
+    <label class="btn file" title="DWG is Autodesk's proprietary binary format — this viewer has no bundled DWG parser and can't read it directly. Selecting a .dwg here just explains that and tells you how to get the same data in another way.">↥ Import DWG<input type="file" id="dwgInput" accept=".dwg"></label>
+    <button class="btn" id="fitBtn" disabled title="Frame everything currently loaded (F)">⊡ Fit</button>
+    <button class="btn" id="elevBtn" disabled title="Click a visible, unlocked TIN surface to read its interpolated elevation at that point (Esc cancels)">⛰ Elevation</button>
+    <button class="btn gold" id="layersBtn" title="Show/hide and lock layers">📑 Layers</button>
+  </div>
+  <div class="main">
+    <canvas id="cv"></canvas>
+    <div class="legend" id="legend">
+      <div><i style="background:var(--accent)"></i>DXF line/poly/circle</div>
+      <div><i style="background:#ffb86b"></i>TIN surface (wireframe)</div>
+      <div><i style="background:#8fe3a0"></i>LandXML CgPoint</div>
+      <div><i style="background:var(--gold)"></i>elevation query</div>
+    </div>
+    <div class="panel" id="layerPanel">
+      <h4><span>Layers</span><button id="layerCloseBtn" title="Close">✕</button></h4>
+      <div id="layerList"><p class="note">No layers yet — import a DXF or LandXML file.</p></div>
+    </div>
+    <div class="hud" id="hud">Import a DXF or LandXML (TIN) file to begin. Drag to pan, wheel to zoom.</div>
+  </div>
+</div>
+<script>
+"use strict";
+const $=id=>document.getElementById(id);
+const cv=$('cv'),ctx=cv.getContext('2d');
+
+/* ---------- state ----------
+   World coords follow the usual survey/CAD convention: E=Easting (screen X),
+   N=Northing (screen Y, but screen Y grows downward so it's negated), Z=Elevation. */
+let view={s:1,x:0,y:0};                                   // world -> screen: [E*s+x, -N*s+y]
+let LAYERS={};                                             // {name:{visible,locked,color}} — one entry per DXF layer / LandXML surface
+let ENTITIES=[];                                           // imported DXF entities: {type:'line'|'point'|'circle'|'poly',layer,pts:[{E,N,Z}],r,closed}
+let SURFACES=[];                                           // imported LandXML TIN surfaces: {name,layer,tris:[[{E,N,Z}x3],...]}
+let POINTS=[];                                             // imported LandXML CgPoints: {id,E,N,Z,code}
+let elevPick=false;                                        // ⛰ Elevation tool armed, waiting for a canvas click
+let spot=null;                                             // {E,N,z,name} — last elevation-query result, drawn until cleared
+let drag=null;                                             // {sx,sy,x0,y0} while panning
+
+const PALETTE=['#7fd4ff','#ff9f6b','#c792ff','#8fe3a0','#ffd24a','#ff7ab3','#6ee0c8','#a8b6e0','#ff8f5d','#5dd0ff'];
+function ensureLayer(name){
+  if(!LAYERS[name])LAYERS[name]={visible:true,locked:false,color:PALETTE[Object.keys(LAYERS).length%PALETTE.length]};
+  return LAYERS[name];
+}
+function hud(t){$('hud').textContent=t;}
+function updateJobPill(){
+  const n=Object.keys(LAYERS).length;
+  const tris=SURFACES.reduce((s,x)=>s+x.tris.length,0);
+  $('jobpill').textContent=n?`${n} layer${n===1?'':'s'} · ${ENTITIES.length} entit${ENTITIES.length===1?'y':'ies'} · ${tris} tri · ${POINTS.length} pt${POINTS.length===1?'':'s'}`:'no drawing loaded';
+}
+
+/* ---------- view transform / drawing ---------- */
+const W2S=(E,N)=>[E*view.s+view.x,-N*view.s+view.y];
+const S2W=(sx,sy)=>[(sx-view.x)/view.s,-(sy-view.y)/view.s];
+function niceStep(target){const p=Math.pow(10,Math.floor(Math.log10(target||1)));
+  const n=target/p;const m=n<1.5?1:n<3?2:n<7?5:10;return m*p;}
+function resize(){const r=cv.parentElement.getBoundingClientRect();
+  cv.width=r.width*devicePixelRatio;cv.height=r.height*devicePixelRatio;
+  ctx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0);draw();}
+
+function bounds(){
+  let b={minN:1e15,maxN:-1e15,minE:1e15,maxE:-1e15};
+  const add=p=>{if(!isFinite(p.E)||!isFinite(p.N))return;
+    b.minE=Math.min(b.minE,p.E);b.maxE=Math.max(b.maxE,p.E);
+    b.minN=Math.min(b.minN,p.N);b.maxN=Math.max(b.maxN,p.N);};
+  ENTITIES.forEach(e=>e.pts.forEach(add));
+  SURFACES.forEach(s=>s.tris.forEach(tri=>tri.forEach(add)));
+  POINTS.forEach(add);
+  return b;
+}
+function fit(){
+  const b=bounds();if(b.minE>b.maxE)return;
+  const w=cv.width/devicePixelRatio,h=cv.height/devicePixelRatio,pad=50;
+  const sx=(w-2*pad)/((b.maxE-b.minE)||1),sy=(h-2*pad)/((b.maxN-b.minN)||1);
+  view.s=Math.min(sx,sy);view.x=pad-b.minE*view.s;view.y=h-pad+b.minN*view.s;
+  draw();
+}
+
+function draw(){
+  const w=cv.width/devicePixelRatio,h=cv.height/devicePixelRatio;
+  ctx.clearRect(0,0,w,h);
+  // grid
+  ctx.strokeStyle='#16203a';ctx.lineWidth=1;
+  const step=niceStep(60/view.s);
+  const tl=S2W(0,0),br=S2W(w,h);
+  ctx.beginPath();
+  for(let E=Math.ceil(tl[0]/step)*step;E<br[0];E+=step){const[x]=W2S(E,0);ctx.moveTo(x,0);ctx.lineTo(x,h);}
+  for(let N=Math.ceil(br[1]/step)*step;N<tl[1];N+=step){const[,y]=W2S(0,N);ctx.moveTo(0,y);ctx.lineTo(w,y);}
+  ctx.stroke();
+  // TIN surfaces — drawn as a wireframe of every triangle edge, per-layer visible/locked
+  SURFACES.forEach(s=>{
+    const ly=LAYERS[s.layer];if(ly&&!ly.visible)return;
+    ctx.strokeStyle=ly?ly.color:'#ffb86b';ctx.lineWidth=0.7;ctx.globalAlpha=ly&&ly.locked?0.35:0.6;
+    s.tris.forEach(tri=>{ctx.beginPath();
+      tri.forEach((p,i)=>{const[x,y]=W2S(p.E,p.N);i?ctx.lineTo(x,y):ctx.moveTo(x,y);});
+      ctx.closePath();ctx.stroke();});
+  });
+  ctx.globalAlpha=1;
+  // DXF entities
+  ENTITIES.forEach(e=>{
+    const ly=LAYERS[e.layer];if(ly&&!ly.visible)return;
+    ctx.strokeStyle=ly?ly.color:'#7fd4ff';ctx.fillStyle=ctx.strokeStyle;
+    ctx.globalAlpha=ly&&ly.locked?0.5:1;ctx.lineWidth=1.2;
+    if(e.type==='point'){const[x,y]=W2S(e.pts[0].E,e.pts[0].N);
+      ctx.beginPath();ctx.moveTo(x-4,y);ctx.lineTo(x+4,y);ctx.moveTo(x,y-4);ctx.lineTo(x,y+4);ctx.stroke();
+    }else if(e.type==='circle'){const c=e.pts[0];const[cx,cy]=W2S(c.E,c.N);
+      const[ex]=W2S(c.E+e.r,c.N);const rr=Math.abs(ex-cx)||1;
+      ctx.beginPath();ctx.arc(cx,cy,rr,0,Math.PI*2);ctx.stroke();
+    }else{ctx.beginPath();e.pts.forEach((p,i)=>{const[x,y]=W2S(p.E,p.N);i?ctx.lineTo(x,y):ctx.moveTo(x,y);});
+      if(e.closed&&e.pts.length>2)ctx.closePath();ctx.stroke();}
+  });
+  ctx.globalAlpha=1;
+  // LandXML CgPoints
+  POINTS.forEach(p=>{const[x,y]=W2S(p.E,p.N);
+    ctx.fillStyle='#8fe3a0';ctx.beginPath();ctx.arc(x,y,3,0,Math.PI*2);ctx.fill();
+    if(view.s>2){ctx.fillStyle='#cfe0ff';ctx.font='600 10px ui-monospace,monospace';ctx.fillText(p.id,x+6,y-5);}});
+  // last elevation-query marker
+  if(spot){const[x,y]=W2S(spot.E,spot.N);
+    ctx.strokeStyle='#ffd24a';ctx.lineWidth=1.6;ctx.beginPath();
+    ctx.moveTo(x-8,y);ctx.lineTo(x+8,y);ctx.moveTo(x,y-8);ctx.lineTo(x,y+8);ctx.stroke();
+    ctx.fillStyle='#ffd24a';ctx.font='700 12px ui-monospace,monospace';
+    ctx.fillText(`${spot.name}  Z=${spot.z.toFixed(3)}`,x+11,y-11);}
+}
+
+/* ---------- spot elevation query (barycentric interpolation over the TIN) ---------- */
+function pointInTri(E,N,a,b,c){
+  const d=(b.N-c.N)*(a.E-c.E)+(c.E-b.E)*(a.N-c.N);
+  if(!d)return null;                                        // degenerate (collinear) triangle
+  const l1=((b.N-c.N)*(E-c.E)+(c.E-b.E)*(N-c.N))/d;
+  const l2=((c.N-a.N)*(E-c.E)+(a.E-c.E)*(N-c.N))/d;
+  const l3=1-l1-l2;
+  if(l1<-1e-9||l2<-1e-9||l3<-1e-9)return null;              // outside this triangle
+  return l1*a.Z+l2*b.Z+l3*c.Z;
+}
+function tinElevationAt(E,N){
+  for(const s of SURFACES){
+    const ly=LAYERS[s.layer];
+    if(ly&&(!ly.visible||ly.locked))continue;               // hidden or locked surfaces can't be queried — matches a locked CAD layer's usual meaning
+    for(const tri of s.tris){
+      const z=pointInTri(E,N,tri[0],tri[1],tri[2]);
+      if(z!=null)return{name:s.name,z};
+    }
+  }
+  return null;
+}
+
+/* ---------- DXF import ---------- */
+function importDXF(text){
+  const hadNothing=!ENTITIES.length&&!SURFACES.length&&!POINTS.length;
+  const raw=text.split(/\r?\n/).map(l=>l.trim());
+  const pairs=[];
+  for(let i=0;i+1<raw.length;i+=2)pairs.push([parseInt(raw[i],10),raw[i+1]]);
+  let start=-1;
+  for(let i=0;i<pairs.length;i++){if(pairs[i][0]===2&&pairs[i][1]==='ENTITIES'){start=i+1;break;}}
+  if(start<0){hud('no ENTITIES section found in this DXF file');return;}
+  let end=pairs.length;
+  for(let i=start;i<pairs.length;i++){if(pairs[i][0]===0&&pairs[i][1]==='ENDSEC'){end=i;break;}}
+  // split the ENTITIES section into per-entity blocks at every (0,<TYPE>) group code
+  const blocks=[];let cur=null;
+  pairs.slice(start,end).forEach(([code,val])=>{
+    if(code===0){if(cur)blocks.push(cur);cur={type:val,items:[]};}
+    else if(cur)cur.items.push([code,val]);
+  });
+  if(cur)blocks.push(cur);
+  const get=(items,code)=>{const e=items.find(p=>p[0]===code);return e?e[1]:undefined;};
+  let nEnt=0,k=0;
+  while(k<blocks.length){
+    const b=blocks[k],layer=get(b.items,8)||'0';
+    if(b.type==='LINE'){
+      ensureLayer(layer);
+      ENTITIES.push({type:'line',layer,pts:[
+        {E:+get(b.items,10),N:+get(b.items,20),Z:+(get(b.items,30)||0)},
+        {E:+get(b.items,11),N:+get(b.items,21),Z:+(get(b.items,31)||0)}]});
+      nEnt++;k++;continue;
+    }
+    if(b.type==='POINT'){
+      ensureLayer(layer);
+      ENTITIES.push({type:'point',layer,pts:[{E:+get(b.items,10),N:+get(b.items,20),Z:+(get(b.items,30)||0)}]});
+      nEnt++;k++;continue;
+    }
+    if(b.type==='CIRCLE'){
+      ensureLayer(layer);
+      ENTITIES.push({type:'circle',layer,pts:[{E:+get(b.items,10),N:+get(b.items,20),Z:+(get(b.items,30)||0)}],r:+get(b.items,40)});
+      nEnt++;k++;continue;
+    }
+    if(b.type==='3DFACE'){
+      ensureLayer(layer);
+      const c1={E:+get(b.items,10),N:+get(b.items,20),Z:+(get(b.items,30)||0)};
+      const c2={E:+get(b.items,11),N:+get(b.items,21),Z:+(get(b.items,31)||0)};
+      const c3={E:+get(b.items,12),N:+get(b.items,22),Z:+(get(b.items,32)||0)};
+      const c4E=get(b.items,13),c4N=get(b.items,23),c4Z=get(b.items,33);
+      const pts=[c1,c2,c3];
+      if(c4E!==undefined&&(+c4E!==c3.E||+c4N!==c3.N))pts.push({E:+c4E,N:+c4N,Z:+(c4Z||0)});
+      ENTITIES.push({type:'poly',layer,pts,closed:true});
+      nEnt++;k++;continue;
+    }
+    if(b.type==='LWPOLYLINE'){
+      ensureLayer(layer);
+      const z=+(get(b.items,38)||0);const pts=[];let vert=null;
+      b.items.forEach(([code,val])=>{
+        if(code===10){vert={E:+val,N:0,Z:z};pts.push(vert);}
+        else if(code===20&&vert)vert.N=+val;
+      });
+      const flags=parseInt(get(b.items,70)||'0',10);
+      if(pts.length>=2){ENTITIES.push({type:'poly',layer,pts,closed:!!(flags&1)});nEnt++;}
+      k++;continue;
+    }
+    if(b.type==='POLYLINE'){
+      ensureLayer(layer);
+      const flags=parseInt(get(b.items,70)||'0',10);
+      const pts=[];let k2=k+1;
+      while(k2<blocks.length&&blocks[k2].type==='VERTEX'){
+        const vb=blocks[k2];pts.push({E:+get(vb.items,10),N:+get(vb.items,20),Z:+(get(vb.items,30)||0)});k2++;
+      }
+      if(k2<blocks.length&&blocks[k2].type==='SEQEND')k2++;
+      if(pts.length>=2){ENTITIES.push({type:'poly',layer,pts,closed:!!(flags&1)});nEnt++;}
+      k=k2;continue;
+    }
+    k++;   // TEXT/MTEXT/DIMENSION/INSERT/etc. — not drawn (out of scope for this pass), never counted as an error
+  }
+  if(!nEnt){hud('no recognized entities found (LINE / LWPOLYLINE / POLYLINE / POINT / CIRCLE / 3DFACE)');return;}
+  renderLayerPanel();updateJobPill();
+  $('fitBtn').disabled=false;$('elevBtn').disabled=SURFACES.length===0;
+  if(hadNothing)fit();else draw();
+  hud(`imported ${nEnt} DXF entit${nEnt===1?'y':'ies'} across ${Object.keys(LAYERS).length} layer(s)`);
+}
+
+/* ---------- LandXML (TIN surface + CgPoints) import ---------- */
+function importLandXML(text){
+  let doc;
+  try{doc=new DOMParser().parseFromString(text,'application/xml');}catch(e){doc=null;}
+  if(!doc||doc.querySelector('parsererror')){hud('could not parse this file as XML/LandXML');return;}
+  const hadNothing=!ENTITIES.length&&!SURFACES.length&&!POINTS.length;
+  let nSurf=0,nTri=0,nPts=0;
+  doc.querySelectorAll('Surface').forEach(surfEl=>{
+    const name=surfEl.getAttribute('name')||`Surface${nSurf+1}`;
+    const ptsById={};
+    surfEl.querySelectorAll('Pnts > P, P').forEach(pEl=>{
+      const id=pEl.getAttribute('id');
+      const nums=(pEl.textContent||'').trim().split(/\s+/).map(Number);
+      if(id==null||nums.length<3||nums.some(n=>!isFinite(n)))return;
+      ptsById[id]={N:nums[0],E:nums[1],Z:nums[2]};          // LandXML point text order is Northing Easting Elevation
+    });
+    const tris=[];
+    surfEl.querySelectorAll('Faces > F, F').forEach(fEl=>{
+      const ids=(fEl.textContent||'').trim().split(/\s+/).map(s=>s.replace(/^-/,''));   // a leading '-' marks a suppressed breakline edge, not a signed id
+      if(ids.length<3)return;
+      const a=ptsById[ids[0]],b=ptsById[ids[1]],c=ptsById[ids[2]];
+      if(!a||!b||!c)return;
+      tris.push([a,b,c]);nTri++;
+    });
+    if(tris.length){const layer=`TIN-${name}`;ensureLayer(layer);SURFACES.push({name,layer,tris});nSurf++;}
+  });
+  doc.querySelectorAll('CgPoints > CgPoint, CgPoint').forEach(cEl=>{
+    const nums=(cEl.textContent||'').trim().split(/\s+/).map(Number);
+    if(nums.length<3||nums.some(n=>!isFinite(n)))return;
+    const id=cEl.getAttribute('name')||cEl.getAttribute('pntSurv')||String(POINTS.length+1);
+    const code=cEl.getAttribute('code')||cEl.getAttribute('desc')||'';
+    POINTS.push({id,N:nums[0],E:nums[1],Z:nums[2],code});nPts++;
+  });
+  if(!nSurf&&!nPts){hud('no <Surface> (TIN) or <CgPoint> data found in this file');return;}
+  renderLayerPanel();updateJobPill();
+  $('fitBtn').disabled=false;$('elevBtn').disabled=SURFACES.length===0;
+  if(hadNothing)fit();else draw();
+  hud(`imported ${nSurf} surface(s) (${nTri} triangles), ${nPts} point(s) from LandXML`);
+}
+
+/* ---------- layer manager ---------- */
+function renderLayerPanel(){
+  const names=Object.keys(LAYERS).sort();
+  const box=$('layerList');
+  if(!names.length){box.innerHTML='<p class="note">No layers yet — import a DXF or LandXML file.</p>';return;}
+  box.innerHTML=names.map(name=>{
+    const ly=LAYERS[name];
+    const cnt=ENTITIES.filter(e=>e.layer===name).length+SURFACES.filter(s=>s.layer===name).length;
+    return `<div class="layerRow">
+      <i class="sw" style="background:${ly.color}"></i>
+      <span class="name" title="${name}">${name}</span>
+      <span class="cnt">${cnt}</span>
+      <label title="Show/hide this layer"><input type="checkbox" class="lv" data-n="${name}" ${ly.visible?'checked':''}>👁</label>
+      <label title="Lock this layer — dims it and excludes it from elevation queries, without hiding it"><input type="checkbox" class="ll" data-n="${name}" ${ly.locked?'checked':''}>🔒</label>
+    </div>`;
+  }).join('');
+  box.querySelectorAll('.lv').forEach(c=>c.onchange=()=>{LAYERS[c.dataset.n].visible=c.checked;draw();});
+  box.querySelectorAll('.ll').forEach(c=>c.onchange=()=>{LAYERS[c.dataset.n].locked=c.checked;draw();});
+}
+$('layersBtn').onclick=()=>{renderLayerPanel();$('layerPanel').classList.toggle('show');};
+$('layerCloseBtn').onclick=()=>$('layerPanel').classList.remove('show');
+
+/* ---------- toolbar wiring ---------- */
+$('dxfInput').onchange=e=>{const f=e.target.files[0];if(!f)return;const rd=new FileReader();
+  rd.onload=()=>{importDXF(rd.result);e.target.value='';};rd.readAsText(f);};
+$('landxmlInput').onchange=e=>{const f=e.target.files[0];if(!f)return;const rd=new FileReader();
+  rd.onload=()=>{importLandXML(rd.result);e.target.value='';};rd.readAsText(f);};
+$('dwgInput').onchange=e=>{const f=e.target.files[0];if(!f)return;e.target.value='';
+  // DWG is a proprietary binary format — reading it needs a real parser (LibreDWG or Autodesk's own object
+  // enablers for Civil3D-specific objects like surfaces/COGO points), which this single-file viewer doesn't
+  // bundle. Rather than pretend to support it, tell the user how to get the same data in a format that works.
+  hud(`"${f.name}" is a DWG file — this viewer can't parse binary DWG directly. In Civil3D/AutoCAD: SAVEAS → DXF for linework, or export the surface as LandXML, then use ↥ Import DXF / ↥ Import LandXML instead.`);
+};
+$('fitBtn').onclick=fit;
+$('elevBtn').onclick=()=>{
+  if($('elevBtn').disabled)return;
+  elevPick=!elevPick;$('elevBtn').classList.toggle('on',elevPick);
+  hud(elevPick?'click a visible, unlocked TIN surface to read its elevation there · Esc to cancel':'elevation query cancelled');
+};
+
+/* ---------- canvas interaction: pan, zoom, elevation pick ---------- */
+cv.addEventListener('pointerdown',e=>{
+  const r=cv.getBoundingClientRect(),sx=e.clientX-r.left,sy=e.clientY-r.top;
+  if(elevPick){
+    elevPick=false;$('elevBtn').classList.remove('on');
+    const[E,N]=S2W(sx,sy);const hit=tinElevationAt(E,N);
+    if(hit){spot={E,N,z:hit.z,name:hit.name};hud(`${hit.name}: elevation ${hit.z.toFixed(3)}`);}
+    else{spot=null;hud('no visible, unlocked TIN surface under that click');}
+    draw();return;
+  }
+  drag={sx,sy,x0:view.x,y0:view.y};
+  cv.setPointerCapture(e.pointerId);
+});
+cv.addEventListener('pointermove',e=>{
+  if(!drag)return;
+  const r=cv.getBoundingClientRect(),sx=e.clientX-r.left,sy=e.clientY-r.top;
+  view.x=drag.x0+(sx-drag.sx);view.y=drag.y0+(sy-drag.sy);draw();
+});
+window.addEventListener('pointerup',()=>{drag=null;});
+cv.addEventListener('wheel',e=>{
+  e.preventDefault();
+  const r=cv.getBoundingClientRect(),sx=e.clientX-r.left,sy=e.clientY-r.top;
+  const f=e.deltaY<0?1.12:1/1.12;
+  const[wx,wy]=S2W(sx,sy);
+  view.s*=f;view.x=sx-wx*view.s;view.y=sy+wy*view.s;
+  draw();
+},{passive:false});
+window.addEventListener('keydown',e=>{
+  if(e.key==='Escape'&&elevPick){elevPick=false;$('elevBtn').classList.remove('on');hud('elevation query cancelled');draw();}
+  else if(e.key.toLowerCase()==='f'&&!$('fitBtn').disabled)fit();
+});
+window.addEventListener('resize',resize);
+resize();
+</script>
+</body>
+</html>
