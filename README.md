@@ -56,6 +56,57 @@ dependencies, and nothing to install.
   work it.
 - Pan by dragging, zoom with the mouse wheel (zooms toward the cursor).
 
+## 3D orbit view, aerial MAP background, and CAD object snap
+
+Three subsystems ported over from this project's sibling app, FBK-Checker,
+adapted to this viewer's DXF/TIN/pipe-network data model:
+
+- **⟲ 3D** toggles an oblique orbit view of everything currently loaded (DXF
+  entities, TIN wireframes, CgPoints, pipe networks — a structure's Z comes
+  from its rim elevation, the only Z this data carries for it). Drag to
+  rotate — the pivot re-centers on whatever's under the cursor at the start
+  of each drag, so orbiting a large, elongated corridor project doesn't sweep
+  a far corner across the screen for a tiny mouse move. Shift-drag or
+  middle-mouse-drag pans, the wheel zooms about the cursor. ⊡ Fit and 🔍
+  zoom-to-layer both work in 3D too. ⛰ Elevation and 🧲 Snap are 2D-only —
+  there's no world-space inverse for this oblique projection to resolve a
+  screen click back through, the same limitation the source app's own
+  object-snap-driven tools have in its 3D view.
+- **🗺 Map** overlays aerial imagery, tiled from Ramsey County MN's own
+  ArcGIS ImageServer (falls back to Esri World Imagery, then USGS NAIP) over
+  a calibrated Lambert-Conformal-Conic ↔ lat/lon ↔ Web Mercator transform.
+  Like its source in FBK-Checker, **this is only geometrically correct for a
+  job whose E/N are already Ramsey County's own survey coordinate system** —
+  it's ported as-is, not generalized to an arbitrary CRS, since resolving
+  "which projection is this file even in" for an arbitrary DXF/LandXML is a
+  materially bigger, separate problem. 2D view only.
+- **🧲 Snap** is a CAD object-snap readout: hover the canvas and it reports
+  (in the hud, and with an on-screen marker) whichever of an endpoint, a
+  genuine crossing of two real lines, a midpoint, a circle's center/quadrant,
+  or the nearest point on a line is closest to the cursor, in that priority
+  order — each toggleable from the floating checkbox panel. It reads
+  E/N/Z off DXF LINE/LWPOLYLINE/POLYLINE vertices and CIRCLE
+  centers/quadrants, LandXML CgPoints, and pipe network structures/pipes.
+  Unlike FBK-Checker (which uses this to place a new point), this viewer has
+  no point-insertion tool — Snap is a precision read-only aid for eyeballing
+  exact coordinates off the drawing. 2D only, same reasoning as 3D above.
+
+Verified end-to-end in a real headless browser: importing a synthetic DXF
+with two crossing lines and a circle, then hovering the crossing correctly
+resolves to `type:'intersection'` at the true crossing point and hovering
+the circle's own center correctly resolves to `type:'center'` (not a plain
+endpoint — DXF circle entities are excluded from the generic endpoint scan
+specifically so their center isn't shadowed by itself); entering 3D and
+dragging genuinely rotates (`orbit.az`/`orbit.el` change), middle-dragging
+genuinely pans (`orbit.ox`/`orbit.oy` change), and wheel-zooming genuinely
+zooms (`orbit.s` increases) — all confirmed against the live app state, not
+a reimplementation; toggling Map correctly arms `showMap` and fires the
+tiled fetch (the fetch itself can't be verified end-to-end from this
+sandbox, whose own network policy blocks `maps.co.ramsey.mn.us` — the exact
+same standing limitation FBK-Checker's own MAP section documents). The
+pre-existing DXF/LandXML/pipe-network/elevation-query/layer-manager
+regression suite was re-run afterward and passes unchanged.
+
 ## DWG — why it isn't supported directly
 
 DWG is Autodesk's proprietary binary format. Reading it in a browser with no

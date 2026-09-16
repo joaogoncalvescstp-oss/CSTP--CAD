@@ -39,19 +39,27 @@ canvas{display:block;width:100%;height:100%;background:var(--bg);cursor:crosshai
 .layerRow label{display:flex;align-items:center;gap:2px;cursor:pointer;font-size:12px;flex-shrink:0}
 .layerRow input{margin:0}
 .note{font-size:11px;color:var(--mut);line-height:1.5;margin:0}
+.snapbox{position:absolute;right:12px;bottom:44px;background:rgba(7,11,22,.9);border:1px solid var(--rule);border-radius:8px;padding:6px 9px;font-size:11px;color:var(--mut);display:none;gap:2px;flex-direction:column;pointer-events:none}
+.snapbox.show{display:flex}
+.snapbox label{display:flex;align-items:center;gap:5px;cursor:pointer;pointer-events:auto}
+.snapbox label.active{color:#35c184;font-weight:700}
 </style>
 </head>
 <body>
 <div class="app">
   <div class="bar">
     <div class="brand"><span>CSTP</span> <span class="t">CAD Viewer</span></div>
+    <span id="animalBadge" style="font-size:14px;font-weight:700;letter-spacing:.06em;margin-left:4px;cursor:pointer;transition:transform 0.2s;white-space:nowrap" title="version" onclick="rotateAnimal()"></span>
     <span class="pill" id="jobpill">no drawing loaded</span>
     <div class="grow"></div>
     <label class="btn file" title="Import a DXF drawing — LINE, LWPOLYLINE, POLYLINE, POINT, CIRCLE, 3DFACE entities each become part of their own DXF layer, shown/hidden/locked from the Layers panel.">↥ Import DXF<input type="file" id="dxfInput" accept=".dxf"></label>
     <label class="btn file" title="Import LandXML — a TIN surface (Pnts/Faces), CgPoints (COGO/survey points), and/or Civil3D pipe networks (Structs/Pipes: manholes, catch basins, storm/sanitary pipes) are all read from the same file, each landing on its own toggleable layer. Use ⛰ Elevation afterward to click a TIN surface and read an interpolated Z there.">↥ Import LandXML (TIN / Pipes)<input type="file" id="landxmlInput" accept=".xml,.landxml"></label>
     <label class="btn file" title="DWG is Autodesk's proprietary binary format — this viewer has no bundled DWG parser and can't read it directly. Selecting a .dwg here just explains that and tells you how to get the same data in another way.">↥ Import DWG<input type="file" id="dwgInput" accept=".dwg"></label>
     <button class="btn" id="fitBtn" disabled title="Frame everything currently loaded (F)">⊡ Fit</button>
-    <button class="btn" id="elevBtn" disabled title="Click a visible, unlocked TIN surface to read its interpolated elevation at that point (Esc cancels)">⛰ Elevation</button>
+    <button class="btn" id="elevBtn" disabled title="Click a visible, unlocked TIN surface to read its interpolated elevation at that point (Esc cancels) — 2D only">⛰ Elevation</button>
+    <button class="btn" id="snapBtn" disabled title="CAD object snap — hover to snap onto an endpoint, a genuine crossing of two lines, a midpoint, a circle's center/quadrant, or the nearest point on a line, and read its exact E/N/Z off the hud (Esc cancels) — 2D only">🧲 Snap</button>
+    <button class="btn" id="orbitBtn" disabled title="Toggle 3D orbit view (O) — drag to rotate (re-centers on whatever's under the cursor), shift-drag or middle-drag to pan, wheel to zoom">⟲ 3D</button>
+    <button class="btn" id="mapBtn" title="Aerial imagery background, tiled from Ramsey County MN's own imagery server (falls back to Esri/USGS NAIP) — only accurate for a job in that county's own survey coordinate system, 2D view only">🗺 Map</button>
     <button class="btn" id="pipeLabelsBtn" title="Choose which manhole/pipe fields show as on-canvas labels">🏷 Pipe Labels</button>
     <button class="btn gold" id="layersBtn" title="Show/hide and lock layers">📑 Layers</button>
   </div>
@@ -63,6 +71,12 @@ canvas{display:block;width:100%;height:100%;background:var(--bg);cursor:crosshai
       <div><i style="background:#8fe3a0"></i>LandXML CgPoint</div>
       <div><i style="background:var(--gold)"></i>elevation query</div>
       <div>● manhole/CB · ▬ pipe (own layer color)</div>
+    </div>
+    <div class="snapbox" id="snapBox">
+      <label><input type="checkbox" id="snEndpoint" checked>▢ endpoint</label>
+      <label><input type="checkbox" id="snIntersection" checked>○ intersection</label>
+      <label><input type="checkbox" id="snMidpoint" checked>△ midpoint</label>
+      <label><input type="checkbox" id="snNearest" checked>⋈ nearest</label>
     </div>
     <div class="panel" id="layerPanel">
       <h4><span>Layers</span><button id="layerCloseBtn" title="Close">✕</button></h4>
@@ -99,6 +113,39 @@ let elevPick=false;                                        // ⛰ Elevation tool
 let spot=null;                                             // {E,N,z,name} — last elevation-query result, drawn until cleared
 let drag=null;                                             // {sx,sy,x0,y0} while panning
 
+/* ---------- 3D orbit view (ported from FBK-Checker) ----------
+   Same oblique-projection scheme: rotate a point about a world pivot (orbit.cx/cy/cz)
+   by azimuth/elevation, exaggerate Z by orbit.ve, then scale/pan in screen space. */
+let is3D=false;
+let orbit={az:0.6,el:1.0,s:1,ox:0,oy:0,ve:3,cx:0,cy:0,cz:0};
+
+/* ---------- CAD object snap (ported from FBK-Checker) ----------
+   Priority: endpoint (incl. a DXF circle's center/quadrants) > a genuine crossing of two
+   real segments > midpoint > nearest point on a segment. 2D only — there's no world-space
+   inverse for the oblique 3D projection to resolve a screen pick back to, same limitation
+   FBK-Checker's own snap/insert tools have in its 3D orbit view. */
+let snapEnabled={endpoint:true,intersection:true,midpoint:true,nearest:true};
+let snapOn=false;                                          // 🧲 Snap tool armed
+let liveSnap=null;                                         // current snap result under the cursor, or null
+
+/* ---------- aerial MAP background (ported from FBK-Checker) ----------
+   Tiled plain-<img> mosaic from Ramsey County MN's own imagery ImageServer (no CORS
+   needed), falling back to Esri World Imagery then USGS NAIP over the calibrated
+   Lambert-Conformal-Conic <-> lat/lon <-> Web Mercator transform below. Like FBK-Checker,
+   this is only geometrically correct for a job whose E/N are Ramsey County's own survey
+   coordinate system — it's ported as-is (not generalized to an arbitrary CRS) since a
+   general "read any coordinate system's aerial tiles" solver is a much bigger, separate
+   problem than this port covers. 2D view only. */
+let showMap=false;
+let mapAlpha=0.9;
+let mapTiles=[];
+let mapLoading=false;
+let mapErr=null;
+let mapTimer=null;
+let mapLastKey='';
+let mapSource='ramsey';
+const RAMSEY_IMG_URL='https://maps.co.ramsey.mn.us/arcgis/rest/services/OrthoPhotos/Aerial2024/ImageServer';
+
 const PALETTE=['#7fd4ff','#ff9f6b','#c792ff','#8fe3a0','#ffd24a','#ff7ab3','#6ee0c8','#a8b6e0','#ff8f5d','#5dd0ff'];
 function ensureLayer(name){
   if(!LAYERS[name])LAYERS[name]={visible:true,locked:false,color:PALETTE[Object.keys(LAYERS).length%PALETTE.length]};
@@ -123,6 +170,71 @@ const W2S=(E,N)=>[E*view.s+view.x,-N*view.s+view.y];
 const S2W=(sx,sy)=>[(sx-view.x)/view.s,-(sy-view.y)/view.s];
 function niceStep(target){const p=Math.pow(10,Math.floor(Math.log10(target||1)));
   const n=target/p;const m=n<1.5?1:n<3?2:n<7?5:10;return m*p;}
+
+/* ---------- Ramsey County Lambert Conformal Conic <-> lat/lon <-> Web Mercator (ported from FBK-Checker) ---------- */
+const RC={};
+(function(){const a=6378418.941,b=6357033.31,D=Math.PI/180;
+  const e=Math.sqrt(1-b*b/(a*a));
+  const dms=(d,mn,s)=>Math.sign(d)*(Math.abs(d)+mn/60+s/3600);
+  const phi1=dms(44,53,0)*D,phi2=dms(45,8,0)*D,lam0=dms(-93,23,0)*D,phi0=dms(44,47,28)*D;
+  const mm=p=>Math.cos(p)/Math.sqrt(1-e*e*Math.sin(p)*Math.sin(p));
+  const tt=p=>Math.tan(Math.PI/4-p/2)/Math.pow((1-e*Math.sin(p))/(1+e*Math.sin(p)),e/2);
+  const n=(Math.log(mm(phi1))-Math.log(mm(phi2)))/(Math.log(tt(phi1))-Math.log(tt(phi2)));
+  const F=mm(phi1)/(n*Math.pow(tt(phi1),n)),rho0=a*F*Math.pow(tt(phi0),n);
+  Object.assign(RC,{a,e,D,lam0,n,F,rho0,t:tt,FT:0.3048006096012,FE:500000,FN:100000});})();
+function surveyToLL(Eft,Nft){const x=(Eft-RC.FE)*RC.FT,y=(Nft-RC.FN)*RC.FT;
+  const rp=Math.sign(RC.n)*Math.sqrt(x*x+(RC.rho0-y)*(RC.rho0-y));
+  const tp=Math.pow(rp/(RC.a*RC.F),1/RC.n),th=Math.atan2(x,RC.rho0-y);
+  const lam=th/RC.n+RC.lam0;let phi=Math.PI/2-2*Math.atan(tp);
+  for(let i=0;i<8;i++){const es=RC.e*Math.sin(phi);phi=Math.PI/2-2*Math.atan(tp*Math.pow((1-es)/(1+es),RC.e/2));}
+  return [phi/RC.D,lam/RC.D];}
+function llToMerc(la,lo){const R=6378137;return [R*lo*RC.D,R*Math.log(Math.tan(Math.PI/4+la*RC.D/2))];}
+function mercToLL(x,y){const R=6378137;return [(2*Math.atan(Math.exp(y/R))-Math.PI/2)/RC.D,(x/R)/RC.D];}
+function llToSurvey(la,lo){const phi=la*RC.D,lam=lo*RC.D;
+  const rho=RC.a*RC.F*Math.pow(RC.t(phi),RC.n),th=RC.n*(lam-RC.lam0);
+  const x=rho*Math.sin(th),y=RC.rho0-rho*Math.cos(th);
+  return [RC.FE+x/RC.FT,RC.FN+y/RC.FT];}
+
+/* ---------- 3D projection (ported from FBK-Checker) ---------- */
+function P3(E,N,Z){const w=cv.width/devicePixelRatio,h=cv.height/devicePixelRatio;
+  const e=E-orbit.cx,n=N-orbit.cy,u=(Z-orbit.cz)*orbit.ve;
+  const cA=Math.cos(orbit.az),sA=Math.sin(orbit.az),cE=Math.cos(orbit.el),sE=Math.sin(orbit.el);
+  const x1=e*cA+n*sA, y1=-e*sA+n*cA, z1=u;
+  const sx=x1*orbit.s + w/2 + orbit.ox;
+  const sy=-(y1*sE+z1*cE)*orbit.s + h/2 + orbit.oy;
+  const depth=y1*cE+z1*sE; return [sx,sy,depth];}
+// re-center the orbit pivot on whatever's under the cursor (a real point, or the ground
+// plane at the pivot's own elevation) at the start of every orbit drag — with zero visual
+// jump, since the new pivot's own projection is trivially (w/2+ox, h/2+oy).
+function retargetOrbitPivot(sx,sy,pt){
+  const w=cv.width/devicePixelRatio,h=cv.height/devicePixelRatio;
+  let E,N,Z;
+  if(pt){E=pt.E;N=pt.N;Z=pt.Z||0;}
+  else{
+    const cA=Math.cos(orbit.az),sA=Math.sin(orbit.az),sE=Math.sin(orbit.el);
+    const x1=(sx-w/2-orbit.ox)/orbit.s, y1=-(sy-h/2-orbit.oy)/(orbit.s*sE);
+    E=x1*cA-y1*sA+orbit.cx; N=x1*sA+y1*cA+orbit.cy; Z=orbit.cz;
+  }
+  orbit.cx=E;orbit.cy=N;orbit.cz=Z;
+  orbit.ox=sx-w/2;orbit.oy=sy-h/2;
+}
+// zoom about a screen point (wheel cursor, or the viewport center) without disturbing the pivot.
+function zoomOrbit(f,sx,sy){
+  const w=cv.width/devicePixelRatio,h=cv.height/devicePixelRatio;
+  const dx=sx-w/2-orbit.ox, dy=sy-h/2-orbit.oy;
+  orbit.s*=f;orbit.ox=sx-w/2-dx*f;orbit.oy=sy-h/2-dy*f;
+}
+// nearest real point under the cursor in the live 3D projection (a CgPoint, a DXF POINT
+// entity, or a pipe network structure), for retargetOrbitPivot — or null if nothing's close.
+function pick3D(sx,sy){
+  let best=null,bd=10;
+  POINTS.forEach(p=>{const s=P3(p.E,p.N,p.Z),d=Math.hypot(s[0]-sx,s[1]-sy);if(d<bd){bd=d;best={E:p.E,N:p.N,Z:p.Z};}});
+  ENTITIES.forEach(e=>{if(e.type!=='point')return;const ly=LAYERS[e.layer];if(ly&&!ly.visible)return;
+    const p=e.pts[0],s=P3(p.E,p.N,p.Z),d=Math.hypot(s[0]-sx,s[1]-sy);if(d<bd){bd=d;best={E:p.E,N:p.N,Z:p.Z};}});
+  PIPE_NETWORKS.forEach(net=>{const ly=LAYERS[net.layer];if(ly&&!ly.visible)return;
+    net.structs.forEach(st=>{if(st.dummy)return;const s=P3(st.E,st.N,st.rim||0),d=Math.hypot(s[0]-sx,s[1]-sy);if(d<bd){bd=d;best={E:st.E,N:st.N,Z:st.rim||0};}});});
+  return best;
+}
 // A dark halo behind every label keeps it readable where two layers' geometry (or two
 // networks' manholes sitting at the same physical intersection) overlap — plain fillText
 // alone goes illegible the instant a label lands on top of another color/line.
@@ -160,14 +272,15 @@ function resize(){const r=cv.parentElement.getBoundingClientRect();
   ctx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0);draw();}
 
 function bounds(){
-  let b={minN:1e15,maxN:-1e15,minE:1e15,maxE:-1e15};
+  let b={minN:1e15,maxN:-1e15,minE:1e15,maxE:-1e15,minZ:1e15,maxZ:-1e15};
   const add=p=>{if(!isFinite(p.E)||!isFinite(p.N))return;
     b.minE=Math.min(b.minE,p.E);b.maxE=Math.max(b.maxE,p.E);
-    b.minN=Math.min(b.minN,p.N);b.maxN=Math.max(b.maxN,p.N);};
+    b.minN=Math.min(b.minN,p.N);b.maxN=Math.max(b.maxN,p.N);
+    if(isFinite(p.Z)){b.minZ=Math.min(b.minZ,p.Z);b.maxZ=Math.max(b.maxZ,p.Z);}};
   ENTITIES.forEach(e=>e.pts.forEach(add));
   SURFACES.forEach(s=>s.tris.forEach(tri=>tri.forEach(add)));
   POINTS.forEach(add);
-  PIPE_NETWORKS.forEach(net=>net.structs.forEach(add));
+  PIPE_NETWORKS.forEach(net=>net.structs.forEach(s=>add({E:s.E,N:s.N,Z:s.rim})));   // a struct only carries a Z via its rim elevation
   return b;
 }
 function fitToBounds(b){
@@ -177,7 +290,17 @@ function fitToBounds(b){
   view.s=Math.min(sx,sy);view.x=pad-b.minE*view.s;view.y=h-pad+b.minN*view.s;
   return true;
 }
-function fit(){if(fitToBounds(bounds()))draw();}
+function fit(){
+  const b=bounds();if(b.minE>b.maxE)return;
+  if(is3D){
+    const w=cv.width/devicePixelRatio,h=cv.height/devicePixelRatio,pad=60;
+    orbit.cx=(b.minE+b.maxE)/2;orbit.cy=(b.minN+b.maxN)/2;
+    orbit.cz=b.minZ<=b.maxZ?(b.minZ+b.maxZ)/2:0;
+    const span=Math.max(b.maxE-b.minE,b.maxN-b.minN)||1;
+    orbit.s=(Math.min(w,h)-2*pad)/span;orbit.ox=0;orbit.oy=0;
+    draw();
+  }else if(fitToBounds(b))draw();
+}
 // A real corridor/alignment project (a street's pipe network) can be extremely elongated —
 // e.g. 178ft wide by 5000+ft long — so fitting the WHOLE drawing at a uniform scale (the only
 // geometrically honest way to fit anything) correctly renders it as a thin strip, with every
@@ -196,13 +319,21 @@ function boundsForLayer(name){
 function zoomToLayer(name){
   const b=boundsForLayer(name);
   if(b.minE>b.maxE){hud(`layer "${name}" has no geometry to zoom to`);return;}
-  fitToBounds(b);draw();hud(`zoomed to layer: ${name}`);
+  if(is3D){
+    const w=cv.width/devicePixelRatio,h=cv.height/devicePixelRatio,pad=60;
+    orbit.cx=(b.minE+b.maxE)/2;orbit.cy=(b.minN+b.maxN)/2;orbit.cz=0;
+    const span=Math.max(b.maxE-b.minE,b.maxN-b.minN)||1;
+    orbit.s=(Math.min(w,h)-2*pad)/span;orbit.ox=0;orbit.oy=0;
+  }else fitToBounds(b);
+  draw();hud(`zoomed to layer: ${name}`);
 }
 
-function draw(){
+function draw(){syncSnapBox();is3D?draw3D():draw2D();}
+function draw2D(){
   const w=cv.width/devicePixelRatio,h=cv.height/devicePixelRatio;
   ctx.clearRect(0,0,w,h);
   labelOccupied=[];
+  drawMapBackground();
   // grid
   ctx.strokeStyle='#16203a';ctx.lineWidth=1;
   const step=niceStep(60/view.s);
@@ -239,13 +370,53 @@ function draw(){
     ctx.fillStyle='#8fe3a0';ctx.beginPath();ctx.arc(x,y,3,0,Math.PI*2);ctx.fill();
     if(view.s>2){ctx.font='600 10px ui-monospace,monospace';drawLabel(p.id,x+6,y-5,'#cfe0ff');}});
   // Civil3D pipe networks (manholes/CBs + pipes)
-  drawPipeNetworks();
+  drawPipeNetworks((E,N)=>W2S(E,N),view.s);
   // last elevation-query marker
   if(spot){const[x,y]=W2S(spot.E,spot.N);
     ctx.strokeStyle='#ffd24a';ctx.lineWidth=1.6;ctx.beginPath();
     ctx.moveTo(x-8,y);ctx.lineTo(x+8,y);ctx.moveTo(x,y-8);ctx.lineTo(x,y+8);ctx.stroke();
     ctx.font='700 12px ui-monospace,monospace';
     drawLabel(`${spot.name}  Z=${spot.z.toFixed(3)}`,x+11,y-11,'#ffd24a');}
+  drawMapError();
+  drawSnapMarker();
+}
+// 3D orbit view (ported from FBK-Checker) — the same layer set, projected obliquely via P3
+// instead of the flat W2S. MAP/grid are 2D-only (the canvas would just be an empty/irrelevant
+// backdrop behind the oblique view), same as FBK-Checker's own 3D mode.
+function draw3D(){
+  const w=cv.width/devicePixelRatio,h=cv.height/devicePixelRatio;
+  ctx.clearRect(0,0,w,h);
+  labelOccupied=[];
+  SURFACES.forEach(s=>{
+    const ly=LAYERS[s.layer];if(ly&&!ly.visible)return;
+    ctx.strokeStyle=ly?ly.color:'#ffb86b';ctx.lineWidth=0.7;ctx.globalAlpha=ly&&ly.locked?0.35:0.6;
+    s.tris.forEach(tri=>{ctx.beginPath();
+      tri.forEach((p,i)=>{const s3=P3(p.E,p.N,p.Z);i?ctx.lineTo(s3[0],s3[1]):ctx.moveTo(s3[0],s3[1]);});
+      ctx.closePath();ctx.stroke();});
+  });
+  ctx.globalAlpha=1;
+  ENTITIES.forEach(e=>{
+    const ly=LAYERS[e.layer];if(ly&&!ly.visible)return;
+    ctx.strokeStyle=ly?ly.color:'#7fd4ff';ctx.fillStyle=ctx.strokeStyle;
+    ctx.globalAlpha=ly&&ly.locked?0.5:1;ctx.lineWidth=1.2;
+    if(e.type==='point'){const s3=P3(e.pts[0].E,e.pts[0].N,e.pts[0].Z);
+      ctx.beginPath();ctx.moveTo(s3[0]-4,s3[1]);ctx.lineTo(s3[0]+4,s3[1]);ctx.moveTo(s3[0],s3[1]-4);ctx.lineTo(s3[0],s3[1]+4);ctx.stroke();
+    }else if(e.type==='circle'){const c=e.pts[0],ST=48;ctx.beginPath();
+      for(let i=0;i<=ST;i++){const a=Math.PI*2*i/ST,s3=P3(c.E+e.r*Math.cos(a),c.N+e.r*Math.sin(a),c.Z);i?ctx.lineTo(s3[0],s3[1]):ctx.moveTo(s3[0],s3[1]);}
+      ctx.stroke();
+    }else{ctx.beginPath();e.pts.forEach((p,i)=>{const s3=P3(p.E,p.N,p.Z);i?ctx.lineTo(s3[0],s3[1]):ctx.moveTo(s3[0],s3[1]);});
+      if(e.closed&&e.pts.length>2)ctx.closePath();ctx.stroke();}
+  });
+  ctx.globalAlpha=1;
+  POINTS.forEach(p=>{const s3=P3(p.E,p.N,p.Z);
+    ctx.fillStyle='#8fe3a0';ctx.beginPath();ctx.arc(s3[0],s3[1],3,0,Math.PI*2);ctx.fill();
+    if(orbit.s>2){ctx.font='600 10px ui-monospace,monospace';drawLabel(p.id,s3[0]+6,s3[1]-5,'#cfe0ff');}});
+  drawPipeNetworks((E,N,Z)=>P3(E,N,Z),orbit.s);
+  if(spot){const s3=P3(spot.E,spot.N,spot.z);
+    ctx.strokeStyle='#ffd24a';ctx.lineWidth=1.6;ctx.beginPath();
+    ctx.moveTo(s3[0]-8,s3[1]);ctx.lineTo(s3[0]+8,s3[1]);ctx.moveTo(s3[0],s3[1]-8);ctx.lineTo(s3[0],s3[1]+8);ctx.stroke();
+    ctx.font='700 12px ui-monospace,monospace';
+    drawLabel(`${spot.name}  Z=${spot.z.toFixed(3)}`,s3[0]+11,s3[1]-11,'#ffd24a');}
 }
 
 /* ---------- Civil3D pipe networks (manholes/CBs + pipes) ---------- */
@@ -273,8 +444,10 @@ function structDepth(s){
   return null;
 }
 const PIPE_LABEL_MIN_ZOOM=1.2;   // below this scale, too many real manholes can land in too little screen space for even collision-avoided labels to stay legible — dots/lines still always draw, only the text gates on zoom (same declutter-by-zoom idea as any point label in this app family)
-function drawPipeNetworks(){
-  const showLabels=view.s>PIPE_LABEL_MIN_ZOOM;
+// proj(E,N,Z) -> [x,y] screen coords — W2S (Z ignored) for 2D, P3 for 3D orbit; scale is
+// view.s/orbit.s respectively, used only to decide whether labels are legible yet.
+function drawPipeNetworks(proj,scale){
+  const showLabels=scale>PIPE_LABEL_MIN_ZOOM;
   PIPE_NETWORKS.forEach(net=>{
     const ly=LAYERS[net.layer];if(ly&&!ly.visible)return;
     ctx.globalAlpha=ly&&ly.locked?0.5:1;
@@ -283,7 +456,7 @@ function drawPipeNetworks(){
     ctx.strokeStyle=color;ctx.lineWidth=1.8;
     net.pipes.forEach(p=>{
       const s1=net.structByName[p.startName],s2=net.structByName[p.endName];if(!s1||!s2)return;
-      const[x1,y1]=W2S(s1.E,s1.N),[x2,y2]=W2S(s2.E,s2.N);
+      const[x1,y1]=proj(s1.E,s1.N,s1.rim||0),[x2,y2]=proj(s2.E,s2.N,s2.rim||0);
       ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x2,y2);ctx.stroke();
       if(!showLabels)return;
       const mx=(x1+x2)/2,my=(y1+y2)/2;
@@ -303,7 +476,7 @@ function drawPipeNetworks(){
     // symbol/label but its Center still anchors the pipe line above, so the geometry stays intact
     net.structs.forEach(s=>{
       if(s.dummy)return;
-      const[x,y]=W2S(s.E,s.N);
+      const[x,y]=proj(s.E,s.N,s.rim||0);
       ctx.fillStyle=color;
       if(s.shape==='rect'){const hs=6;ctx.fillRect(x-hs,y-hs,hs*2,hs*2);}
       else{ctx.beginPath();ctx.arc(x,y,6,0,Math.PI*2);ctx.fill();}
@@ -316,6 +489,178 @@ function drawPipeNetworks(){
     });
   });
   ctx.globalAlpha=1;
+}
+
+/* ---------- aerial MAP background (ported from FBK-Checker) ---------- */
+function viewportBounds(){const w=cv.width/devicePixelRatio,h=cv.height/devicePixelRatio;
+  const tl=S2W(0,0),br=S2W(w,h);
+  return {minE:Math.min(tl[0],br[0]),maxE:Math.max(tl[0],br[0]),
+          minN:Math.min(tl[1],br[1]),maxN:Math.max(tl[1],br[1]),w,h};}
+function viewKey(v){return [Math.round(v.minE),Math.round(v.minN),Math.round(v.maxE),Math.round(v.maxN)].join(',');}
+function scheduleMapRefresh(){if(!showMap||is3D)return;clearTimeout(mapTimer);
+  mapTimer=setTimeout(()=>{const v=viewportBounds();if(viewKey(v)===mapLastKey&&mapTiles.length)return;fetchMapTiles();},350);}
+function fetchMapTiles(){if(mapLoading||!showMap||is3D)return;
+  if(!Object.keys(LAYERS).length){hud('import a DXF or LandXML file first');return;}
+  const v=viewportBounds();mapLastKey=viewKey(v);mapLoading=true;mapErr=null;
+  const padE=(v.maxE-v.minE)*0.06||10,padN=(v.maxN-v.minN)*0.06||10;
+  const minE=v.minE-padE,maxE=v.maxE+padE,minN=v.minN-padN,maxN=v.maxN+padN;
+  if(mapSource==='ramsey'){
+    const GRID=3;
+    const cellPx=Math.max(256,Math.min(2048,Math.round(Math.max(v.w,v.h)/GRID*devicePixelRatio*1.6)));
+    const tiles=[];let pending=GRID*GRID,anyOk=false;
+    hud('loading county aerial (tiled)…');
+    for(let r=0;r<GRID;r++)for(let c=0;c<GRID;c++){
+      const e0=minE+(maxE-minE)*c/GRID, e1=minE+(maxE-minE)*(c+1)/GRID;
+      const n0=maxN-(maxN-minN)*(r+1)/GRID, n1=maxN-(maxN-minN)*r/GRID;
+      const url=`${RAMSEY_IMG_URL}/exportImage?bbox=${e0},${n0},${e1},${n1}&size=${cellPx},${cellPx}&format=jpgpng&adjustAspectRatio=false&f=image`;
+      const t={img:new Image(),ext:{minE:e0,maxE:e1,minN:n0,maxN:n1},ok:false};
+      t.img.onload=()=>{t.ok=true;anyOk=true;if(--pending<=0){mapLoading=false;hud('county aerial loaded');}draw();};
+      t.img.onerror=()=>{if(--pending<=0){mapLoading=false;
+        if(!anyOk){mapSource='esri';hud('county imagery blocked — falling back to Esri…');fetchMapTiles();}
+        else hud('county aerial loaded (some tiles failed)');}draw();};
+      t.img.src=url;tiles.push(t);
+    }
+    mapTiles=tiles;
+  }else{
+    const cm=[[minE,minN],[maxE,minN],[maxE,maxN],[minE,maxN]].map(([E,N])=>{const[la,lo]=surveyToLL(E,N);return llToMerc(la,lo);});
+    const mx=cm.map(p=>p[0]),my=cm.map(p=>p[1]);
+    const mxn=Math.min(...mx),mxx=Math.max(...mx),myn=Math.min(...my),myx=Math.max(...my);
+    const longPx=Math.min(4096,Math.round(Math.max(v.w,v.h)*devicePixelRatio*2)),aw=mxx-mxn,ah=myx-myn;
+    const pw=aw>=ah?longPx:Math.max(1,Math.round(longPx*aw/ah)),ph=aw>=ah?Math.max(1,Math.round(longPx*ah/aw)):longPx;
+    const url=mapSource==='esri'
+      ?`https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/export?bbox=${mxn},${myn},${mxx},${myx}&bboxSR=3857&imageSR=3857&size=${pw},${ph}&format=jpg&adjustAspectRatio=false&f=image`
+      :`https://imagery.nationalmap.gov/arcgis/rest/services/USGSNAIPPlus/ImageServer/exportImage?bbox=${mxn},${myn},${mxx},${myx}&bboxSR=3857&imageSR=3857&size=${pw},${ph}&format=jpg&adjustAspectRatio=false&f=image`;
+    const sc=[[mxn,myx],[mxx,myx],[mxx,myn],[mxn,myn]].map(([x,y])=>{const[la,lo]=mercToLL(x,y);return llToSurvey(la,lo);});
+    const se=sc.map(p=>p[0]),sn=sc.map(p=>p[1]);
+    const ext={minE:Math.min(...se),maxE:Math.max(...se),minN:Math.min(...sn),maxN:Math.max(...sn)};
+    const t={img:new Image(),ext,ok:false};
+    const src=mapSource;
+    t.img.onload=()=>{t.ok=true;mapLoading=false;draw();hud(`map loaded (${src})`);};
+    t.img.onerror=()=>{mapLoading=false;
+      if(src==='esri'){mapSource='naip';hud('Esri imagery blocked — falling back to USGS NAIP…');fetchMapTiles();}
+      else{mapErr='County, Esri, and USGS NAIP imagery all failed (network blocked?).';draw();hud('map load failed — see on-screen note');}};
+    t.img.src=url;mapTiles=[t];
+  }
+}
+function drawMapError(){if(!showMap||is3D||!mapErr)return;const w=cv.width/devicePixelRatio;
+  ctx.save();const bw=Math.min(w-24,520),bx=12,by=12;
+  ctx.fillStyle='rgba(42,21,19,.94)';ctx.strokeStyle='#ff5d52';ctx.lineWidth=1;
+  ctx.fillRect(bx,by,bw,58);ctx.strokeRect(bx,by,bw,58);
+  ctx.fillStyle='#ff8a80';ctx.font='700 12px ui-monospace,monospace';
+  ctx.fillText('⚠ MAP LOAD FAILED',bx+10,by+20);
+  ctx.fillStyle='#f3d99a';ctx.font='11px ui-monospace,monospace';
+  ctx.fillText(mapErr,bx+10,by+37);
+  ctx.fillText('Open the URL logged in console (F12) directly to test the server.',bx+10,by+51);
+  ctx.restore();}
+function drawMapBackground(){if(!showMap||is3D||!mapTiles.length)return;ctx.save();
+  ctx.imageSmoothingEnabled=true;ctx.imageSmoothingQuality='high';
+  const rect=t=>{const e=t.ext;const[x0,y0]=W2S(e.minE,e.maxN),[x1,y1]=W2S(e.maxE,e.minN);return[x0,y0,x1-x0,y1-y0];};
+  ctx.fillStyle='#fff';mapTiles.forEach(t=>{if(t.ok){const[x,y,w,h]=rect(t);ctx.fillRect(x,y,w,h);}});
+  ctx.globalAlpha=mapAlpha;if('filter' in ctx)ctx.filter='brightness(1.12) contrast(1.05)';
+  mapTiles.forEach(t=>{if(t.ok){const[x,y,w,h]=rect(t);ctx.drawImage(t.img,x-0.5,y-0.5,w+1,h+1);}});
+  ctx.restore();}
+
+/* ---------- CAD object snap (ported from FBK-Checker) ---------- */
+function collectSegments(){const segs=[];
+  ENTITIES.forEach(e=>{
+    const ly=LAYERS[e.layer];if(ly&&!ly.visible)return;
+    if(e.type!=='line'&&e.type!=='poly')return;
+    const pts=e.pts;
+    for(let k=0;k<pts.length-1;k++){const A=pts[k],B=pts[k+1],sa=W2S(A.E,A.N),sb=W2S(B.E,B.N);
+      segs.push({ax:sa[0],ay:sa[1],bx:sb[0],by:sb[1],aE:A.E,aN:A.N,aZ:A.Z,bE:B.E,bN:B.N,bZ:B.Z,label:e.layer,src:'ent|'+ENTITIES.indexOf(e)});}
+    if(e.closed&&pts.length>2){const A=pts[pts.length-1],B=pts[0],sa=W2S(A.E,A.N),sb=W2S(B.E,B.N);
+      segs.push({ax:sa[0],ay:sa[1],bx:sb[0],by:sb[1],aE:A.E,aN:A.N,aZ:A.Z,bE:B.E,bN:B.N,bZ:B.Z,label:e.layer,src:'ent|'+ENTITIES.indexOf(e)});}
+  });
+  PIPE_NETWORKS.forEach(net=>{
+    const ly=LAYERS[net.layer];if(ly&&!ly.visible)return;
+    net.pipes.forEach(p=>{
+      const s1=net.structByName[p.startName],s2=net.structByName[p.endName];if(!s1||!s2)return;
+      const sa=W2S(s1.E,s1.N),sb=W2S(s2.E,s2.N);
+      segs.push({ax:sa[0],ay:sa[1],bx:sb[0],by:sb[1],aE:s1.E,aN:s1.N,aZ:s1.rim||0,bE:s2.E,bN:s2.N,bZ:s2.rim||0,label:p.name,src:'pipe|'+net.layer+'|'+p.name});
+    });
+  });
+  return segs;}
+function collectCircles(){const out=[];
+  ENTITIES.forEach(e=>{const ly=LAYERS[e.layer];if(ly&&!ly.visible)return;
+    if(e.type==='circle')out.push({E:e.pts[0].E,N:e.pts[0].N,Z:e.pts[0].Z,r:e.r,label:e.layer});});
+  return out;}
+function projParam(px,py,x1,y1,x2,y2){const dx=x2-x1,dy=y2-y1,L=dx*dx+dy*dy||1;
+  return ((px-x1)*dx+(py-y1)*dy)/L;}
+function ptLineDist(px,py,x1,y1,x2,y2){const dx=x2-x1,dy=y2-y1,L=Math.hypot(dx,dy)||1;
+  return Math.abs((px-x1)*dy-(py-y1)*dx)/L;}
+function lineLineX(s1,s2){const den=(s1.ax-s1.bx)*(s2.ay-s2.by)-(s1.ay-s1.by)*(s2.ax-s2.bx);
+  if(Math.abs(den)<1e-6)return null;
+  const t=((s1.ax-s2.ax)*(s2.ay-s2.by)-(s1.ay-s2.ay)*(s2.ax-s2.bx))/den;
+  const x=s1.ax+t*(s1.bx-s1.ax),y=s1.ay+t*(s1.by-s1.ay);
+  return {x,y,t,u:projParam(x,y,s2.ax,s2.ay,s2.bx,s2.by)};}
+function snapPoint(sx,sy){
+  if(is3D)return null;
+  const TOL_PT=12,TOL_X=14,TOL_MID=11,TOL_NEAR=8;
+  let best=null;
+  if(snapEnabled.endpoint){
+    let bd=TOL_PT;
+    ENTITIES.forEach(e=>{const ly=LAYERS[e.layer];if(ly&&!ly.visible||e.type==='circle')return;   // a circle's own center is handled below (type:'center'), not as a plain endpoint
+      e.pts.forEach(p=>{const[x,y]=W2S(p.E,p.N);const d=Math.hypot(x-sx,y-sy);
+        if(d<bd){bd=d;best={E:p.E,N:p.N,Z:p.Z,sx:x,sy:y,type:'endpoint',label:'endpoint · '+e.layer};}});});
+    POINTS.forEach(p=>{const[x,y]=W2S(p.E,p.N);const d=Math.hypot(x-sx,y-sy);
+      if(d<bd){bd=d;best={E:p.E,N:p.N,Z:p.Z,sx:x,sy:y,type:'endpoint',label:'pt '+p.id};}});
+    PIPE_NETWORKS.forEach(net=>{const ly=LAYERS[net.layer];if(ly&&!ly.visible)return;
+      net.structs.forEach(s=>{if(s.dummy)return;const[x,y]=W2S(s.E,s.N);const d=Math.hypot(x-sx,y-sy);
+        if(d<bd){bd=d;best={E:s.E,N:s.N,Z:s.rim||0,sx:x,sy:y,type:'endpoint',label:s.name.replace(/\s*\([^)]*\)\s*$/,'')};}});});
+    collectCircles().forEach(c=>{
+      const[cx,cy]=W2S(c.E,c.N),dC=Math.hypot(cx-sx,cy-sy);
+      if(dC<bd){bd=dC;best={E:c.E,N:c.N,Z:c.Z,sx:cx,sy:cy,type:'center',label:'center · '+c.label};}
+      [0,Math.PI/2,Math.PI,3*Math.PI/2].forEach(a=>{
+        const qE=c.E+c.r*Math.cos(a),qN=c.N+c.r*Math.sin(a),[qx,qy]=W2S(qE,qN),dQ=Math.hypot(qx-sx,qy-sy);
+        if(dQ<bd){bd=dQ;best={E:qE,N:qN,Z:c.Z,sx:qx,sy:qy,type:'quadrant',label:'quadrant · '+c.label};}});
+    });
+    if(best)return best;
+  }
+  const segs=collectSegments();
+  if(snapEnabled.intersection){
+    const near=segs.filter(s=>ptLineDist(sx,sy,s.ax,s.ay,s.bx,s.by)<60);
+    let bxd=TOL_X;
+    for(let i=0;i<near.length;i++)for(let j=i+1;j<near.length;j++){
+      if(near[i].src!==undefined&&near[i].src===near[j].src)continue;
+      const X=lineLineX(near[i],near[j]);if(!X||!isFinite(X.x))continue;
+      if(X.t<-0.02||X.t>1.02||X.u<-0.02||X.u>1.02)continue;
+      const d=Math.hypot(X.x-sx,X.y-sy);if(d<bxd){
+        const z1=near[i].aZ+X.t*(near[i].bZ-near[i].aZ),z2=near[j].aZ+X.u*(near[j].bZ-near[j].aZ);
+        const[E,N]=S2W(X.x,X.y);bxd=d;
+        best={E,N,Z:(z1+z2)/2,sx:X.x,sy:X.y,type:'intersection',label:'intersection'};}}
+    if(best)return best;
+  }
+  if(snapEnabled.midpoint){
+    let bmd=TOL_MID;
+    segs.forEach(s=>{const mx=(s.ax+s.bx)/2,my=(s.ay+s.by)/2,d=Math.hypot(mx-sx,my-sy);
+      if(d<bmd){bmd=d;best={E:(s.aE+s.bE)/2,N:(s.aN+s.bN)/2,Z:(s.aZ+s.bZ)/2,sx:mx,sy:my,type:'midpoint',label:'midpoint'};}});
+    if(best)return best;
+  }
+  if(!snapEnabled.nearest)return null;
+  let bnd=TOL_NEAR;
+  segs.forEach(s=>{let t=projParam(sx,sy,s.ax,s.ay,s.bx,s.by);t=Math.max(0,Math.min(1,t));
+    const x=s.ax+t*(s.bx-s.ax),y=s.ay+t*(s.by-s.ay),d=Math.hypot(x-sx,y-sy);
+    if(d<bnd){bnd=d;const[E,N]=S2W(x,y);best={E,N,Z:s.aZ+t*(s.bZ-s.aZ),sx:x,sy:y,type:'nearest',label:'nearest'};}});
+  return best;}
+function drawSnapMarker(){
+  const s=snapOn?liveSnap:null;if(!s)return;const x=s.sx,y=s.sy,r=7;ctx.save();
+  ctx.lineWidth=2;ctx.strokeStyle='#35c184';ctx.fillStyle='rgba(53,193,132,.18)';
+  if(s.type==='endpoint'){ctx.fillRect(x-r,y-r,2*r,2*r);ctx.strokeRect(x-r,y-r,2*r,2*r);}
+  else if(s.type==='intersection'){ctx.beginPath();ctx.arc(x,y,r,0,7);ctx.fill();ctx.stroke();}
+  else if(s.type==='midpoint'){ctx.beginPath();ctx.moveTo(x,y-r);ctx.lineTo(x+r,y+r);ctx.lineTo(x-r,y+r);ctx.closePath();ctx.fill();ctx.stroke();}
+  else if(s.type==='center'){ctx.beginPath();ctx.arc(x,y,r,0,7);ctx.fill();ctx.stroke();
+    ctx.beginPath();ctx.moveTo(x-r,y);ctx.lineTo(x+r,y);ctx.moveTo(x,y-r);ctx.lineTo(x,y+r);ctx.stroke();}
+  else if(s.type==='quadrant'){ctx.beginPath();ctx.moveTo(x,y-r);ctx.lineTo(x+r,y);ctx.lineTo(x,y+r);ctx.lineTo(x-r,y);ctx.closePath();ctx.fill();ctx.stroke();}
+  else{ctx.beginPath();ctx.moveTo(x-r,y);ctx.lineTo(x,y-r*.6);ctx.lineTo(x+r,y);ctx.lineTo(x,y+r*.6);ctx.closePath();ctx.fill();ctx.stroke();}   // nearest = bowtie/diamond
+  ctx.restore();}
+function syncSnapBox(){
+  const box=$('snapBox');if(!box)return;
+  box.classList.toggle('show',snapOn&&!is3D);
+  const active=liveSnap&&(liveSnap.type==='center'||liveSnap.type==='quadrant'?'endpoint':liveSnap.type);
+  ['snEndpoint','snIntersection','snMidpoint','snNearest'].forEach(id=>{
+    const key=id.slice(2).toLowerCase();
+    $(id).closest('label').classList.toggle('active',active===key);
+  });
 }
 
 /* ---------- spot elevation query (barycentric interpolation over the TIN) ---------- */
@@ -417,6 +762,7 @@ function importDXF(text){
   if(!nEnt){hud('no recognized entities found (LINE / LWPOLYLINE / POLYLINE / POINT / CIRCLE / 3DFACE)');return;}
   renderLayerPanel();updateJobPill();
   $('fitBtn').disabled=false;$('elevBtn').disabled=SURFACES.length===0;
+  $('orbitBtn').disabled=false;$('snapBtn').disabled=false;
   if(hadNothing)fit();else draw();
   hud(`imported ${nEnt} DXF entit${nEnt===1?'y':'ies'} across ${Object.keys(LAYERS).length} layer(s)`);
 }
@@ -508,6 +854,7 @@ function importLandXML(text){
   if(!nSurf&&!nPts&&!nNet){hud('no <Surface> (TIN), <CgPoint>, or <PipeNetwork> data found in this file');return;}
   renderLayerPanel();updateJobPill();
   $('fitBtn').disabled=false;$('elevBtn').disabled=SURFACES.length===0;
+  $('orbitBtn').disabled=false;$('snapBtn').disabled=false;
   if(hadNothing)fit();else draw();
   const parts=[];
   if(nSurf)parts.push(`${nSurf} surface(s) (${nTri} tri)`);
@@ -564,13 +911,48 @@ $('dwgInput').onchange=e=>{const f=e.target.files[0];if(!f)return;e.target.value
 $('fitBtn').onclick=fit;
 $('elevBtn').onclick=()=>{
   if($('elevBtn').disabled)return;
+  if(is3D){hud('Elevation query is 2D only — press O or ⟲ 3D to switch back first');return;}
   elevPick=!elevPick;$('elevBtn').classList.toggle('on',elevPick);
   hud(elevPick?'click a visible, unlocked TIN surface to read its elevation there · Esc to cancel':'elevation query cancelled');
 };
+$('snapBtn').onclick=()=>{
+  if($('snapBtn').disabled)return;
+  if(is3D){hud('Snap is 2D only — press O or ⟲ 3D to switch back first');return;}
+  snapOn=!snapOn;$('snapBtn').classList.toggle('on',snapOn);liveSnap=null;
+  hud(snapOn?'hover to snap onto an endpoint/intersection/midpoint/nearest point · Esc to cancel':'snap cancelled');
+  draw();
+};
+[['snEndpoint','endpoint'],['snIntersection','intersection'],['snMidpoint','midpoint'],['snNearest','nearest']].forEach(([id,key])=>{
+  $(id).onchange=()=>{snapEnabled[key]=$(id).checked;draw();};
+});
+$('orbitBtn').onclick=()=>{
+  if($('orbitBtn').disabled)return;
+  is3D=!is3D;$('orbitBtn').classList.toggle('on',is3D);
+  $('legend').style.display=is3D?'none':'';
+  if(is3D){elevPick=false;$('elevBtn').classList.remove('on');snapOn=false;$('snapBtn').classList.remove('on');}
+  cv.style.cursor=is3D?'grab':'crosshair';
+  fit();hud(is3D?'3D orbit — drag to rotate (re-centers on click), shift-drag or middle-drag to pan, wheel to zoom':'back to 2D plan view');
+};
+$('mapBtn').onclick=()=>{
+  showMap=!showMap;$('mapBtn').classList.toggle('on',showMap);
+  if(is3D)hud('MAP is 2D only — it stays off until you switch back with O / ⟲ 3D');
+  if(showMap&&!is3D){mapSource='ramsey';mapTiles=[];mapErr=null;fetchMapTiles();}
+  draw();
+};
 
-/* ---------- canvas interaction: pan, zoom, elevation pick ---------- */
+/* ---------- canvas interaction: pan, zoom, elevation pick, orbit, snap ---------- */
 cv.addEventListener('pointerdown',e=>{
   const r=cv.getBoundingClientRect(),sx=e.clientX-r.left,sy=e.clientY-r.top;
+  if(e.button===1){                                        // middle-mouse pan — works in both 2D and 3D
+    e.preventDefault();
+    drag=is3D?{pan:true,sx,sy,x0:orbit.ox,y0:orbit.oy}:{pan:true,sx,sy,x0:view.x,y0:view.y};
+    cv.setPointerCapture(e.pointerId);return;
+  }
+  if(is3D){
+    if(!e.shiftKey)retargetOrbitPivot(sx,sy,pick3D(sx,sy));   // rotate around whatever's under the cursor, not a fixed far-off pivot — same fix FBK-Checker's own orbit view needed for a large, elongated site
+    drag={orbit:true,sx,sy,az:orbit.az,el:orbit.el,ox:orbit.ox,oy:orbit.oy,shift:e.shiftKey};
+    cv.setPointerCapture(e.pointerId);return;
+  }
   if(elevPick){
     elevPick=false;$('elevBtn').classList.remove('on');
     const[E,N]=S2W(sx,sy);const hit=tinElevationAt(E,N);
@@ -578,29 +960,55 @@ cv.addEventListener('pointerdown',e=>{
     else{spot=null;hud('no visible, unlocked TIN surface under that click');}
     draw();return;
   }
-  drag={sx,sy,x0:view.x,y0:view.y};
+  if(snapOn){
+    const s=snapPoint(sx,sy);
+    if(s)hud(`picked ${s.label} · E ${s.E.toFixed(3)} N ${s.N.toFixed(3)}${isFinite(s.Z)?' Z '+s.Z.toFixed(3):''}`);
+    else{const[E,N]=S2W(sx,sy);hud(`free · E ${E.toFixed(3)} N ${N.toFixed(3)}`);}
+    return;
+  }
+  drag={pan:true,sx,sy,x0:view.x,y0:view.y};
   cv.setPointerCapture(e.pointerId);
 });
 cv.addEventListener('pointermove',e=>{
-  if(!drag)return;
   const r=cv.getBoundingClientRect(),sx=e.clientX-r.left,sy=e.clientY-r.top;
-  view.x=drag.x0+(sx-drag.sx);view.y=drag.y0+(sy-drag.sy);draw();
+  if(snapOn&&!is3D&&!drag){
+    liveSnap=snapPoint(sx,sy);
+    if(liveSnap)hud(`${liveSnap.label} · E ${liveSnap.E.toFixed(3)} N ${liveSnap.N.toFixed(3)}${isFinite(liveSnap.Z)?' Z '+liveSnap.Z.toFixed(3):''}`);
+    else{const[E,N]=S2W(sx,sy);hud(`free · E ${E.toFixed(3)} N ${N.toFixed(3)} · Esc to cancel`);}
+    draw();return;
+  }
+  if(!drag)return;
+  if(drag.orbit){if(drag.shift){orbit.ox=drag.ox+(sx-drag.sx);orbit.oy=drag.oy+(sy-drag.sy);}
+    else{orbit.az=drag.az+(sx-drag.sx)*0.008;orbit.el=Math.max(0.12,Math.min(1.55,drag.el-(sy-drag.sy)*0.006));}draw();return;}
+  if(drag.pan){if(is3D){orbit.ox=drag.x0+(sx-drag.sx);orbit.oy=drag.y0+(sy-drag.sy);}
+    else{view.x=drag.x0+(sx-drag.sx);view.y=drag.y0+(sy-drag.sy);scheduleMapRefresh();}draw();return;}
 });
-window.addEventListener('pointerup',()=>{drag=null;});
+window.addEventListener('pointerup',()=>{drag=null;if(showMap&&!is3D)scheduleMapRefresh();});
 cv.addEventListener('wheel',e=>{
   e.preventDefault();
   const r=cv.getBoundingClientRect(),sx=e.clientX-r.left,sy=e.clientY-r.top;
   const f=e.deltaY<0?1.12:1/1.12;
-  const[wx,wy]=S2W(sx,sy);
-  view.s*=f;view.x=sx-wx*view.s;view.y=sy+wy*view.s;
+  if(is3D){zoomOrbit(f,sx,sy);}
+  else{const[wx,wy]=S2W(sx,sy);view.s*=f;view.x=sx-wx*view.s;view.y=sy+wy*view.s;scheduleMapRefresh();}
   draw();
 },{passive:false});
 window.addEventListener('keydown',e=>{
-  if(e.key==='Escape'&&elevPick){elevPick=false;$('elevBtn').classList.remove('on');hud('elevation query cancelled');draw();}
+  if(e.key==='Escape'){
+    if(elevPick){elevPick=false;$('elevBtn').classList.remove('on');hud('elevation query cancelled');draw();}
+    else if(snapOn){snapOn=false;$('snapBtn').classList.remove('on');liveSnap=null;hud('snap cancelled');draw();}
+  }
   else if(e.key.toLowerCase()==='f'&&!$('fitBtn').disabled)fit();
+  else if(e.key.toLowerCase()==='o'&&!$('orbitBtn').disabled)$('orbitBtn').onclick();
 });
 window.addEventListener('resize',resize);
 resize();
+
+/* ---------- version badge — bumped on every push, mirroring FBK-Checker's own fruit badge ---------- */
+const VERSION={animal:'🦊',name:'FOX',build:1};
+function rotateAnimal(){const b=$('animalBadge');b.style.transform='rotate(360deg)';setTimeout(()=>{b.style.transform='rotate(0deg)';},200);}
+function showVersion(){const b=$('animalBadge');b.textContent=`${VERSION.animal} ${VERSION.name}`;
+  b.title=`Build ${VERSION.build} · ${VERSION.name} — if this matches what Claude pushed, you're on the latest (no cache)`;}
+window.addEventListener('load',showVersion);
 </script>
 </body>
 </html>
