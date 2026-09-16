@@ -48,10 +48,11 @@ canvas{display:block;width:100%;height:100%;background:var(--bg);cursor:crosshai
     <span class="pill" id="jobpill">no drawing loaded</span>
     <div class="grow"></div>
     <label class="btn file" title="Import a DXF drawing — LINE, LWPOLYLINE, POLYLINE, POINT, CIRCLE, 3DFACE entities each become part of their own DXF layer, shown/hidden/locked from the Layers panel.">↥ Import DXF<input type="file" id="dxfInput" accept=".dxf"></label>
-    <label class="btn file" title="Import a LandXML surface (TIN) and/or CgPoints. The surface becomes a toggleable layer of its own; CgPoints (COGO/survey points) are plotted as points. Use ⛰ Elevation afterward to click the surface and read an interpolated Z there.">↥ Import LandXML (TIN)<input type="file" id="landxmlInput" accept=".xml,.landxml"></label>
+    <label class="btn file" title="Import LandXML — a TIN surface (Pnts/Faces), CgPoints (COGO/survey points), and/or Civil3D pipe networks (Structs/Pipes: manholes, catch basins, storm/sanitary pipes) are all read from the same file, each landing on its own toggleable layer. Use ⛰ Elevation afterward to click a TIN surface and read an interpolated Z there.">↥ Import LandXML (TIN / Pipes)<input type="file" id="landxmlInput" accept=".xml,.landxml"></label>
     <label class="btn file" title="DWG is Autodesk's proprietary binary format — this viewer has no bundled DWG parser and can't read it directly. Selecting a .dwg here just explains that and tells you how to get the same data in another way.">↥ Import DWG<input type="file" id="dwgInput" accept=".dwg"></label>
     <button class="btn" id="fitBtn" disabled title="Frame everything currently loaded (F)">⊡ Fit</button>
     <button class="btn" id="elevBtn" disabled title="Click a visible, unlocked TIN surface to read its interpolated elevation at that point (Esc cancels)">⛰ Elevation</button>
+    <button class="btn" id="pipeLabelsBtn" title="Choose which manhole/pipe fields show as on-canvas labels">🏷 Pipe Labels</button>
     <button class="btn gold" id="layersBtn" title="Show/hide and lock layers">📑 Layers</button>
   </div>
   <div class="main">
@@ -61,12 +62,22 @@ canvas{display:block;width:100%;height:100%;background:var(--bg);cursor:crosshai
       <div><i style="background:#ffb86b"></i>TIN surface (wireframe)</div>
       <div><i style="background:#8fe3a0"></i>LandXML CgPoint</div>
       <div><i style="background:var(--gold)"></i>elevation query</div>
+      <div>● manhole/CB · ▬ pipe (own layer color)</div>
     </div>
     <div class="panel" id="layerPanel">
       <h4><span>Layers</span><button id="layerCloseBtn" title="Close">✕</button></h4>
       <div id="layerList"><p class="note">No layers yet — import a DXF or LandXML file.</p></div>
     </div>
-    <div class="hud" id="hud">Import a DXF or LandXML (TIN) file to begin. Drag to pan, wheel to zoom.</div>
+    <div class="panel" id="pipeLabelPanel">
+      <h4><span>Pipe Labels</span><button id="pipeLabelCloseBtn" title="Close">✕</button></h4>
+      <p class="note" style="margin-bottom:8px">Structure "depth" = Rim − Sump (or Rim − lowest invert, if no sump elevation is given) — the closest thing this data has to a manhole's build/barrel height. Labels only draw once you're zoomed in past a certain point (manholes/dots always show) — zoom to a single layer from the 📑 Layers panel first if a corridor-shaped project makes the whole-site view too small to label.</p>
+      <label style="display:flex;align-items:center;gap:6px;margin-bottom:6px;cursor:pointer"><input type="checkbox" id="plRim" checked> Rim elevation</label>
+      <label style="display:flex;align-items:center;gap:6px;margin-bottom:6px;cursor:pointer"><input type="checkbox" id="plDepth" checked> Structure depth (Rim − Sump)</label>
+      <label style="display:flex;align-items:center;gap:6px;margin-bottom:6px;cursor:pointer"><input type="checkbox" id="plSlope" checked> Pipe % slope</label>
+      <label style="display:flex;align-items:center;gap:6px;margin-bottom:6px;cursor:pointer"><input type="checkbox" id="plDia" checked> Pipe diameter</label>
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="plInvert" checked> Pipe invert elevations</label>
+    </div>
+    <div class="hud" id="hud">Import a DXF or LandXML (TIN / pipe network) file to begin. Drag to pan, wheel to zoom.</div>
   </div>
 </div>
 <script>
@@ -82,6 +93,8 @@ let LAYERS={};                                             // {name:{visible,loc
 let ENTITIES=[];                                           // imported DXF entities: {type:'line'|'point'|'circle'|'poly',layer,pts:[{E,N,Z}],r,closed}
 let SURFACES=[];                                           // imported LandXML TIN surfaces: {name,layer,tris:[[{E,N,Z}x3],...]}
 let POINTS=[];                                             // imported LandXML CgPoints: {id,E,N,Z,code}
+let PIPE_NETWORKS=[];                                       // imported LandXML Civil3D pipe networks: {name,type,layer,structs:[{name,desc,E,N,rim,sump,shape,diameter,dummy,inverts:[{elev,dir,pipe}]}],pipes:[{name,desc,startName,endName,length,slope,diameter,material}]}
+let PIPE_LABEL_SHOW={rim:true,depth:true,slope:true,diameter:true,invert:true};   // which fields the pipe/manhole labels show
 let elevPick=false;                                        // ⛰ Elevation tool armed, waiting for a canvas click
 let spot=null;                                             // {E,N,z,name} — last elevation-query result, drawn until cleared
 let drag=null;                                             // {sx,sy,x0,y0} while panning
@@ -95,7 +108,14 @@ function hud(t){$('hud').textContent=t;}
 function updateJobPill(){
   const n=Object.keys(LAYERS).length;
   const tris=SURFACES.reduce((s,x)=>s+x.tris.length,0);
-  $('jobpill').textContent=n?`${n} layer${n===1?'':'s'} · ${ENTITIES.length} entit${ENTITIES.length===1?'y':'ies'} · ${tris} tri · ${POINTS.length} pt${POINTS.length===1?'':'s'}`:'no drawing loaded';
+  const pipes=PIPE_NETWORKS.reduce((s,x)=>s+x.pipes.length,0);
+  const structs=PIPE_NETWORKS.reduce((s,x)=>s+x.structs.length,0);
+  const parts=[];
+  if(ENTITIES.length)parts.push(`${ENTITIES.length} DXF entit${ENTITIES.length===1?'y':'ies'}`);
+  if(tris)parts.push(`${tris} tri`);
+  if(POINTS.length)parts.push(`${POINTS.length} pt${POINTS.length===1?'':'s'}`);
+  if(pipes||structs)parts.push(`${pipes} pipe${pipes===1?'':'s'}, ${structs} struct${structs===1?'':'s'}`);
+  $('jobpill').textContent=n?`${n} layer${n===1?'':'s'} · ${parts.join(' · ')}`:'no drawing loaded';
 }
 
 /* ---------- view transform / drawing ---------- */
@@ -103,6 +123,38 @@ const W2S=(E,N)=>[E*view.s+view.x,-N*view.s+view.y];
 const S2W=(sx,sy)=>[(sx-view.x)/view.s,-(sy-view.y)/view.s];
 function niceStep(target){const p=Math.pow(10,Math.floor(Math.log10(target||1)));
   const n=target/p;const m=n<1.5?1:n<3?2:n<7?5:10;return m*p;}
+// A dark halo behind every label keeps it readable where two layers' geometry (or two
+// networks' manholes sitting at the same physical intersection) overlap — plain fillText
+// alone goes illegible the instant a label lands on top of another color/line.
+function drawLabel(text,x,y,color){
+  ctx.lineWidth=3;ctx.strokeStyle='rgba(11,15,26,.85)';ctx.strokeText(text,x,y);
+  ctx.fillStyle=color;ctx.fillText(text,x,y);
+}
+// Simple label-collision avoidance, reset once per draw() call: two structures from
+// different networks (e.g. a sanitary and a storm manhole at the same intersection)
+// can sit almost exactly on top of each other in plan, and their labels would otherwise
+// merge into illegible overlapping text — not something the halo above can fix, since
+// that only helps text read against the background/lines behind it, not against
+// another label. Each label BLOCK (one or more lines, drawn together) claims a screen
+// rect; a new block that would collide with an already-placed one shifts straight down
+// and tries again, a few times, rather than silently overlapping or hiding real data.
+let labelOccupied=[];
+function rectsOverlap(a,b){return a.x0<b.x1&&a.x1>b.x0&&a.y0<b.y1&&a.y1>b.y0;}
+function placeLabelBlock(lines,x,y0,color,lh){
+  const w=Math.max(...lines.map(l=>ctx.measureText(l).width))+4;
+  let y=y0;
+  for(let attempt=0;attempt<6;attempt++){
+    const rect={x0:x-2,y0:y-lh,x1:x+w,y1:y+lh*(lines.length-1)+4};
+    if(!labelOccupied.some(r=>rectsOverlap(r,rect))){
+      lines.forEach((ln,i)=>drawLabel(ln,x,y+lh*i,color));
+      labelOccupied.push(rect);
+      return;
+    }
+    y+=lh*lines.length+4;
+  }
+  lines.forEach((ln,i)=>drawLabel(ln,x,y+lh*i,color));   // out of dodge attempts — draw anyway, never silently drop real data
+  labelOccupied.push({x0:x-2,y0:y-lh,x1:x+w,y1:y+lh*(lines.length-1)+4});
+}
 function resize(){const r=cv.parentElement.getBoundingClientRect();
   cv.width=r.width*devicePixelRatio;cv.height=r.height*devicePixelRatio;
   ctx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0);draw();}
@@ -115,19 +167,42 @@ function bounds(){
   ENTITIES.forEach(e=>e.pts.forEach(add));
   SURFACES.forEach(s=>s.tris.forEach(tri=>tri.forEach(add)));
   POINTS.forEach(add);
+  PIPE_NETWORKS.forEach(net=>net.structs.forEach(add));
   return b;
 }
-function fit(){
-  const b=bounds();if(b.minE>b.maxE)return;
+function fitToBounds(b){
+  if(b.minE>b.maxE)return false;
   const w=cv.width/devicePixelRatio,h=cv.height/devicePixelRatio,pad=50;
   const sx=(w-2*pad)/((b.maxE-b.minE)||1),sy=(h-2*pad)/((b.maxN-b.minN)||1);
   view.s=Math.min(sx,sy);view.x=pad-b.minE*view.s;view.y=h-pad+b.minN*view.s;
-  draw();
+  return true;
+}
+function fit(){if(fitToBounds(bounds()))draw();}
+// A real corridor/alignment project (a street's pipe network) can be extremely elongated —
+// e.g. 178ft wide by 5000+ft long — so fitting the WHOLE drawing at a uniform scale (the only
+// geometrically honest way to fit anything) correctly renders it as a thin strip, with every
+// individual manhole/pipe far too small to read. Zooming to just one layer's own bounds is
+// the practical way to actually work a specific pipe network/surface/DXF layer at a useful scale.
+function boundsForLayer(name){
+  let b={minN:1e15,maxN:-1e15,minE:1e15,maxE:-1e15};
+  const add=p=>{if(!isFinite(p.E)||!isFinite(p.N))return;
+    b.minE=Math.min(b.minE,p.E);b.maxE=Math.max(b.maxE,p.E);
+    b.minN=Math.min(b.minN,p.N);b.maxN=Math.max(b.maxN,p.N);};
+  ENTITIES.filter(e=>e.layer===name).forEach(e=>e.pts.forEach(add));
+  SURFACES.filter(s=>s.layer===name).forEach(s=>s.tris.forEach(tri=>tri.forEach(add)));
+  const net=PIPE_NETWORKS.find(n=>n.layer===name);if(net)net.structs.forEach(add);
+  return b;
+}
+function zoomToLayer(name){
+  const b=boundsForLayer(name);
+  if(b.minE>b.maxE){hud(`layer "${name}" has no geometry to zoom to`);return;}
+  fitToBounds(b);draw();hud(`zoomed to layer: ${name}`);
 }
 
 function draw(){
   const w=cv.width/devicePixelRatio,h=cv.height/devicePixelRatio;
   ctx.clearRect(0,0,w,h);
+  labelOccupied=[];
   // grid
   ctx.strokeStyle='#16203a';ctx.lineWidth=1;
   const step=niceStep(60/view.s);
@@ -162,13 +237,85 @@ function draw(){
   // LandXML CgPoints
   POINTS.forEach(p=>{const[x,y]=W2S(p.E,p.N);
     ctx.fillStyle='#8fe3a0';ctx.beginPath();ctx.arc(x,y,3,0,Math.PI*2);ctx.fill();
-    if(view.s>2){ctx.fillStyle='#cfe0ff';ctx.font='600 10px ui-monospace,monospace';ctx.fillText(p.id,x+6,y-5);}});
+    if(view.s>2){ctx.font='600 10px ui-monospace,monospace';drawLabel(p.id,x+6,y-5,'#cfe0ff');}});
+  // Civil3D pipe networks (manholes/CBs + pipes)
+  drawPipeNetworks();
   // last elevation-query marker
   if(spot){const[x,y]=W2S(spot.E,spot.N);
     ctx.strokeStyle='#ffd24a';ctx.lineWidth=1.6;ctx.beginPath();
     ctx.moveTo(x-8,y);ctx.lineTo(x+8,y);ctx.moveTo(x,y-8);ctx.lineTo(x,y+8);ctx.stroke();
-    ctx.fillStyle='#ffd24a';ctx.font='700 12px ui-monospace,monospace';
-    ctx.fillText(`${spot.name}  Z=${spot.z.toFixed(3)}`,x+11,y-11);}
+    ctx.font='700 12px ui-monospace,monospace';
+    drawLabel(`${spot.name}  Z=${spot.z.toFixed(3)}`,x+11,y-11,'#ffd24a');}
+}
+
+/* ---------- Civil3D pipe networks (manholes/CBs + pipes) ---------- */
+// A pipe's own <Pipe> element never carries its invert elevations — those live on the
+// STRUCTURE end of the connection, as <Invert elev flowDir refPipe> where flowDir is
+// 'out' at the upstream structure (flow leaving it into this pipe) and 'in' at the
+// downstream one (flow entering it from this pipe), each tagged with refPipe=this
+// pipe's own name. So the pipe's start/end invert has to be looked up on its two
+// structures, matched by name — it isn't a property of the pipe object itself.
+function pipeInverts(net,pipe){
+  const s1=net.structByName[pipe.startName],s2=net.structByName[pipe.endName];
+  const find=(s,dir)=>s&&s.inverts.find(iv=>iv.pipe===pipe.name&&iv.dir===dir);
+  const up=find(s1,'out'),down=find(s2,'in');
+  return{up:up?up.elev:null,down:down?down.elev:null};
+}
+// The data has Rim and (usually) Sump elevations but no cone/riser breakdown, so the
+// closest computable proxy for a manhole's "build height" is its total barrel depth,
+// Rim − Sump. A handful of structures in real Civil3D exports have no Sump at all —
+// fall back to Rim minus its lowest recorded invert for those, and leave it blank
+// (never guess a number) if neither is available.
+function structDepth(s){
+  if(s.rim==null)return null;
+  if(s.sump!=null)return s.rim-s.sump;
+  if(s.inverts.length)return s.rim-Math.min(...s.inverts.map(iv=>iv.elev));
+  return null;
+}
+const PIPE_LABEL_MIN_ZOOM=1.2;   // below this scale, too many real manholes can land in too little screen space for even collision-avoided labels to stay legible — dots/lines still always draw, only the text gates on zoom (same declutter-by-zoom idea as any point label in this app family)
+function drawPipeNetworks(){
+  const showLabels=view.s>PIPE_LABEL_MIN_ZOOM;
+  PIPE_NETWORKS.forEach(net=>{
+    const ly=LAYERS[net.layer];if(ly&&!ly.visible)return;
+    ctx.globalAlpha=ly&&ly.locked?0.5:1;
+    const color=ly?ly.color:'#7fd4ff';
+    // pipes — a straight line, structure center to structure center (no vertical/plan curve data in this schema)
+    ctx.strokeStyle=color;ctx.lineWidth=1.8;
+    net.pipes.forEach(p=>{
+      const s1=net.structByName[p.startName],s2=net.structByName[p.endName];if(!s1||!s2)return;
+      const[x1,y1]=W2S(s1.E,s1.N),[x2,y2]=W2S(s2.E,s2.N);
+      ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x2,y2);ctx.stroke();
+      if(!showLabels)return;
+      const mx=(x1+x2)/2,my=(y1+y2)/2;
+      const mid=[];
+      if(PIPE_LABEL_SHOW.diameter&&isFinite(p.diameter))mid.push(`${p.diameter}"`);
+      if(PIPE_LABEL_SHOW.slope&&isFinite(p.slope))mid.push(`${(p.slope*100).toFixed(2)}%`);
+      if(mid.length){ctx.font='600 10px ui-monospace,monospace';placeLabelBlock([mid.join(' ')],mx+5,my-5,color,11);}
+      if(PIPE_LABEL_SHOW.invert){
+        const{up,down}=pipeInverts(net,p);
+        ctx.font='600 9px ui-monospace,monospace';
+        if(up!=null)placeLabelBlock([`INV ${up.toFixed(2)}`],x1+6,y1+11,'#cfe0ff',10);
+        if(down!=null)placeLabelBlock([`INV ${down.toFixed(2)}`],x2+6,y2+11,'#cfe0ff',10);
+      }
+    });
+    // structures (manholes/catch basins) — a dummy null structure (a LandXML network-boundary
+    // placeholder Civil3D emits at each end of a network, elevRim="0.") is skipped for the
+    // symbol/label but its Center still anchors the pipe line above, so the geometry stays intact
+    net.structs.forEach(s=>{
+      if(s.dummy)return;
+      const[x,y]=W2S(s.E,s.N);
+      ctx.fillStyle=color;
+      if(s.shape==='rect'){const hs=6;ctx.fillRect(x-hs,y-hs,hs*2,hs*2);}
+      else{ctx.beginPath();ctx.arc(x,y,6,0,Math.PI*2);ctx.fill();}
+      if(!showLabels)return;
+      const lines=[s.name.replace(/\s*\([^)]*\)\s*$/,'')];   // drop the "(NETWORK-NAME)" suffix Civil3D appends to every struct/pipe name
+      if(PIPE_LABEL_SHOW.rim&&s.rim!=null)lines.push(`RIM ${s.rim.toFixed(2)}`);
+      if(PIPE_LABEL_SHOW.depth){const d=structDepth(s);if(d!=null)lines.push(`DEPTH ${d.toFixed(2)}`);}
+      ctx.font='700 10px ui-monospace,monospace';
+      placeLabelBlock(lines,x+9,y-9,'#e7ecf7',11);
+    });
+  });
+  ctx.globalAlpha=1;
 }
 
 /* ---------- spot elevation query (barycentric interpolation over the TIN) ---------- */
@@ -307,11 +454,66 @@ function importLandXML(text){
     const code=cEl.getAttribute('code')||cEl.getAttribute('desc')||'';
     POINTS.push({id,N:nums[0],E:nums[1],Z:nums[2],code});nPts++;
   });
-  if(!nSurf&&!nPts){hud('no <Surface> (TIN) or <CgPoint> data found in this file');return;}
+  // Civil3D pipe networks: <PipeNetworks><PipeNetwork><Structs><Struct>...</Struct></Structs><Pipes><Pipe>...</Pipe></Pipes></PipeNetwork></PipeNetworks>
+  let nNet=0,nStruct=0,nPipe=0,nPipeSkipped=0;
+  doc.querySelectorAll('PipeNetwork').forEach(netEl=>{
+    const name=netEl.getAttribute('name')||`Network${nNet+1}`;
+    const structByName={};
+    netEl.querySelectorAll('Structs > Struct, Struct').forEach(sEl=>{
+      const sname=sEl.getAttribute('name');
+      const centerEl=sEl.querySelector('Center');
+      const nums=((centerEl&&centerEl.textContent)||'').trim().split(/\s+/).map(Number);
+      if(!sname||nums.length<2||nums.some(n=>!isFinite(n)))return;
+      const rimAttr=sEl.getAttribute('elevRim'),rim=rimAttr!=null?parseFloat(rimAttr):null;
+      const sumpAttr=sEl.getAttribute('elevSump'),sump=sumpAttr!=null?parseFloat(sumpAttr):null;
+      const circ=sEl.querySelector('CircStruct'),rect=sEl.querySelector('RectStruct');
+      const inverts=[];
+      sEl.querySelectorAll('Invert').forEach(iEl=>{
+        const elev=parseFloat(iEl.getAttribute('elev'));
+        if(isFinite(elev))inverts.push({elev,dir:iEl.getAttribute('flowDir')||'',pipe:iEl.getAttribute('refPipe')||''});
+      });
+      structByName[sname]={name:sname,desc:sEl.getAttribute('desc')||'',N:nums[0],E:nums[1],
+        rim:(rim!=null&&isFinite(rim))?rim:null,sump:(sump!=null&&isFinite(sump))?sump:null,
+        shape:circ?'circ':(rect?'rect':''),
+        diameter:circ?parseFloat(circ.getAttribute('diameter')):null,
+        dummy:/dummy/i.test(sEl.getAttribute('desc')||''),inverts};
+      nStruct++;
+    });
+    const pipes=[],skipped=[];
+    netEl.querySelectorAll('Pipes > Pipe, Pipe').forEach(pEl=>{
+      const pname=pEl.getAttribute('name');if(!pname)return;
+      const rs=pEl.getAttribute('refStart'),re=pEl.getAttribute('refEnd');
+      const s1=structByName[rs],s2=structByName[re];
+      // real Civil3D LandXML exports can reference a structure by name that's never actually
+      // defined anywhere in the file (confirmed against this exact export: 19 distinct struct
+      // names are referenced by a refStart/refEnd but have no matching <Struct> at all — likely
+      // structures outside the exported scope). There's no coordinate to draw such a pipe to, so
+      // it's skipped and counted rather than either silently vanishing or inventing a location.
+      if(!s1||!s2){skipped.push({name:pname,missing:!s1?rs:re});return;}
+      const circp=pEl.querySelector('CircPipe');
+      pipes.push({name:pname,desc:pEl.getAttribute('desc')||'',startName:s1.name,endName:s2.name,
+        length:parseFloat(pEl.getAttribute('length')),slope:parseFloat(pEl.getAttribute('slope')),
+        diameter:circp?parseFloat(circp.getAttribute('diameter')):null,
+        material:circp?(circp.getAttribute('material')||''):''});
+      nPipe++;
+    });
+    nPipeSkipped+=skipped.length;
+    if(Object.keys(structByName).length||pipes.length){
+      const layer=`PIPE-${name}`;ensureLayer(layer);
+      PIPE_NETWORKS.push({name,type:netEl.getAttribute('pipeNetType')||'',layer,
+        structByName,structs:Object.values(structByName),pipes,skipped});
+      nNet++;
+    }
+  });
+  if(!nSurf&&!nPts&&!nNet){hud('no <Surface> (TIN), <CgPoint>, or <PipeNetwork> data found in this file');return;}
   renderLayerPanel();updateJobPill();
   $('fitBtn').disabled=false;$('elevBtn').disabled=SURFACES.length===0;
   if(hadNothing)fit();else draw();
-  hud(`imported ${nSurf} surface(s) (${nTri} triangles), ${nPts} point(s) from LandXML`);
+  const parts=[];
+  if(nSurf)parts.push(`${nSurf} surface(s) (${nTri} tri)`);
+  if(nPts)parts.push(`${nPts} point(s)`);
+  if(nNet)parts.push(`${nNet} pipe network(s) (${nStruct} structures, ${nPipe} pipes${nPipeSkipped?`, ${nPipeSkipped} skipped — see ⚠ in Layers`:''})`);
+  hud(`imported ${parts.join(', ')} from LandXML`);
 }
 
 /* ---------- layer manager ---------- */
@@ -321,20 +523,32 @@ function renderLayerPanel(){
   if(!names.length){box.innerHTML='<p class="note">No layers yet — import a DXF or LandXML file.</p>';return;}
   box.innerHTML=names.map(name=>{
     const ly=LAYERS[name];
-    const cnt=ENTITIES.filter(e=>e.layer===name).length+SURFACES.filter(s=>s.layer===name).length;
+    const net=PIPE_NETWORKS.find(n=>n.layer===name);
+    const cnt=ENTITIES.filter(e=>e.layer===name).length+SURFACES.filter(s=>s.layer===name).length
+      +(net?net.structs.length+net.pipes.length:0);
+    const warn=(net&&net.skipped.length)
+      ?` <span title="${net.skipped.length} pipe(s) in this network reference a structure that isn't defined anywhere in the file, so they have nowhere to draw to and were skipped: ${net.skipped.map(s=>s.name+' → missing '+s.missing).join('; ')}" style="color:#ffb86b;cursor:help">⚠${net.skipped.length}</span>`
+      :'';
     return `<div class="layerRow">
       <i class="sw" style="background:${ly.color}"></i>
       <span class="name" title="${name}">${name}</span>
-      <span class="cnt">${cnt}</span>
+      <span class="cnt">${cnt}${warn}</span>
+      <button class="zoomLyr" data-n="${name}" title="Zoom to just this layer's own extent" style="background:none;border:1px solid var(--rule);border-radius:4px;color:var(--mut);cursor:pointer;font-size:11px;padding:2px 5px;flex-shrink:0">🔍</button>
       <label title="Show/hide this layer"><input type="checkbox" class="lv" data-n="${name}" ${ly.visible?'checked':''}>👁</label>
       <label title="Lock this layer — dims it and excludes it from elevation queries, without hiding it"><input type="checkbox" class="ll" data-n="${name}" ${ly.locked?'checked':''}>🔒</label>
     </div>`;
   }).join('');
   box.querySelectorAll('.lv').forEach(c=>c.onchange=()=>{LAYERS[c.dataset.n].visible=c.checked;draw();});
   box.querySelectorAll('.ll').forEach(c=>c.onchange=()=>{LAYERS[c.dataset.n].locked=c.checked;draw();});
+  box.querySelectorAll('.zoomLyr').forEach(b=>b.onclick=()=>zoomToLayer(b.dataset.n));
 }
 $('layersBtn').onclick=()=>{renderLayerPanel();$('layerPanel').classList.toggle('show');};
 $('layerCloseBtn').onclick=()=>$('layerPanel').classList.remove('show');
+$('pipeLabelsBtn').onclick=()=>$('pipeLabelPanel').classList.toggle('show');
+$('pipeLabelCloseBtn').onclick=()=>$('pipeLabelPanel').classList.remove('show');
+[['plRim','rim'],['plDepth','depth'],['plSlope','slope'],['plDia','diameter'],['plInvert','invert']].forEach(([id,key])=>{
+  $(id).onchange=()=>{PIPE_LABEL_SHOW[key]=$(id).checked;draw();};
+});
 
 /* ---------- toolbar wiring ---------- */
 $('dxfInput').onchange=e=>{const f=e.target.files[0];if(!f)return;const rd=new FileReader();

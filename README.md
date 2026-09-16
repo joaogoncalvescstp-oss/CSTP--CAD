@@ -17,10 +17,43 @@ dependencies, and nothing to install.
   interpolated elevation at that exact point (barycentric interpolation
   across whichever triangle you clicked). This is the actual payoff of
   importing a surface model: getting a spot elevation off it without CAD.
-- **📑 Layers** — every imported DXF layer and TIN surface gets its own row:
-  a **👁 visibility** checkbox (show/hide) and a **🔒 lock** checkbox (dims
-  the layer and excludes it from the elevation query, without hiding it —
-  the same distinction a real CAD lock makes).
+- **↥ Import LandXML (TIN / Pipes)** also reads Civil3D **pipe networks**
+  (`<PipeNetworks><PipeNetwork><Structs>`/`<Pipes>`) — manholes, catch
+  basins, and cleanouts as structures; storm/sanitary pipes as lines between
+  them. Each network becomes its own layer. Labels (🏷 Pipe Labels, each
+  independently toggleable) show:
+  - a structure's **rim elevation** and **depth** (Rim − Sump, or Rim minus
+    its lowest invert if no sump elevation is given — the closest
+    computable proxy this data has for a manhole's build/barrel height),
+  - a pipe's **diameter** and **% slope** (straight from the file's own
+    `slope` attribute),
+  - a pipe's **invert elevations** at both ends — these live on the
+    *structure* side of the connection in real LandXML (`<Invert elev
+    flowDir refPipe>`, matched back to the pipe by name), not on the pipe
+    itself, so the viewer resolves that lookup for you.
+  - Labels are zoom-gated (manholes/pipes always draw; text only past a
+    zoom threshold) and use a small collision-avoidance pass so two
+    structures sitting close together (a sanitary and storm manhole at the
+    same intersection is a completely normal real case) don't merge into
+    unreadable overlapping text.
+  - A real Civil3D export can reference a structure name that's never
+    actually defined anywhere in the file (confirmed against a real
+    project file — structures outside the export's own scope). A pipe
+    like that has nowhere to draw to, so it's skipped and counted rather
+    than silently vanishing or inventing a location — check the ⚠ badge
+    next to a pipe-network layer's entity count in the Layers panel for
+    the count and the exact missing structure names.
+- **📑 Layers** — every imported DXF layer, TIN surface, and pipe network
+  gets its own row: a **👁 visibility** checkbox (show/hide), a **🔒 lock**
+  checkbox (dims the layer and excludes it from the elevation query,
+  without hiding it — the same distinction a real CAD lock makes), and a
+  **🔍 zoom-to-layer** button. The last one matters for a real street/
+  alignment corridor project — the whole site can be extremely elongated
+  (e.g. 178ft wide by 5000+ft long isn't unusual), so fitting the WHOLE
+  drawing at a uniform scale (the only geometrically honest way to fit
+  anything) can leave every individual manhole far too small to read;
+  zooming to one network's own extent is the practical way to actually
+  work it.
 - Pan by dragging, zoom with the mouse wheel (zooms toward the cursor).
 
 ## DWG — why it isn't supported directly
@@ -54,7 +87,13 @@ instead (both are a couple of clicks in Civil3D/AutoCAD):
 
 ## Verified
 
-Both parsers, the layer visibility/lock toggles, and the elevation-query
-tool (including its lock-exclusion behavior) were exercised end-to-end in a
-real headless-browser session against synthetic DXF and LandXML files
-covering every supported entity type — zero console errors.
+Both parsers, the layer visibility/lock toggles, the elevation-query tool
+(including its lock-exclusion behavior), and zoom-to-layer were exercised
+end-to-end in a real headless-browser session against synthetic DXF/LandXML
+files covering every supported entity type — zero console errors. The pipe
+network parser, invert lookup, depth calculation, dummy-structure handling,
+and undefined-structure-reference skipping were additionally verified
+against a real Civil3D LandXML export (4 networks, 102 structures, 85
+pipes) with independently-checked ground truth (exact rim/sump/invert
+values, and the 19 structure names — confirmed by grepping the raw file —
+that are referenced but never defined anywhere in it).
