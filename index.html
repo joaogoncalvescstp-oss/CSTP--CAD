@@ -53,7 +53,7 @@ canvas{display:block;width:100%;height:100%;background:var(--bg);cursor:crosshai
     <span class="pill" id="jobpill">no drawing loaded</span>
     <div class="grow"></div>
     <label class="btn file" title="Import a DXF drawing — LINE, LWPOLYLINE, POLYLINE, POINT, CIRCLE, 3DFACE entities each become part of their own DXF layer, shown/hidden/locked from the Layers panel.">↥ Import DXF<input type="file" id="dxfInput" accept=".dxf"></label>
-    <label class="btn file" title="Import LandXML — a TIN surface (Pnts/Faces), CgPoints (COGO/survey points), and/or Civil3D pipe networks (Structs/Pipes: manholes, catch basins, storm/sanitary pipes) are all read from the same file, each landing on its own toggleable layer. Use ⛰ Elevation afterward to click a TIN surface and read an interpolated Z there.">↥ Import LandXML (TIN / Pipes)<input type="file" id="landxmlInput" accept=".xml,.landxml"></label>
+    <label class="btn file" title="Import LandXML — a TIN surface (Pnts/Faces), CgPoints (COGO/survey points), Civil3D pipe networks (Structs/Pipes: manholes, catch basins, storm/sanitary pipes), and horizontal Alignments (CoordGeom Line/Curve/Spiral) are all read from the same file, each landing on its own toggleable layer. Use ⛰ Elevation to read a TIN's Z, or 📍 Label Points to label an alignment's PC/PT/MID.">↥ Import LandXML (TIN / Pipes / Alignments)<input type="file" id="landxmlInput" accept=".xml,.landxml"></label>
     <label class="btn file" title="DWG is Autodesk's proprietary binary format — this viewer has no bundled DWG parser and can't read it directly. Selecting a .dwg here just explains that and tells you how to get the same data in another way.">↥ Import DWG<input type="file" id="dwgInput" accept=".dwg"></label>
     <button class="btn" id="fitBtn" disabled title="Frame everything currently loaded (F)">⊡ Fit</button>
     <button class="btn" id="elevBtn" disabled title="Click a visible, unlocked TIN surface to read its interpolated elevation at that point (Esc cancels) — 2D only">⛰ Elevation</button>
@@ -61,6 +61,7 @@ canvas{display:block;width:100%;height:100%;background:var(--bg);cursor:crosshai
     <button class="btn" id="orbitBtn" disabled title="Toggle 3D orbit view (O) — drag to rotate (re-centers on whatever's under the cursor), shift-drag or middle-drag to pan, wheel to zoom">⟲ 3D</button>
     <button class="btn" id="mapBtn" title="Aerial imagery background, tiled from Ramsey County MN's own imagery server (falls back to Esri/USGS NAIP) — only accurate for a job in that county's own survey coordinate system, 2D view only">🗺 Map</button>
     <button class="btn" id="pipeLabelsBtn" title="Choose which manhole/pipe fields show as on-canvas labels">🏷 Pipe Labels</button>
+    <button class="btn" id="geomLabelsBtn" disabled title="Label PC/PT/MID key geometry points — pick a reference alignment for stationing, then the alignment or line to label (needs a LandXML file with an Alignment)">📍 Label Points</button>
     <button class="btn gold" id="layersBtn" title="Show/hide and lock layers">📑 Layers</button>
   </div>
   <div class="main">
@@ -71,6 +72,9 @@ canvas{display:block;width:100%;height:100%;background:var(--bg);cursor:crosshai
       <div><i style="background:#8fe3a0"></i>LandXML CgPoint</div>
       <div><i style="background:var(--gold)"></i>elevation query</div>
       <div>● manhole/CB · ▬ pipe (own layer color)</div>
+      <div><i style="background:#ff7ab3"></i>▲ PC (point of curvature)</div>
+      <div><i style="background:#6ee0c8"></i>■ PT (point of tangency)</div>
+      <div><i style="background:#c792ff"></i>◆ MID (curve midpoint)</div>
     </div>
     <div class="snapbox" id="snapBox">
       <label><input type="checkbox" id="snEndpoint" checked>▢ endpoint</label>
@@ -91,6 +95,20 @@ canvas{display:block;width:100%;height:100%;background:var(--bg);cursor:crosshai
       <label style="display:flex;align-items:center;gap:6px;margin-bottom:6px;cursor:pointer"><input type="checkbox" id="plDia" checked> Pipe diameter</label>
       <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="plInvert" checked> Pipe invert elevations</label>
     </div>
+    <div class="panel" id="geomLabelPanel">
+      <h4><span>Label Geometry Points</span><button id="geomLabelCloseBtn" title="Close">✕</button></h4>
+      <p class="note" style="margin-bottom:8px">1) Pick the <b>reference alignment</b> — this is what defines station 0 and direction. 2) Pick the <b>target</b> to label: an alignment (its own curves give real PC/PT/MID) or a plain line/layer (no curve data, so only its segment MID points can be labeled). Every labeled point's station is always the closest matching station/offset along the reference — picking the same alignment for both gives its own native stationing.</p>
+      <label style="display:block;margin-bottom:4px;font-size:11px;color:var(--mut)">Reference alignment (stationing)</label>
+      <select id="geomRefSel" style="width:100%;margin-bottom:8px;background:var(--panel2);color:var(--text);border:1px solid var(--rule);border-radius:5px;padding:5px"></select>
+      <label style="display:block;margin-bottom:4px;font-size:11px;color:var(--mut)">Target alignment or line to label</label>
+      <select id="geomTargetSel" style="width:100%;margin-bottom:8px;background:var(--panel2);color:var(--text);border:1px solid var(--rule);border-radius:5px;padding:5px"></select>
+      <button class="btn gold" id="geomApplyBtn" style="width:100%;margin-bottom:10px">Label points</button>
+      <label style="display:flex;align-items:center;gap:6px;margin-bottom:6px;cursor:pointer"><input type="checkbox" id="glAll" checked> All types</label>
+      <label style="display:flex;align-items:center;gap:6px;margin-bottom:6px;cursor:pointer"><input type="checkbox" id="glPC" checked> <span style="color:#ff7ab3">▲ PC</span> — point of curvature</label>
+      <label style="display:flex;align-items:center;gap:6px;margin-bottom:6px;cursor:pointer"><input type="checkbox" id="glPT" checked> <span style="color:#6ee0c8">■ PT</span> — point of tangency</label>
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="glMID" checked> <span style="color:#c792ff">◆ MID</span> — curve midpoint</label>
+      <p class="note" id="geomLabelStatus" style="margin-top:8px"></p>
+    </div>
     <div class="hud" id="hud">Import a DXF or LandXML (TIN / pipe network) file to begin. Drag to pan, wheel to zoom.</div>
   </div>
 </div>
@@ -109,6 +127,9 @@ let SURFACES=[];                                           // imported LandXML T
 let POINTS=[];                                             // imported LandXML CgPoints: {id,E,N,Z,code}
 let PIPE_NETWORKS=[];                                       // imported LandXML Civil3D pipe networks: {name,type,layer,structs:[{name,desc,E,N,rim,sump,shape,diameter,dummy,inverts:[{elev,dir,pipe}]}],pipes:[{name,desc,startName,endName,length,slope,diameter,material}]}
 let PIPE_LABEL_SHOW={rim:true,depth:true,slope:true,diameter:true,invert:true};   // which fields the pipe/manhole labels show
+let ALIGNMENTS=[];                                          // imported LandXML horizontal alignments: {name,layer,elements:[{type:'line'|'curve'|'spiral',start,end,staStart,length,center?,radius?,rot?,a0?,a1?}]} — the only import source with real PC/PT/station data (a plain DXF line has no curve/chainage info at all)
+let GEOM_POINTS=[];                                          // last "📍 Label Points" result: [{type:'PC'|'PT'|'MID',E,N,Z,sta}], sta = station along the chosen reference alignment (null if it couldn't be projected)
+let GEOM_LABEL_SHOW={pc:true,pt:true,mid:true};              // which of PC/PT/MID currently draw (independent of what was computed)
 let elevPick=false;                                        // ⛰ Elevation tool armed, waiting for a canvas click
 let spot=null;                                             // {E,N,z,name} — last elevation-query result, drawn until cleared
 let drag=null;                                             // {sx,sy,x0,y0} while panning
@@ -157,11 +178,13 @@ function updateJobPill(){
   const tris=SURFACES.reduce((s,x)=>s+x.tris.length,0);
   const pipes=PIPE_NETWORKS.reduce((s,x)=>s+x.pipes.length,0);
   const structs=PIPE_NETWORKS.reduce((s,x)=>s+x.structs.length,0);
+  const curves=ALIGNMENTS.reduce((s,a)=>s+a.elements.filter(e=>e.type==='curve').length,0);
   const parts=[];
   if(ENTITIES.length)parts.push(`${ENTITIES.length} DXF entit${ENTITIES.length===1?'y':'ies'}`);
   if(tris)parts.push(`${tris} tri`);
   if(POINTS.length)parts.push(`${POINTS.length} pt${POINTS.length===1?'':'s'}`);
   if(pipes||structs)parts.push(`${pipes} pipe${pipes===1?'':'s'}, ${structs} struct${structs===1?'':'s'}`);
+  if(ALIGNMENTS.length)parts.push(`${ALIGNMENTS.length} alignment${ALIGNMENTS.length===1?'':'s'} (${curves} curve${curves===1?'':'s'})`);
   $('jobpill').textContent=n?`${n} layer${n===1?'':'s'} · ${parts.join(' · ')}`:'no drawing loaded';
 }
 
@@ -371,6 +394,8 @@ function draw2D(){
     if(view.s>2){ctx.font='600 10px ui-monospace,monospace';drawLabel(p.id,x+6,y-5,'#cfe0ff');}});
   // Civil3D pipe networks (manholes/CBs + pipes)
   drawPipeNetworks((E,N)=>W2S(E,N),view.s);
+  // 📍 labeled PC/PT/MID key geometry points
+  drawGeomLabels((E,N)=>W2S(E,N));
   // last elevation-query marker
   if(spot){const[x,y]=W2S(spot.E,spot.N);
     ctx.strokeStyle='#ffd24a';ctx.lineWidth=1.6;ctx.beginPath();
@@ -412,6 +437,7 @@ function draw3D(){
     ctx.fillStyle='#8fe3a0';ctx.beginPath();ctx.arc(s3[0],s3[1],3,0,Math.PI*2);ctx.fill();
     if(orbit.s>2){ctx.font='600 10px ui-monospace,monospace';drawLabel(p.id,s3[0]+6,s3[1]-5,'#cfe0ff');}});
   drawPipeNetworks((E,N,Z)=>P3(E,N,Z),orbit.s);
+  drawGeomLabels((E,N,Z)=>P3(E,N,Z));
   if(spot){const s3=P3(spot.E,spot.N,spot.z);
     ctx.strokeStyle='#ffd24a';ctx.lineWidth=1.6;ctx.beginPath();
     ctx.moveTo(s3[0]-8,s3[1]);ctx.lineTo(s3[0]+8,s3[1]);ctx.moveTo(s3[0],s3[1]-8);ctx.lineTo(s3[0],s3[1]+8);ctx.stroke();
@@ -489,6 +515,180 @@ function drawPipeNetworks(proj,scale){
     });
   });
   ctx.globalAlpha=1;
+}
+
+/* ---------- 📍 key geometry points (PC/PT/MID) + reference stationing ----------
+   Only a LandXML <Alignment><CoordGeom> actually carries curve/chainage data — a plain
+   DXF LINE/LWPOLYLINE has no curvature or station of its own, so it can only ever
+   contribute a MID (its own midpoint). Workflow: pick a reference alignment (station 0 +
+   direction), then a target (another alignment, or a plain line/layer) to label — every
+   labeled point's displayed station is always the closest station/offset projection onto
+   the reference, so picking the same alignment for both recovers its own native stations. */
+function formatStation(sta){
+  if(sta==null||!isFinite(sta))return '?';
+  const neg=sta<0,a=Math.abs(sta);
+  const whole=Math.floor(a/100),rem=a-whole*100;
+  return `${neg?'-':''}${whole}+${rem.toFixed(2).padStart(5,'0')}`;
+}
+// total swept angle from a0 to a1 in the curve's own rotation direction, magnitude in (0,2π) —
+// shared by sampling (drawing), the arc midpoint, and station projection so all three agree.
+function curveSweep(el){
+  let d=el.a1-el.a0;
+  if(el.rot==='ccw'){while(d<=0)d+=2*Math.PI;}
+  else{while(d>=0)d-=2*Math.PI;}
+  return d;
+}
+function arcMidpoint(el){
+  const am=el.a0+curveSweep(el)/2;
+  return {E:el.center.E+el.radius*Math.cos(am),N:el.center.N+el.radius*Math.sin(am)};
+}
+function sampleArc(el,steps=32){
+  const sweep=curveSweep(el),pts=[];
+  for(let i=0;i<=steps;i++){const a=el.a0+sweep*i/steps;
+    pts.push({E:el.center.E+el.radius*Math.cos(a),N:el.center.N+el.radius*Math.sin(a),Z:el.start.Z||0});}
+  return pts;
+}
+// nearest station/offset of (E,N) against one alignment element — clamped to that element's
+// own span, so a point beyond a curve's PT reports distance to the PT itself, not a phantom
+// point on the circle's far side.
+function projectOntoElement(el,E,N){
+  if(el.type==='curve'){
+    const sweep=curveSweep(el);
+    let d=Math.atan2(N-el.center.N,E-el.center.E)-el.a0;
+    d-=Math.floor(d/(2*Math.PI))*2*Math.PI;             // wrap into [0,2π)
+    if(sweep<0)d-=2*Math.PI;                            // align sign with this curve's own rotation
+    const t=d/sweep;
+    if(t<0)return{sta:el.staStart,dist:Math.hypot(E-el.start.E,N-el.start.N)};
+    if(t>1)return{sta:el.staStart+el.length,dist:Math.hypot(E-el.end.E,N-el.end.N)};
+    return{sta:el.staStart+t*el.length,dist:Math.abs(Math.hypot(E-el.center.E,N-el.center.N)-el.radius)};
+  }
+  const dx=el.end.E-el.start.E,dy=el.end.N-el.start.N,L2=dx*dx+dy*dy||1;
+  let t=((E-el.start.E)*dx+(N-el.start.N)*dy)/L2;t=Math.max(0,Math.min(1,t));
+  const fx=el.start.E+t*dx,fy=el.start.N+t*dy;
+  return{sta:el.staStart+t*el.length,dist:Math.hypot(E-fx,N-fy)};
+}
+function projectStation(alignment,E,N){
+  let best=null;
+  alignment.elements.forEach(el=>{const r=projectOntoElement(el,E,N);if(!best||r.dist<best.dist)best=r;});
+  return best?best.sta:null;
+}
+// the raw (unstationed) key points of whatever's being labeled — an alignment's own curves
+// give real PC (start)/PT (end)/MID (arc midpoint); a plain line/layer has no curve data at
+// all, so the only honest point to offer is each segment's own midpoint (never invent a
+// PC/PT that isn't backed by real curve geometry).
+function collectKeyPoints(target){
+  const pts=[];
+  if(target.kind==='alignment'){
+    target.obj.elements.forEach(el=>{
+      if(el.type!=='curve')return;
+      pts.push({type:'PC',E:el.start.E,N:el.start.N,Z:el.start.Z||0});
+      pts.push({type:'PT',E:el.end.E,N:el.end.N,Z:el.end.Z||0});
+      const m=arcMidpoint(el);
+      pts.push({type:'MID',E:m.E,N:m.N,Z:((el.start.Z||0)+(el.end.Z||0))/2});
+    });
+  }else{
+    ENTITIES.forEach(e=>{
+      if(e.layer!==target.name)return;
+      if(e.type==='line'&&e.pts.length===2){
+        const[a,b]=e.pts;pts.push({type:'MID',E:(a.E+b.E)/2,N:(a.N+b.N)/2,Z:((a.Z||0)+(b.Z||0))/2});
+      }else if(e.type==='poly'){
+        for(let i=0;i<e.pts.length-1;i++){const a=e.pts[i],b=e.pts[i+1];
+          pts.push({type:'MID',E:(a.E+b.E)/2,N:(a.N+b.N)/2,Z:((a.Z||0)+(b.Z||0))/2});}
+      }
+    });
+  }
+  return pts;
+}
+const GEOM_TYPE_COLOR={PC:'#ff7ab3',PT:'#6ee0c8',MID:'#c792ff'};
+function drawGeomMarker(x,y,type,color){
+  ctx.fillStyle=color;ctx.beginPath();
+  if(type==='PC'){ctx.moveTo(x,y-5);ctx.lineTo(x+5,y+4);ctx.lineTo(x-5,y+4);ctx.closePath();}
+  else if(type==='PT'){ctx.rect(x-4,y-4,8,8);}
+  else{ctx.moveTo(x,y-5);ctx.lineTo(x+5,y);ctx.lineTo(x,y+5);ctx.lineTo(x-5,y);ctx.closePath();}
+  ctx.fill();
+}
+function drawGeomLabels(proj){
+  if(!GEOM_POINTS.length)return;
+  GEOM_POINTS.forEach(p=>{
+    if(!GEOM_LABEL_SHOW[p.type.toLowerCase()])return;
+    const[x,y]=proj(p.E,p.N,p.Z||0);
+    const color=GEOM_TYPE_COLOR[p.type];
+    drawGeomMarker(x,y,p.type,color);
+    ctx.font='700 10px ui-monospace,monospace';
+    placeLabelBlock([p.type,`STA ${formatStation(p.sta)}`],x+7,y-7,color,11);
+  });
+}
+// LandXML <Alignment><CoordGeom><Line/Curve/Spiral> — the actual bridge for PC/PT/station
+// data (Line/Curve carry explicit Start/End/Center/radius/rot; a Spiral's true easement-curve
+// shape isn't modeled here, only its chord, since spirals have no PC/PT/MID of their own —
+// their key points are TS/SC/CS/ST, out of this feature's scope).
+function importAlignments(doc){
+  let nAlign=0,nCurve=0;
+  doc.querySelectorAll('Alignment').forEach(alEl=>{
+    const name=alEl.getAttribute('name')||`Alignment${ALIGNMENTS.length+nAlign+1}`;
+    let sta=parseFloat(alEl.getAttribute('staStart'));if(!isFinite(sta))sta=0;
+    const coordGeom=alEl.querySelector('CoordGeom');if(!coordGeom)return;
+    const elements=[];
+    Array.from(coordGeom.children).forEach(el=>{
+      const getPt=sel=>{const p=el.querySelector(sel);if(!p)return null;
+        const n=(p.textContent||'').trim().split(/\s+/).map(Number);
+        return n.length>=2&&n.slice(0,2).every(isFinite)?{N:n[0],E:n[1],Z:isFinite(n[2])?n[2]:0}:null;};   // LandXML point text order is Northing Easting Elevation, same as Surface/CgPoint above
+      const staAttr=el.getAttribute('staStart');
+      const elemSta=isFinite(parseFloat(staAttr))?parseFloat(staAttr):sta;
+      if(el.tagName==='Line'){
+        const start=getPt('Start'),end=getPt('End');if(!start||!end)return;
+        const length=Math.hypot(end.E-start.E,end.N-start.N);
+        elements.push({type:'line',start,end,staStart:elemSta,length});sta=elemSta+length;
+      }else if(el.tagName==='Curve'){
+        const start=getPt('Start'),end=getPt('End'),center=getPt('Center');if(!start||!end||!center)return;
+        let radius=parseFloat(el.getAttribute('radius'));if(!isFinite(radius))radius=Math.hypot(start.E-center.E,start.N-center.N);
+        const a0=Math.atan2(start.N-center.N,start.E-center.E),a1=Math.atan2(end.N-center.N,end.E-center.E);
+        let rot=(el.getAttribute('rot')||'').toLowerCase();
+        if(rot!=='cw'&&rot!=='ccw'){
+          const cross=(start.E-center.E)*(end.N-center.N)-(start.N-center.N)*(end.E-center.E);
+          rot=cross>=0?'ccw':'cw';
+        }
+        let length=parseFloat(el.getAttribute('length'));
+        const elTmp={a0,a1,rot};
+        if(!isFinite(length))length=Math.abs(curveSweep(elTmp))*radius;
+        elements.push({type:'curve',start,end,center,radius,length,rot,staStart:elemSta,a0,a1});
+        sta=elemSta+length;nCurve++;
+      }else if(el.tagName==='Spiral'){
+        const start=getPt('Start'),end=getPt('End');if(!start||!end)return;
+        let length=parseFloat(el.getAttribute('length'));if(!isFinite(length))length=Math.hypot(end.E-start.E,end.N-start.N);
+        elements.push({type:'spiral',start,end,staStart:elemSta,length});sta=elemSta+length;
+      }
+    });
+    if(!elements.length)return;
+    const layer=`ALIGN-${name}`;ensureLayer(layer);
+    elements.forEach(el=>{
+      if(el.type==='curve')ENTITIES.push({type:'poly',layer,pts:sampleArc(el),closed:false});
+      else ENTITIES.push({type:'line',layer,pts:[{E:el.start.E,N:el.start.N,Z:el.start.Z||0},{E:el.end.E,N:el.end.N,Z:el.end.Z||0}]});
+    });
+    ALIGNMENTS.push({name,layer,elements});nAlign++;
+  });
+  return{nAlign,nCurve};
+}
+function renderGeomLabelSelects(){
+  const refSel=$('geomRefSel'),tgtSel=$('geomTargetSel');
+  const prevRef=refSel.value,prevTgt=tgtSel.value;
+  refSel.innerHTML=ALIGNMENTS.length
+    ?ALIGNMENTS.map(a=>`<option value="align:${a.name}">${a.name}</option>`).join('')
+    :'<option value="">— import a LandXML file with an Alignment first —</option>';
+  const layerOpts=Object.keys(LAYERS).filter(n=>!n.startsWith('ALIGN-')&&!n.startsWith('TIN-')&&!n.startsWith('PIPE-')
+    &&ENTITIES.some(e=>e.layer===n&&(e.type==='line'||e.type==='poly')));
+  const opts=[];
+  if(ALIGNMENTS.length)opts.push(`<optgroup label="Alignments">${ALIGNMENTS.map(a=>`<option value="align:${a.name}">${a.name}</option>`).join('')}</optgroup>`);
+  if(layerOpts.length)opts.push(`<optgroup label="Lines / layers">${layerOpts.map(n=>`<option value="layer:${n}">${n}</option>`).join('')}</optgroup>`);
+  tgtSel.innerHTML=opts.join('')||'<option value="">— nothing to label —</option>';
+  if(prevRef&&[...refSel.options].some(o=>o.value===prevRef))refSel.value=prevRef;
+  if(prevTgt&&[...tgtSel.options].some(o=>o.value===prevTgt))tgtSel.value=prevTgt;
+}
+function resolveTargetRef(val){
+  if(!val)return null;
+  if(val.startsWith('align:')){const a=ALIGNMENTS.find(x=>x.name===val.slice(6));return a?{kind:'alignment',obj:a}:null;}
+  if(val.startsWith('layer:'))return{kind:'layer',name:val.slice(6)};
+  return null;
 }
 
 /* ---------- aerial MAP background (ported from FBK-Checker) ---------- */
@@ -851,15 +1051,18 @@ function importLandXML(text){
       nNet++;
     }
   });
-  if(!nSurf&&!nPts&&!nNet){hud('no <Surface> (TIN), <CgPoint>, or <PipeNetwork> data found in this file');return;}
+  const{nAlign,nCurve}=importAlignments(doc);
+  if(!nSurf&&!nPts&&!nNet&&!nAlign){hud('no <Surface> (TIN), <CgPoint>, <PipeNetwork>, or <Alignment> data found in this file');return;}
   renderLayerPanel();updateJobPill();
   $('fitBtn').disabled=false;$('elevBtn').disabled=SURFACES.length===0;
   $('orbitBtn').disabled=false;$('snapBtn').disabled=false;
+  $('geomLabelsBtn').disabled=ALIGNMENTS.length===0;
   if(hadNothing)fit();else draw();
   const parts=[];
   if(nSurf)parts.push(`${nSurf} surface(s) (${nTri} tri)`);
   if(nPts)parts.push(`${nPts} point(s)`);
   if(nNet)parts.push(`${nNet} pipe network(s) (${nStruct} structures, ${nPipe} pipes${nPipeSkipped?`, ${nPipeSkipped} skipped — see ⚠ in Layers`:''})`);
+  if(nAlign)parts.push(`${nAlign} alignment(s) (${nCurve} curve${nCurve===1?'':'s'}) — use 📍 Label Points for PC/PT/MID`);
   hud(`imported ${parts.join(', ')} from LandXML`);
 }
 
@@ -896,6 +1099,30 @@ $('pipeLabelCloseBtn').onclick=()=>$('pipeLabelPanel').classList.remove('show');
 [['plRim','rim'],['plDepth','depth'],['plSlope','slope'],['plDia','diameter'],['plInvert','invert']].forEach(([id,key])=>{
   $(id).onchange=()=>{PIPE_LABEL_SHOW[key]=$(id).checked;draw();};
 });
+$('geomLabelsBtn').onclick=()=>{if($('geomLabelsBtn').disabled)return;renderGeomLabelSelects();$('geomLabelPanel').classList.toggle('show');};
+$('geomLabelCloseBtn').onclick=()=>$('geomLabelPanel').classList.remove('show');
+$('geomApplyBtn').onclick=()=>{
+  const ref=ALIGNMENTS.find(a=>a.name===($('geomRefSel').value||'').slice(6));
+  const target=resolveTargetRef($('geomTargetSel').value);
+  if(!ref||!target){$('geomLabelStatus').textContent='pick a reference alignment and a target first.';return;}
+  const raw=collectKeyPoints(target);
+  GEOM_POINTS=raw.map(p=>({...p,sta:projectStation(ref,p.E,p.N)}));
+  const targetName=target.kind==='alignment'?target.obj.name:target.name;
+  const nPC=GEOM_POINTS.filter(p=>p.type==='PC').length,nPT=GEOM_POINTS.filter(p=>p.type==='PT').length,nMID=GEOM_POINTS.filter(p=>p.type==='MID').length;
+  let msg=`labeled ${GEOM_POINTS.length} point(s) on "${targetName}" — ${nPC} PC, ${nPT} PT, ${nMID} MID, stationed along "${ref.name}"`;
+  if(target.kind==='layer')msg+=' (plain line/layer has no curve data — only MID computed)';
+  $('geomLabelStatus').textContent=msg;hud(msg);
+  draw();
+};
+function syncGeomAll(){$('glAll').checked=$('glPC').checked&&$('glPT').checked&&$('glMID').checked;}
+[['glPC','pc'],['glPT','pt'],['glMID','mid']].forEach(([id,key])=>{
+  $(id).onchange=()=>{GEOM_LABEL_SHOW[key]=$(id).checked;syncGeomAll();draw();};
+});
+$('glAll').onchange=()=>{
+  const v=$('glAll').checked;
+  ['glPC','glPT','glMID'].forEach(id=>$(id).checked=v);
+  GEOM_LABEL_SHOW={pc:v,pt:v,mid:v};draw();
+};
 
 /* ---------- toolbar wiring ---------- */
 $('dxfInput').onchange=e=>{const f=e.target.files[0];if(!f)return;const rd=new FileReader();
@@ -1004,7 +1231,7 @@ window.addEventListener('resize',resize);
 resize();
 
 /* ---------- version badge — bumped on every push, mirroring FBK-Checker's own fruit badge ---------- */
-const VERSION={animal:'🦊',name:'FOX',build:1};
+const VERSION={animal:'🦉',name:'OWL',build:2};
 function rotateAnimal(){const b=$('animalBadge');b.style.transform='rotate(360deg)';setTimeout(()=>{b.style.transform='rotate(0deg)';},200);}
 function showVersion(){const b=$('animalBadge');b.textContent=`${VERSION.animal} ${VERSION.name}`;
   b.title=`Build ${VERSION.build} · ${VERSION.name} — if this matches what Claude pushed, you're on the latest (no cache)`;}

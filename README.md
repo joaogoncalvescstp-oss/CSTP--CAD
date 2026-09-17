@@ -54,6 +54,27 @@ dependencies, and nothing to install.
   anything) can leave every individual manhole far too small to read;
   zooming to one network's own extent is the practical way to actually
   work it.
+- **↥ Import LandXML (TIN / Pipes / Alignments)** also reads horizontal
+  **Alignments** (`<Alignments><Alignment><CoordGeom>` — `Line`, `Curve`,
+  `Spiral`), the one import format that actually carries real curve/chainage
+  data (a plain DXF `LINE`/`LWPOLYLINE` has no curvature or station of its
+  own). Each alignment becomes its own layer (tangents as lines, curves
+  sampled as a smooth arc).
+- **📍 Label Points** labels an alignment's key geometry points — **PC**
+  (point of curvature), **PT** (point of tangency), and **MID** (curve
+  midpoint) — each with its station. The workflow matches how this is
+  actually done in Civil3D: first pick the **reference alignment**, which
+  defines station 0 and direction; then pick the **target** to label, either
+  another alignment (its own curves give real PC/PT/MID) or a plain DXF
+  line/layer (which has no curve data, so only its segment midpoints can
+  honestly be labeled as MID — PC/PT are never invented without real
+  curvature behind them). Every labeled point's station is the closest
+  station/offset projection onto the reference alignment as a whole (not
+  just its nearest single segment), so picking the same alignment as both
+  reference and target recovers its own native stationing, and labeling a
+  different target reports the station it would fall at *if* it were
+  chained onto the reference. PC/PT/MID are individually toggleable (plus an
+  "All types" convenience toggle) from the same panel.
 - Pan by dragging, zoom with the mouse wheel (zooms toward the cursor).
 
 ## 3D orbit view, aerial MAP background, and CAD object snap
@@ -135,8 +156,33 @@ instead (both are a couple of clicks in Civil3D/AutoCAD):
   not a sign on the point number.
 - A `<Surface>` with no faces that actually resolve to 3 real points is
   skipped rather than added as an empty layer.
+- Same Northing/Easting/Elevation text order applies to an `<Alignment>`
+  geometry element's `<Start>`/`<End>`/`<Center>` points.
+- A `<Curve>`'s rotation direction comes from its own `rot="cw"|"ccw"`
+  attribute when present, otherwise it's inferred from the cross product of
+  the start/end vectors off the center — and a missing `length` is
+  recomputed from the swept angle and radius rather than left blank, since
+  both are always derivable from the point/radius data every `<Curve>`
+  already carries.
+- A `<Spiral>` is drawn as a straight chord between its `Start`/`End` (its
+  true Euler-spiral shape isn't modeled) and contributes no PC/PT/MID of its
+  own — a spiral's key points are TS/SC/CS/ST, out of this feature's scope.
 
 ## Verified
+
+Alignment import and 📍 Label Points were exercised end-to-end in a real
+headless-browser session against a synthetic LandXML alignment (a tangent →
+90°/200'-radius curve → tangent): the curve's PC/PT/MID landed at their
+exact expected coordinates and stations (`11+00.00` / `14+14.16` /
+`12+57.08`), the curve itself rendered as a smooth sampled arc (not a
+straight chord), and a plain DXF line target correctly produced only a MID
+(no fabricated PC/PT) stationed by projecting onto the *nearest* element of
+the reference alignment as a whole — including correctly preferring a
+nearby curve segment over a closer-looking straight one once actual
+perpendicular/radial offset was compared. The panel's reference/target
+dropdowns, the PC/PT/MID display checkboxes (individually and via "All
+types"), and show/hide of the panel were all driven programmatically with
+zero console errors.
 
 Both parsers, the layer visibility/lock toggles, the elevation-query tool
 (including its lock-exclusion behavior), and zoom-to-layer were exercised
