@@ -56,25 +56,54 @@ dependencies, and nothing to install.
   work it.
 - **↥ Import LandXML (TIN / Pipes / Alignments)** also reads horizontal
   **Alignments** (`<Alignments><Alignment><CoordGeom>` — `Line`, `Curve`,
-  `Spiral`), the one import format that actually carries real curve/chainage
-  data (a plain DXF `LINE`/`LWPOLYLINE` has no curvature or station of its
-  own). Each alignment becomes its own layer (tangents as lines, curves
-  sampled as a smooth arc).
-- **📍 Label Points** labels an alignment's key geometry points — **PC**
-  (point of curvature), **PT** (point of tangency), and **MID** (curve
-  midpoint) — each with its station. The workflow matches how this is
-  actually done in Civil3D: first pick the **reference alignment**, which
-  defines station 0 and direction; then pick the **target** to label, either
-  another alignment (its own curves give real PC/PT/MID) or a plain DXF
-  line/layer (which has no curve data, so only its segment midpoints can
-  honestly be labeled as MID — PC/PT are never invented without real
-  curvature behind them). Every labeled point's station is the closest
-  station/offset projection onto the reference alignment as a whole (not
-  just its nearest single segment), so picking the same alignment as both
-  reference and target recovers its own native stationing, and labeling a
-  different target reports the station it would fall at *if* it were
-  chained onto the reference. PC/PT/MID are individually toggleable (plus an
-  "All types" convenience toggle) from the same panel.
+  `Spiral`), a sibling **`<Profile><ProfAlign>`** (vertical curves), and
+  **`<StaEquation>`** (station equations) — the one import format that
+  actually carries real curve/chainage/profile data (a plain DXF
+  `LINE`/`LWPOLYLINE` has no curvature or station of its own). Each
+  alignment becomes its own layer (tangents as lines, curves sampled as a
+  smooth arc).
+- **📍 Label Points** labels an alignment's key geometry points across four
+  categories, each with its station (and elevation, for vertical points):
+  - **Horizontal curve** — PC, PT, PI (only when the file's own `<PI>` is
+    given — never derived by trig), MID (arc midpoint), CC (the circle's own
+    center — off the physical curve, at radius distance), PCC/PRC (compound/
+    reverse curve, where two curves meet with no tangent between).
+  - **Spiral transition** — TS/SC/CS/ST (the exact junction coordinates
+    between a line/curve and a spiral — these are file-given boundary
+    points even though a spiral's own interior shape is drawn as a straight
+    chord, see below), SPI (a spiral's own `<PI>`, when given), SS (spiral-
+    to-spiral).
+  - **Vertical / profile** — PVC/PVT/PVI (from each `<Profile>` grade break
+    and its optional vertical curve length), PVCC/PVRC (two vertical curves
+    meeting with no tangent between), and Hi/Lo (the curve's own turning
+    point, only reported when it actually falls inside the curve). These are
+    plotted **on this same plan-view canvas** — not a separate elevation/
+    station graph — by looking up each one's station on the alignment's own
+    horizontal geometry, so you see exactly where on the ground each
+    vertical event sits, alongside its station and design elevation.
+  - **Alignment reference** — POB/POE (the chain's own start/end) and EQN
+    (a station equation's back/ahead numbers, plotted at its physical
+    location).
+  - **Custom** — type station(s) (e.g. `12+50, 18+00`) to drop a POT/POC/POS
+    at an arbitrary point along the target alignment.
+
+  The workflow matches how this is actually done in Civil3D: first pick the
+  **reference alignment**, which defines station 0 and direction; then pick
+  the **target** to label, either another alignment (its own geometry gives
+  every real point type above) or a plain DXF line/layer (which has no
+  curve/profile data at all, so only its segment midpoints can honestly be
+  labeled as MID — nothing else is ever invented without real geometry
+  behind it). Most point types' displayed station is the closest station/
+  offset projection onto the reference alignment as a whole (not just its
+  nearest single segment), so picking the same alignment as both reference
+  and target recovers native stationing; EQN, POT/POC/POS, and every
+  vertical/profile point instead always keep the station they're actually
+  defined at, since re-stationing a profile point or an authored station
+  equation against an unrelated alignment wouldn't mean anything. CC never
+  shows a station at all. Display is toggleable by category (plus an "all
+  categories" convenience toggle) — 25 individual colors would be
+  unreadable, so color/marker-shape denote the category at a glance while
+  the printed 2-4 letter code always gives the exact point type.
 - Pan by dragging, zoom with the mouse wheel (zooms toward the cursor).
 
 ## 3D orbit view, aerial MAP background, and CAD object snap
@@ -165,24 +194,65 @@ instead (both are a couple of clicks in Civil3D/AutoCAD):
   both are always derivable from the point/radius data every `<Curve>`
   already carries.
 - A `<Spiral>` is drawn as a straight chord between its `Start`/`End` (its
-  true Euler-spiral shape isn't modeled) and contributes no PC/PT/MID of its
-  own — a spiral's key points are TS/SC/CS/ST, out of this feature's scope.
+  true Euler-spiral interior shape isn't modeled) — but those two endpoints
+  are exact, file-given coordinates regardless, so its TS/SC/CS/ST are
+  still labeled correctly; only a point *inside* the spiral (a typed POS
+  station) uses the same chord approximation for its position.
+- A `<Curve>`/`<Spiral>`'s PI is only labeled when the file gives an
+  explicit `<PI>` point — it's never derived by trigonometry, since that
+  would mean guessing a tangent intersection the source data didn't
+  actually provide.
+- `<Profile><ProfAlign>` is read as a sequence of `<PVI>sta elev</PVI>`
+  grade breaks, where any `*Curve length="...">` element (`ParaCurve`,
+  `CircCurve`, `UnsymParaCurve`, …) immediately following a `<PVI>` in the
+  file applies a vertical curve of that length to the PVI just before it —
+  the ordering every real Civil3D export uses. The curve's length is always
+  split symmetrically about its PVI (by station), and its shape is treated
+  as a parabola regardless of the curve tag's own name (a true circular
+  vertical curve is a near-identical-in-practice approximation of a
+  parabola over these lengths, so this is a documented simplification, not
+  an error).
+- `<StaEquation staBack="..." staAhead="...">` is labeled at its physical
+  break point (using the *back* station, the side that's still physically
+  continuous). Stations elsewhere in the alignment are **not** renumbered
+  past the equation — a station equation's whole point is to let numbering
+  jump, and correctly re-deriving every downstream station through one (or
+  several, compounding) equations is out of this feature's scope; the
+  equation itself is always labeled correctly, just not propagated.
 
 ## Verified
 
 Alignment import and 📍 Label Points were exercised end-to-end in a real
-headless-browser session against a synthetic LandXML alignment (a tangent →
-90°/200'-radius curve → tangent): the curve's PC/PT/MID landed at their
-exact expected coordinates and stations (`11+00.00` / `14+14.16` /
-`12+57.08`), the curve itself rendered as a smooth sampled arc (not a
-straight chord), and a plain DXF line target correctly produced only a MID
-(no fabricated PC/PT) stationed by projecting onto the *nearest* element of
-the reference alignment as a whole — including correctly preferring a
-nearby curve segment over a closer-looking straight one once actual
-perpendicular/radial offset was compared. The panel's reference/target
-dropdowns, the PC/PT/MID display checkboxes (individually and via "All
-types"), and show/hide of the panel were all driven programmatically with
-zero console errors.
+headless-browser session, in two passes:
+
+- A simple tangent → 90°/200'-radius curve → tangent alignment: the curve's
+  PC/PT/MID landed at their exact expected coordinates and stations
+  (`11+00.00` / `14+14.16` / `12+57.08`), the curve itself rendered as a
+  smooth sampled arc (not a straight chord), and a plain DXF line target
+  correctly produced only a MID (no fabricated PC/PT) stationed by
+  projecting onto the *nearest* element of the reference alignment as a
+  whole — including correctly preferring a nearby curve segment over a
+  closer-looking straight one once actual perpendicular/radial offset was
+  compared.
+- A second, deliberately elaborate alignment — line → curve → curve (same
+  rotation) → curve (opposite rotation) → line → spiral → curve → spiral →
+  line, plus a `<StaEquation>` and a `<Profile>` with a crest curve directly
+  adjacent to a sag curve (zero tangent between them) — checked all 27
+  computed values against independently hand- and trig-derived expected
+  results: every junction type (PC/PT/PCC/PRC/TS/SC/CS/ST) landed at the
+  exact shared coordinate between its two elements; PI/SPI passed through
+  the file's own `<PI>` points unchanged; CC reported all 4 curve centers
+  with no station; the station equation's back/ahead numbers and physical
+  location matched; typed POT/POC/POS stations (including one requiring
+  independent arc trigonometry to verify) matched exactly; and the profile
+  math correctly produced PVI/PVC/PVT at their exact parabola-derived
+  stations/elevations, found the crest's Hi point and the sag's Lo point
+  only where the turning point actually fell inside each curve, and
+  correctly detected the directly-adjacent crest/sag pair as a PVRC (not a
+  PVCC, since a crest-then-sag is a reversal) rather than firing two
+  separate, disconnected curves. The category display toggles (each of the
+  5 individually, and the "all categories" master, in both directions) were
+  also driven programmatically with zero console errors.
 
 Both parsers, the layer visibility/lock toggles, the elevation-query tool
 (including its lock-exclusion behavior), and zoom-to-layer were exercised

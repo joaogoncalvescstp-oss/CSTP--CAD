@@ -61,7 +61,7 @@ canvas{display:block;width:100%;height:100%;background:var(--bg);cursor:crosshai
     <button class="btn" id="orbitBtn" disabled title="Toggle 3D orbit view (O) — drag to rotate (re-centers on whatever's under the cursor), shift-drag or middle-drag to pan, wheel to zoom">⟲ 3D</button>
     <button class="btn" id="mapBtn" title="Aerial imagery background, tiled from Ramsey County MN's own imagery server (falls back to Esri/USGS NAIP) — only accurate for a job in that county's own survey coordinate system, 2D view only">🗺 Map</button>
     <button class="btn" id="pipeLabelsBtn" title="Choose which manhole/pipe fields show as on-canvas labels">🏷 Pipe Labels</button>
-    <button class="btn" id="geomLabelsBtn" disabled title="Label PC/PT/MID key geometry points — pick a reference alignment for stationing, then the alignment or line to label (needs a LandXML file with an Alignment)">📍 Label Points</button>
+    <button class="btn" id="geomLabelsBtn" disabled title="Label key geometry points — horizontal (PC/PT/PI/MID/CC/PCC/PRC), spiral (TS/SC/CS/ST/SPI/SS), vertical/profile (PVC/PVT/PVI/PVCC/PVRC/Hi/Lo), reference (POB/POE/EQN), and custom stations (POT/POC/POS). Pick a reference alignment for stationing, then the alignment or line to label (needs a LandXML file with an Alignment)">📍 Label Points</button>
     <button class="btn gold" id="layersBtn" title="Show/hide and lock layers">📑 Layers</button>
   </div>
   <div class="main">
@@ -72,9 +72,11 @@ canvas{display:block;width:100%;height:100%;background:var(--bg);cursor:crosshai
       <div><i style="background:#8fe3a0"></i>LandXML CgPoint</div>
       <div><i style="background:var(--gold)"></i>elevation query</div>
       <div>● manhole/CB · ▬ pipe (own layer color)</div>
-      <div><i style="background:#ff7ab3"></i>▲ PC (point of curvature)</div>
-      <div><i style="background:#6ee0c8"></i>■ PT (point of tangency)</div>
-      <div><i style="background:#c792ff"></i>◆ MID (curve midpoint)</div>
+      <div><i style="background:#ff7ab3"></i>horizontal curve pt (PC/PT/PI/MID/CC/PCC/PRC)</div>
+      <div><i style="background:#6ee0c8"></i>spiral transition pt (TS/SC/CS/ST/SPI/SS)</div>
+      <div><i style="background:#c792ff"></i>vertical/profile pt (PVC/PVT/PVI/PVCC/PVRC/Hi/Lo)</div>
+      <div><i style="background:#a8b6e0"></i>alignment reference pt (POB/POE/EQN)</div>
+      <div><i style="background:#ff9f6b"></i>custom station pt (POT/POC/POS)</div>
     </div>
     <div class="snapbox" id="snapBox">
       <label><input type="checkbox" id="snEndpoint" checked>▢ endpoint</label>
@@ -97,16 +99,20 @@ canvas{display:block;width:100%;height:100%;background:var(--bg);cursor:crosshai
     </div>
     <div class="panel" id="geomLabelPanel">
       <h4><span>Label Geometry Points</span><button id="geomLabelCloseBtn" title="Close">✕</button></h4>
-      <p class="note" style="margin-bottom:8px">1) Pick the <b>reference alignment</b> — this is what defines station 0 and direction. 2) Pick the <b>target</b> to label: an alignment (its own curves give real PC/PT/MID) or a plain line/layer (no curve data, so only its segment MID points can be labeled). Every labeled point's station is always the closest matching station/offset along the reference — picking the same alignment for both gives its own native stationing.</p>
+      <p class="note" style="margin-bottom:8px">1) Pick the <b>reference alignment</b> — this defines station 0 and direction. 2) Pick the <b>target</b> to label: an alignment (its own curves/spirals/profile give real PC/PT/PI/MID/CC/PCC/PRC/TS/SC/CS/ST/SPI/PVC/PVT/PVI/PVCC/PVRC/Hi/Lo/POB/POE/EQN) or a plain line/layer (no curve data, so only its segment MID points can be labeled). Most types' station is the closest match along the reference (so picking the same alignment for both recovers native stationing); a few — EQN, POT/POC/POS, and every vertical/profile point — always keep the station they're actually defined at, since re-stationing them against an unrelated alignment wouldn't mean anything. CC (circle center) shows no station at all — it's off the physical roadway, at radius distance from the curve.</p>
       <label style="display:block;margin-bottom:4px;font-size:11px;color:var(--mut)">Reference alignment (stationing)</label>
       <select id="geomRefSel" style="width:100%;margin-bottom:8px;background:var(--panel2);color:var(--text);border:1px solid var(--rule);border-radius:5px;padding:5px"></select>
       <label style="display:block;margin-bottom:4px;font-size:11px;color:var(--mut)">Target alignment or line to label</label>
       <select id="geomTargetSel" style="width:100%;margin-bottom:8px;background:var(--panel2);color:var(--text);border:1px solid var(--rule);border-radius:5px;padding:5px"></select>
+      <label style="display:block;margin-bottom:4px;font-size:11px;color:var(--mut)">Also label station(s) on target (POT/POC/POS) — alignment target only</label>
+      <input type="text" id="geomStationInput" placeholder="e.g. 12+50, 18+00" style="width:100%;margin-bottom:10px;background:var(--panel2);color:var(--text);border:1px solid var(--rule);border-radius:5px;padding:5px">
       <button class="btn gold" id="geomApplyBtn" style="width:100%;margin-bottom:10px">Label points</button>
-      <label style="display:flex;align-items:center;gap:6px;margin-bottom:6px;cursor:pointer"><input type="checkbox" id="glAll" checked> All types</label>
-      <label style="display:flex;align-items:center;gap:6px;margin-bottom:6px;cursor:pointer"><input type="checkbox" id="glPC" checked> <span style="color:#ff7ab3">▲ PC</span> — point of curvature</label>
-      <label style="display:flex;align-items:center;gap:6px;margin-bottom:6px;cursor:pointer"><input type="checkbox" id="glPT" checked> <span style="color:#6ee0c8">■ PT</span> — point of tangency</label>
-      <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="glMID" checked> <span style="color:#c792ff">◆ MID</span> — curve midpoint</label>
+      <label style="display:flex;align-items:center;gap:6px;margin-bottom:6px;cursor:pointer"><input type="checkbox" id="glAll" checked> All categories</label>
+      <label style="display:flex;align-items:center;gap:6px;margin-bottom:6px;cursor:pointer"><input type="checkbox" id="glHoriz" checked> <span style="color:#ff7ab3">▲ Horizontal curve</span> — PC/PT/PI/MID/CC/PCC/PRC</label>
+      <label style="display:flex;align-items:center;gap:6px;margin-bottom:6px;cursor:pointer"><input type="checkbox" id="glSpiral" checked> <span style="color:#6ee0c8">▲ Spiral transition</span> — TS/SC/CS/ST/SPI/SS</label>
+      <label style="display:flex;align-items:center;gap:6px;margin-bottom:6px;cursor:pointer"><input type="checkbox" id="glVert" checked> <span style="color:#c792ff">◆ Vertical / profile</span> — PVC/PVT/PVI/PVCC/PVRC/Hi/Lo</label>
+      <label style="display:flex;align-items:center;gap:6px;margin-bottom:6px;cursor:pointer"><input type="checkbox" id="glRef" checked> <span style="color:#a8b6e0">● Alignment reference</span> — POB/POE/EQN</label>
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="glCustom" checked> <span style="color:#ff9f6b">● Custom station</span> — POT/POC/POS</label>
       <p class="note" id="geomLabelStatus" style="margin-top:8px"></p>
     </div>
     <div class="hud" id="hud">Import a DXF or LandXML (TIN / pipe network) file to begin. Drag to pan, wheel to zoom.</div>
@@ -129,7 +135,7 @@ let PIPE_NETWORKS=[];                                       // imported LandXML 
 let PIPE_LABEL_SHOW={rim:true,depth:true,slope:true,diameter:true,invert:true};   // which fields the pipe/manhole labels show
 let ALIGNMENTS=[];                                          // imported LandXML horizontal alignments: {name,layer,elements:[{type:'line'|'curve'|'spiral',start,end,staStart,length,center?,radius?,rot?,a0?,a1?}]} — the only import source with real PC/PT/station data (a plain DXF line has no curve/chainage info at all)
 let GEOM_POINTS=[];                                          // last "📍 Label Points" result: [{type:'PC'|'PT'|'MID',E,N,Z,sta}], sta = station along the chosen reference alignment (null if it couldn't be projected)
-let GEOM_LABEL_SHOW={pc:true,pt:true,mid:true};              // which of PC/PT/MID currently draw (independent of what was computed)
+let GEOM_LABEL_SHOW={horizontal:true,spiral:true,vertical:true,reference:true,custom:true};   // which point-type categories currently draw (independent of what was computed)
 let elevPick=false;                                        // ⛰ Elevation tool armed, waiting for a canvas click
 let spot=null;                                             // {E,N,z,name} — last elevation-query result, drawn until cleared
 let drag=null;                                             // {sx,sy,x0,y0} while panning
@@ -517,18 +523,36 @@ function drawPipeNetworks(proj,scale){
   ctx.globalAlpha=1;
 }
 
-/* ---------- 📍 key geometry points (PC/PT/MID) + reference stationing ----------
-   Only a LandXML <Alignment><CoordGeom> actually carries curve/chainage data — a plain
-   DXF LINE/LWPOLYLINE has no curvature or station of its own, so it can only ever
-   contribute a MID (its own midpoint). Workflow: pick a reference alignment (station 0 +
-   direction), then a target (another alignment, or a plain line/layer) to label — every
-   labeled point's displayed station is always the closest station/offset projection onto
-   the reference, so picking the same alignment for both recovers its own native stations. */
+/* ---------- 📍 key geometry points + reference stationing ----------
+   Horizontal/spiral/reference points (PC/PT/PI/MID/CC/PCC/PRC, TS/SC/CS/ST/SPI/SS,
+   POB/POE/EQN) all come straight out of a LandXML <Alignment><CoordGeom> — a plain DXF
+   LINE/LWPOLYLINE has no curvature or station of its own, so it can only ever contribute a
+   MID (its own midpoint). Vertical points (PVC/PVT/PVI/PVCC/PVRC/Hi/Lo) come from that same
+   alignment's <Profile><ProfAlign> grade breaks — plotted on this plan-view canvas (not a
+   separate elevation/station graph) by looking up each one's station on the alignment's own
+   horizontal geometry, so you see exactly where on the ground each vertical event sits.
+   POT/POC/POS are arbitrary user-typed stations, not fixed geometry.
+   Workflow: pick a reference alignment (station 0 + direction), then a target (another
+   alignment, or a plain line/layer) to label. Most point types' displayed station is the
+   closest station/offset projection onto the reference (so picking the same alignment for
+   both recovers native stationing); EQN/POT/POC/POS and every vertical/profile point always
+   keep the station they're actually defined at instead, since re-stationing a profile point
+   or an authored station equation against an unrelated alignment wouldn't mean anything. CC
+   (circle center) never shows a station at all — it sits off the physical roadway. */
 function formatStation(sta){
   if(sta==null||!isFinite(sta))return '?';
   const neg=sta<0,a=Math.abs(sta);
   const whole=Math.floor(a/100),rem=a-whole*100;
   return `${neg?'-':''}${whole}+${rem.toFixed(2).padStart(5,'0')}`;
+}
+// "12+50", "1250", "-3+00" -> station numbers; invalid tokens are dropped rather than guessed.
+function parseStationList(str){
+  if(!str)return[];
+  return str.split(/[,\s]+/).map(t=>t.trim()).filter(Boolean).map(tok=>{
+    const m=tok.match(/^(-?\d+)\+(\d+(?:\.\d+)?)$/);
+    if(m){const whole=parseInt(m[1],10);return(whole<0?-1:1)*(Math.abs(whole)*100+parseFloat(m[2]));}
+    const n=parseFloat(tok);return isFinite(n)?n:null;
+  }).filter(n=>n!=null);
 }
 // total swept angle from a0 to a1 in the curve's own rotation direction, magnitude in (0,2π) —
 // shared by sampling (drawing), the arc midpoint, and station projection so all three agree.
@@ -572,19 +596,141 @@ function projectStation(alignment,E,N){
   alignment.elements.forEach(el=>{const r=projectOntoElement(el,E,N);if(!best||r.dist<best.dist)best=r;});
   return best?best.sta:null;
 }
-// the raw (unstationed) key points of whatever's being labeled — an alignment's own curves
-// give real PC (start)/PT (end)/MID (arc midpoint); a plain line/layer has no curve data at
-// all, so the only honest point to offer is each segment's own midpoint (never invent a
-// PC/PT that isn't backed by real curve geometry).
-function collectKeyPoints(target){
+// inverse of projectStation: given a station along an alignment's own chain, the (E,N,Z) it
+// falls at. A station outside the whole chain clamps to the nearest end rather than
+// extrapolating (never invent geometry past what the file actually describes).
+function stationToPoint(alignment,sta){
+  const els=alignment.elements;
+  let el=els.find(e=>sta>=e.staStart-1e-6&&sta<=e.staStart+e.length+1e-6);
+  if(!el)el=sta<els[0].staStart?els[0]:els[els.length-1];
+  let t=el.length?(sta-el.staStart)/el.length:0;t=Math.max(0,Math.min(1,t));
+  const Z=(el.start.Z||0)+t*((el.end.Z||0)-(el.start.Z||0));
+  if(el.type==='curve'){
+    const a=el.a0+curveSweep(el)*t;
+    return{E:el.center.E+el.radius*Math.cos(a),N:el.center.N+el.radius*Math.sin(a),Z};
+  }
+  return{E:el.start.E+t*(el.end.E-el.start.E),N:el.start.N+t*(el.end.N-el.start.N),Z};
+}
+// which element-type PAIR a junction is, keyed by the two element types meeting there (plus
+// rotation direction, to tell a compound curve from a reverse one) — a plain line-to-line
+// kink has no dedicated point type in this feature (a PI there would need coordinates this
+// app doesn't have, since LandXML only gives a curve/spiral's own <PI>, never a bare tangent
+// intersection with no curve at all), so it's correctly skipped rather than guessed.
+function junctionLabel(prev,curr){
+  const p=prev.type,c=curr.type;
+  if(p==='line'&&c==='curve')return 'PC';
+  if(p==='curve'&&c==='line')return 'PT';
+  if(p==='curve'&&c==='curve')return prev.rot===curr.rot?'PCC':'PRC';
+  if(p==='line'&&c==='spiral')return 'TS';
+  if(p==='spiral'&&c==='line')return 'ST';
+  if(p==='spiral'&&c==='curve')return 'SC';
+  if(p==='curve'&&c==='spiral')return 'CS';
+  if(p==='spiral'&&c==='spiral')return 'SS';
+  return null;
+}
+// horizontal/spiral/reference key points of one alignment's own CoordGeom chain. Every curve
+// unconditionally contributes MID (arc midpoint) and CC (the circle's own center — off the
+// physical curve, at radius distance); PC/PT/PCC/PRC/TS/SC/CS/ST come from each junction
+// between consecutive elements (or the very first/last element's own free end, when there's
+// nothing on that side to junction with); PI/SPI only appear when the file's own <PI> is
+// present on that curve/spiral (never derived by trig — this app doesn't invent a tangent
+// intersection point the source data didn't actually give it).
+function collectAlignmentKeyPoints(alignment){
+  const els=alignment.elements,pts=[];
+  const push=(type,pt,sta)=>pts.push({type,E:pt.E,N:pt.N,Z:pt.Z||0,sta});
+  push('POB',els[0].start,els[0].staStart);
+  const last=els[els.length-1];
+  push('POE',last.end,last.staStart+last.length);
+  if(els[0].type==='curve')push('PC',els[0].start,els[0].staStart);
+  if(els[0].type==='spiral')push('TS',els[0].start,els[0].staStart);
+  for(let i=1;i<els.length;i++){
+    const label=junctionLabel(els[i-1],els[i]);
+    if(label)push(label,els[i].start,els[i].staStart);
+  }
+  if(last.type==='curve')push('PT',last.end,last.staStart+last.length);
+  if(last.type==='spiral')push('ST',last.end,last.staStart+last.length);
+  els.forEach(el=>{
+    if(el.type==='curve'){
+      const m=arcMidpoint(el);
+      push('MID',{E:m.E,N:m.N,Z:((el.start.Z||0)+(el.end.Z||0))/2},el.staStart+el.length/2);
+      pts.push({type:'CC',E:el.center.E,N:el.center.N,Z:el.center.Z||0,sta:null});
+      if(el.pi)push('PI',el.pi,null);
+    }else if(el.type==='spiral'&&el.pi){
+      push('SPI',el.pi,null);
+    }
+  });
+  (alignment.staEquations||[]).forEach(eq=>{
+    const p=stationToPoint(alignment,eq.staBack);
+    pts.push({type:'EQN',E:p.E,N:p.N,Z:p.Z||0,sta:eq.staBack,note:`${formatStation(eq.staBack)} BK = ${formatStation(eq.staAhead)} AH`});
+  });
+  return pts;
+}
+// vertical/profile key points from <Profile><ProfAlign> grade breaks — standard AASHTO
+// parabolic vertical curve math (elevation is quadratic in distance from the PVC), with the
+// vertical curve's own length always split symmetrically about its PVI (station-wise), which
+// is how LandXML's single `length` attribute on a vertical curve is meant to be read. A
+// ParaCurve/CircCurve/UnsymParaCurve immediately following a <PVI> in the file is read as
+// "this PVI has a vertical curve of this length" — every real Civil3D export follows that
+// ordering, and a curve tag is treated as parabolic regardless of its own tag name (a true
+// circular vertical curve is a rare, near-identical-in-practice approximation of a parabola
+// over these lengths, so this is a documented simplification, not an error).
+function collectVerticalKeyPoints(alignment){
+  const pvis=alignment.profile.pvis;
+  if(pvis.length<2)return[];
+  const grades=[];
+  for(let k=0;k<pvis.length-1;k++)grades.push((pvis[k+1].elev-pvis[k].elev)/(pvis[k+1].sta-pvis[k].sta));
+  const pts=[],curveInfo=[];
+  for(let i=1;i<pvis.length-1;i++){
+    const pvi=pvis[i],g1=grades[i-1],g2=grades[i];
+    const p=stationToPoint(alignment,pvi.sta);
+    pts.push({type:'PVI',E:p.E,N:p.N,Z:pvi.elev,elev:pvi.elev,sta:pvi.sta});
+    if(!pvi.curveLength)continue;
+    const L=pvi.curveLength,A=g2-g1;
+    const pvcSta=pvi.sta-L/2,pvcElev=pvi.elev-g1*(L/2);
+    const pvtSta=pvi.sta+L/2,pvtElev=pvi.elev+g2*(L/2);
+    curveInfo[i]={pvcSta,pvtSta,A};
+    const pvcPt=stationToPoint(alignment,pvcSta),pvtPt=stationToPoint(alignment,pvtSta);
+    pts.push({type:'PVC',E:pvcPt.E,N:pvcPt.N,Z:pvcElev,elev:pvcElev,sta:pvcSta});
+    pts.push({type:'PVT',E:pvtPt.E,N:pvtPt.N,Z:pvtElev,elev:pvtElev,sta:pvtSta});
+    if(Math.abs(A)>1e-9){
+      const xTurn=g1*L/(g1-g2);
+      if(xTurn>=0&&xTurn<=L){
+        const turnSta=pvcSta+xTurn,turnElev=pvcElev+g1*xTurn+(A/(2*L))*xTurn*xTurn;
+        const turnPt=stationToPoint(alignment,turnSta);
+        pts.push({type:A>0?'LO':'HI',E:turnPt.E,N:turnPt.N,Z:turnElev,elev:turnElev,sta:turnSta});
+      }
+    }
+  }
+  for(let i=1;i<pvis.length-2;i++){
+    if(!curveInfo[i]||!curveInfo[i+1])continue;
+    if(Math.abs(curveInfo[i].pvtSta-curveInfo[i+1].pvcSta)<0.01){
+      const p=stationToPoint(alignment,curveInfo[i].pvtSta);
+      pts.push({type:Math.sign(curveInfo[i].A)===Math.sign(curveInfo[i+1].A)?'PVCC':'PVRC',E:p.E,N:p.N,sta:curveInfo[i].pvtSta});
+    }
+  }
+  return pts;
+}
+// only these types get re-stationed against whichever alignment is picked as the reference —
+// they're plain (E,N) geometry that legitimately could belong to a different alignment's
+// numbering (e.g. a side street's PC "at" the mainline's station). Everything else (CC's
+// null station, an authored EQN, a user-typed POT/POC/POS, or any vertical/profile point,
+// which only means anything against the one alignment its own profile belongs to) keeps
+// whatever station collectAlignmentKeyPoints/collectVerticalKeyPoints already gave it.
+const GEOM_REPROJECT=new Set(['PC','PT','PI','MID','PCC','PRC','TS','SC','CS','ST','SPI','POB','POE']);
+// the raw key points of whatever's being labeled — an alignment's own CoordGeom/Profile give
+// every real point type; a plain line/layer has no curve or station data at all, so the only
+// honest point to offer is each segment's own midpoint (never invent a PC/PT/PVI that isn't
+// backed by real curve/profile geometry).
+function collectKeyPoints(target,extraStations){
   const pts=[];
   if(target.kind==='alignment'){
-    target.obj.elements.forEach(el=>{
-      if(el.type!=='curve')return;
-      pts.push({type:'PC',E:el.start.E,N:el.start.N,Z:el.start.Z||0});
-      pts.push({type:'PT',E:el.end.E,N:el.end.N,Z:el.end.Z||0});
-      const m=arcMidpoint(el);
-      pts.push({type:'MID',E:m.E,N:m.N,Z:((el.start.Z||0)+(el.end.Z||0))/2});
+    pts.push(...collectAlignmentKeyPoints(target.obj));
+    if(target.obj.profile)pts.push(...collectVerticalKeyPoints(target.obj));
+    (extraStations||[]).forEach(sta=>{
+      const el=target.obj.elements.find(e=>sta>=e.staStart-1e-6&&sta<=e.staStart+e.length+1e-6);
+      if(!el)return;
+      const p=stationToPoint(target.obj,sta);
+      pts.push({type:el.type==='line'?'POT':el.type==='curve'?'POC':'POS',E:p.E,N:p.N,Z:p.Z||0,sta});
     });
   }else{
     ENTITIES.forEach(e=>{
@@ -599,31 +745,49 @@ function collectKeyPoints(target){
   }
   return pts;
 }
-const GEOM_TYPE_COLOR={PC:'#ff7ab3',PT:'#6ee0c8',MID:'#c792ff'};
+// 25 individual colors would be unreadable soup, so color/marker-shape denote CATEGORY (5 of
+// them) at a glance, while the printed 2-4 letter code always gives the exact point type.
+const GEOM_TYPE_CATEGORY={PC:'horizontal',PT:'horizontal',PI:'horizontal',MID:'horizontal',CC:'horizontal',PCC:'horizontal',PRC:'horizontal',
+  TS:'spiral',SC:'spiral',CS:'spiral',ST:'spiral',SPI:'spiral',SS:'spiral',
+  PVC:'vertical',PVT:'vertical',PVI:'vertical',PVCC:'vertical',PVRC:'vertical',HI:'vertical',LO:'vertical',
+  POB:'reference',POE:'reference',EQN:'reference',POT:'custom',POC:'custom',POS:'custom'};
+const GEOM_CATEGORY_COLOR={horizontal:'#ff7ab3',spiral:'#6ee0c8',vertical:'#c792ff',reference:'#a8b6e0',custom:'#ff9f6b'};
+const GEOM_SHAPE={PC:'tri',TS:'tri',PVC:'tri',PCC:'tri',SC:'tri',PVCC:'tri',
+  PT:'sq',ST:'sq',PVT:'sq',PRC:'sq',CS:'sq',PVRC:'sq',
+  MID:'dia',HI:'dia',LO:'dia'};
 function drawGeomMarker(x,y,type,color){
+  const shape=GEOM_SHAPE[type]||'circ';
   ctx.fillStyle=color;ctx.beginPath();
-  if(type==='PC'){ctx.moveTo(x,y-5);ctx.lineTo(x+5,y+4);ctx.lineTo(x-5,y+4);ctx.closePath();}
-  else if(type==='PT'){ctx.rect(x-4,y-4,8,8);}
-  else{ctx.moveTo(x,y-5);ctx.lineTo(x+5,y);ctx.lineTo(x,y+5);ctx.lineTo(x-5,y);ctx.closePath();}
+  if(shape==='tri'){ctx.moveTo(x,y-5);ctx.lineTo(x+5,y+4);ctx.lineTo(x-5,y+4);ctx.closePath();}
+  else if(shape==='sq'){ctx.rect(x-4,y-4,8,8);}
+  else if(shape==='dia'){ctx.moveTo(x,y-5);ctx.lineTo(x+5,y);ctx.lineTo(x,y+5);ctx.lineTo(x-5,y);ctx.closePath();}
+  else ctx.arc(x,y,4,0,Math.PI*2);
   ctx.fill();
 }
 function drawGeomLabels(proj){
   if(!GEOM_POINTS.length)return;
   GEOM_POINTS.forEach(p=>{
-    if(!GEOM_LABEL_SHOW[p.type.toLowerCase()])return;
+    const cat=GEOM_TYPE_CATEGORY[p.type]||'reference';
+    if(!GEOM_LABEL_SHOW[cat])return;
     const[x,y]=proj(p.E,p.N,p.Z||0);
-    const color=GEOM_TYPE_COLOR[p.type];
+    const color=GEOM_CATEGORY_COLOR[cat];
     drawGeomMarker(x,y,p.type,color);
     ctx.font='700 10px ui-monospace,monospace';
-    placeLabelBlock([p.type,`STA ${formatStation(p.sta)}`],x+7,y-7,color,11);
+    const lines=[p.type];
+    if(p.sta!=null)lines.push(`STA ${formatStation(p.sta)}`);
+    if(p.elev!=null)lines.push(`EL ${p.elev.toFixed(2)}`);
+    if(p.note)lines.push(p.note);
+    placeLabelBlock(lines,x+7,y-7,color,11);
   });
 }
 // LandXML <Alignment><CoordGeom><Line/Curve/Spiral> — the actual bridge for PC/PT/station
-// data (Line/Curve carry explicit Start/End/Center/radius/rot; a Spiral's true easement-curve
-// shape isn't modeled here, only its chord, since spirals have no PC/PT/MID of their own —
-// their key points are TS/SC/CS/ST, out of this feature's scope).
+// data (Line/Curve carry explicit Start/End/Center/radius/rot, and a Curve/Spiral's own <PI>
+// when the file gives one; a Spiral's true easement-curve shape isn't modeled here, only its
+// chord, but its Start/End ARE its real TS/SC/CS/ST coordinates regardless — those are exact,
+// file-given boundary points, not interpolated interior spiral geometry). A sibling
+// <Profile><ProfAlign> (vertical curves) and <StaEquation> (station equations) are read too.
 function importAlignments(doc){
-  let nAlign=0,nCurve=0;
+  let nAlign=0,nCurve=0,nProfile=0;
   doc.querySelectorAll('Alignment').forEach(alEl=>{
     const name=alEl.getAttribute('name')||`Alignment${ALIGNMENTS.length+nAlign+1}`;
     let sta=parseFloat(alEl.getAttribute('staStart'));if(!isFinite(sta))sta=0;
@@ -635,6 +799,7 @@ function importAlignments(doc){
         return n.length>=2&&n.slice(0,2).every(isFinite)?{N:n[0],E:n[1],Z:isFinite(n[2])?n[2]:0}:null;};   // LandXML point text order is Northing Easting Elevation, same as Surface/CgPoint above
       const staAttr=el.getAttribute('staStart');
       const elemSta=isFinite(parseFloat(staAttr))?parseFloat(staAttr):sta;
+      const pi=getPt('PI');
       if(el.tagName==='Line'){
         const start=getPt('Start'),end=getPt('End');if(!start||!end)return;
         const length=Math.hypot(end.E-start.E,end.N-start.N);
@@ -651,12 +816,12 @@ function importAlignments(doc){
         let length=parseFloat(el.getAttribute('length'));
         const elTmp={a0,a1,rot};
         if(!isFinite(length))length=Math.abs(curveSweep(elTmp))*radius;
-        elements.push({type:'curve',start,end,center,radius,length,rot,staStart:elemSta,a0,a1});
+        elements.push({type:'curve',start,end,center,radius,length,rot,staStart:elemSta,a0,a1,pi});
         sta=elemSta+length;nCurve++;
       }else if(el.tagName==='Spiral'){
         const start=getPt('Start'),end=getPt('End');if(!start||!end)return;
         let length=parseFloat(el.getAttribute('length'));if(!isFinite(length))length=Math.hypot(end.E-start.E,end.N-start.N);
-        elements.push({type:'spiral',start,end,staStart:elemSta,length});sta=elemSta+length;
+        elements.push({type:'spiral',start,end,staStart:elemSta,length,pi});sta=elemSta+length;
       }
     });
     if(!elements.length)return;
@@ -665,9 +830,30 @@ function importAlignments(doc){
       if(el.type==='curve')ENTITIES.push({type:'poly',layer,pts:sampleArc(el),closed:false});
       else ENTITIES.push({type:'line',layer,pts:[{E:el.start.E,N:el.start.N,Z:el.start.Z||0},{E:el.end.E,N:el.end.N,Z:el.end.Z||0}]});
     });
-    ALIGNMENTS.push({name,layer,elements});nAlign++;
+    // <Profile><ProfAlign><PVI>sta elev</PVI> grade breaks, each optionally followed by a
+    // *Curve length="..."> element applying a vertical curve of that length to the PVI just before it.
+    let profile=null;
+    const profAlign=alEl.querySelector('ProfAlign');
+    if(profAlign){
+      const pvis=[];let lastPvi=null;
+      Array.from(profAlign.children).forEach(node=>{
+        if(node.tagName==='PVI'){
+          const n=(node.textContent||'').trim().split(/\s+/).map(Number);
+          if(n.length>=2&&n.slice(0,2).every(isFinite)){lastPvi={sta:n[0],elev:n[1]};pvis.push(lastPvi);}
+        }else if(lastPvi&&/Curve$/.test(node.tagName)){
+          const L=parseFloat(node.getAttribute('length'));if(isFinite(L))lastPvi.curveLength=L;
+        }
+      });
+      if(pvis.length>=2){profile={pvis};nProfile++;}
+    }
+    const staEquations=[];
+    alEl.querySelectorAll('StaEquation').forEach(eqEl=>{
+      const back=parseFloat(eqEl.getAttribute('staBack')),ahead=parseFloat(eqEl.getAttribute('staAhead'));
+      if(isFinite(back)&&isFinite(ahead))staEquations.push({staBack:back,staAhead:ahead});
+    });
+    ALIGNMENTS.push({name,layer,elements,profile,staEquations});nAlign++;
   });
-  return{nAlign,nCurve};
+  return{nAlign,nCurve,nProfile};
 }
 function renderGeomLabelSelects(){
   const refSel=$('geomRefSel'),tgtSel=$('geomTargetSel');
@@ -1051,7 +1237,7 @@ function importLandXML(text){
       nNet++;
     }
   });
-  const{nAlign,nCurve}=importAlignments(doc);
+  const{nAlign,nCurve,nProfile}=importAlignments(doc);
   if(!nSurf&&!nPts&&!nNet&&!nAlign){hud('no <Surface> (TIN), <CgPoint>, <PipeNetwork>, or <Alignment> data found in this file');return;}
   renderLayerPanel();updateJobPill();
   $('fitBtn').disabled=false;$('elevBtn').disabled=SURFACES.length===0;
@@ -1062,7 +1248,7 @@ function importLandXML(text){
   if(nSurf)parts.push(`${nSurf} surface(s) (${nTri} tri)`);
   if(nPts)parts.push(`${nPts} point(s)`);
   if(nNet)parts.push(`${nNet} pipe network(s) (${nStruct} structures, ${nPipe} pipes${nPipeSkipped?`, ${nPipeSkipped} skipped — see ⚠ in Layers`:''})`);
-  if(nAlign)parts.push(`${nAlign} alignment(s) (${nCurve} curve${nCurve===1?'':'s'}) — use 📍 Label Points for PC/PT/MID`);
+  if(nAlign)parts.push(`${nAlign} alignment(s) (${nCurve} curve${nCurve===1?'':'s'}${nProfile?`, ${nProfile} w/ profile`:''}) — use 📍 Label Points`);
   hud(`imported ${parts.join(', ')} from LandXML`);
 }
 
@@ -1105,23 +1291,26 @@ $('geomApplyBtn').onclick=()=>{
   const ref=ALIGNMENTS.find(a=>a.name===($('geomRefSel').value||'').slice(6));
   const target=resolveTargetRef($('geomTargetSel').value);
   if(!ref||!target){$('geomLabelStatus').textContent='pick a reference alignment and a target first.';return;}
-  const raw=collectKeyPoints(target);
-  GEOM_POINTS=raw.map(p=>({...p,sta:projectStation(ref,p.E,p.N)}));
+  const extraStations=target.kind==='alignment'?parseStationList($('geomStationInput').value):[];
+  const raw=collectKeyPoints(target,extraStations);
+  GEOM_POINTS=raw.map(p=>GEOM_REPROJECT.has(p.type)?{...p,sta:projectStation(ref,p.E,p.N)}:p);
   const targetName=target.kind==='alignment'?target.obj.name:target.name;
-  const nPC=GEOM_POINTS.filter(p=>p.type==='PC').length,nPT=GEOM_POINTS.filter(p=>p.type==='PT').length,nMID=GEOM_POINTS.filter(p=>p.type==='MID').length;
-  let msg=`labeled ${GEOM_POINTS.length} point(s) on "${targetName}" — ${nPC} PC, ${nPT} PT, ${nMID} MID, stationed along "${ref.name}"`;
-  if(target.kind==='layer')msg+=' (plain line/layer has no curve data — only MID computed)';
+  const counts={};GEOM_POINTS.forEach(p=>{counts[p.type]=(counts[p.type]||0)+1;});
+  const summary=Object.keys(counts).sort().map(t=>`${counts[t]} ${t}`).join(', ')||'none';
+  let msg=`labeled ${GEOM_POINTS.length} point(s) on "${targetName}" — ${summary} — stationed along "${ref.name}"`;
+  if(target.kind==='layer')msg+=' (plain line/layer has no curve/profile data — only MID computed)';
   $('geomLabelStatus').textContent=msg;hud(msg);
   draw();
 };
-function syncGeomAll(){$('glAll').checked=$('glPC').checked&&$('glPT').checked&&$('glMID').checked;}
-[['glPC','pc'],['glPT','pt'],['glMID','mid']].forEach(([id,key])=>{
+const GEOM_CATEGORY_IDS=['glHoriz','glSpiral','glVert','glRef','glCustom'];
+function syncGeomAll(){$('glAll').checked=GEOM_CATEGORY_IDS.every(id=>$(id).checked);}
+[['glHoriz','horizontal'],['glSpiral','spiral'],['glVert','vertical'],['glRef','reference'],['glCustom','custom']].forEach(([id,key])=>{
   $(id).onchange=()=>{GEOM_LABEL_SHOW[key]=$(id).checked;syncGeomAll();draw();};
 });
 $('glAll').onchange=()=>{
   const v=$('glAll').checked;
-  ['glPC','glPT','glMID'].forEach(id=>$(id).checked=v);
-  GEOM_LABEL_SHOW={pc:v,pt:v,mid:v};draw();
+  GEOM_CATEGORY_IDS.forEach(id=>$(id).checked=v);
+  GEOM_LABEL_SHOW={horizontal:v,spiral:v,vertical:v,reference:v,custom:v};draw();
 };
 
 /* ---------- toolbar wiring ---------- */
@@ -1231,7 +1420,7 @@ window.addEventListener('resize',resize);
 resize();
 
 /* ---------- version badge — bumped on every push, mirroring FBK-Checker's own fruit badge ---------- */
-const VERSION={animal:'🦉',name:'OWL',build:2};
+const VERSION={animal:'🦫',name:'BEAVER',build:3};
 function rotateAnimal(){const b=$('animalBadge');b.style.transform='rotate(360deg)';setTimeout(()=>{b.style.transform='rotate(0deg)';},200);}
 function showVersion(){const b=$('animalBadge');b.textContent=`${VERSION.animal} ${VERSION.name}`;
   b.title=`Build ${VERSION.build} · ${VERSION.name} — if this matches what Claude pushed, you're on the latest (no cache)`;}
