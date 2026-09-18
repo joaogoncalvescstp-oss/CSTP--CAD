@@ -58,6 +58,7 @@ canvas{display:block;width:100%;height:100%;background:var(--bg);cursor:crosshai
     <button class="btn" id="fitBtn" disabled title="Frame everything currently loaded (F)">⊡ Fit</button>
     <button class="btn" id="elevBtn" disabled title="Click a visible, unlocked TIN surface to read its interpolated elevation at that point (Esc cancels) — 2D only">⛰ Elevation</button>
     <button class="btn" id="waterBtn" disabled title="Animate droplets following each triangle's own steepest-descent direction across the visible TIN surface(s) — a stylized visual approximation, not a hydrology/runoff model. 2D plan view only">🌊 Water Flow</button>
+    <button class="btn" id="surfaceDisplayBtn" disabled title="Choose how a TIN surface is drawn — wireframe on/off, contour lines, slope arrows">🗻 Surface Display</button>
     <button class="btn" id="snapBtn" disabled title="CAD object snap — hover to snap onto an endpoint, a genuine crossing of two lines, a midpoint, a circle's center/quadrant, or the nearest point on a line, and read its exact E/N/Z off the hud (Esc cancels) — 2D only">🧲 Snap</button>
     <button class="btn" id="orbitBtn" disabled title="Toggle 3D orbit view (O) — drag to rotate (re-centers on whatever's under the cursor), shift-drag or middle-drag to pan, wheel to zoom">⟲ 3D</button>
     <button class="btn" id="profileBtn" disabled title="Toggle profile (station vs. elevation) view (P) of one alignment — shows its design <Profile> grade line and PVC/PVT/PVI/PVCC/PVRC/Hi/Lo, or falls back to its horizontal geometry's own elevation if no <Profile> was imported. Drag to pan, wheel to zoom (both axes together)">📈 Profile</button>
@@ -73,6 +74,7 @@ canvas{display:block;width:100%;height:100%;background:var(--bg);cursor:crosshai
       <div><i style="background:var(--accent)"></i>DXF line/poly/circle</div>
       <div><i style="background:#ffb86b"></i>TIN surface (wireframe)</div>
       <div><i style="background:#5dd0ff"></i>🌊 water flow (steepest descent — visual approximation)</div>
+      <div><i style="background:#ffd24a"></i>contour line (📑 layer's own color for wireframe/slope arrows)</div>
       <div><i style="background:#8fe3a0"></i>LandXML CgPoint</div>
       <div><i style="background:var(--gold)"></i>elevation query</div>
       <div>● manhole/CB · ▬ pipe (own layer color)</div>
@@ -100,6 +102,15 @@ canvas{display:block;width:100%;height:100%;background:var(--bg);cursor:crosshai
       <label style="display:flex;align-items:center;gap:6px;margin-bottom:6px;cursor:pointer"><input type="checkbox" id="plSlope" checked> Pipe % slope</label>
       <label style="display:flex;align-items:center;gap:6px;margin-bottom:6px;cursor:pointer"><input type="checkbox" id="plDia" checked> Pipe diameter</label>
       <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="plInvert" checked> Pipe invert elevations</label>
+    </div>
+    <div class="panel" id="surfaceDisplayPanel">
+      <h4><span>Surface Display</span><button id="surfaceDisplayCloseBtn" title="Close">✕</button></h4>
+      <p class="note" style="margin-bottom:8px">Alternate ways to read a TIN surface, on top of (or instead of) its wireframe — all three draw in both 2D plan and 3D orbit, on every visible surface layer.</p>
+      <label style="display:flex;align-items:center;gap:6px;margin-bottom:6px;cursor:pointer"><input type="checkbox" id="sdWireframe" checked> Wireframe (triangle edges)</label>
+      <label style="display:flex;align-items:center;gap:6px;margin-bottom:6px;cursor:pointer"><input type="checkbox" id="sdContours"> Contour lines</label>
+      <label style="display:block;margin:0 0 4px 24px;font-size:11px;color:var(--mut)">Contour interval (blank = auto)</label>
+      <input type="text" id="sdContourInterval" placeholder="auto" style="width:calc(100% - 24px);margin:0 0 10px 24px;background:var(--panel2);color:var(--text);border:1px solid var(--rule);border-radius:5px;padding:5px">
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="sdSlopeArrows"> Slope arrows (steepest-descent per triangle)</label>
     </div>
     <div class="panel" id="geomLabelPanel">
       <h4><span>Label Geometry Points</span><button id="geomLabelCloseBtn" title="Close">✕</button></h4>
@@ -174,6 +185,15 @@ const WATER_PARTICLE_COUNT=50;
 const WATER_BASE_SPEED=20;                                 // world units/sec at a moderate slope — tuned for a readable animation pace, not a real flow-velocity model
 const WATER_TRAIL_LEN=14;
 const WATER_MAX_AGE=9;                                     // seconds before a droplet respawns anyway, so one that's pooled on a gentle slope doesn't just sit there forever
+
+/* ---------- 🗻 surface display options ----------
+   Alternate/additional ways to read a TIN beyond the always-on wireframe: contour lines
+   (standard "marching triangles" extraction — exact per-triangle, not a resampled grid) and
+   slope arrows (one steepest-descent arrow per triangle, reusing the same triFlowDir() the
+   water flow animation already computes). All three render in both 2D plan and 3D orbit,
+   same as the wireframe itself; contours/arrows are pure static geometry so unlike water
+   flow they carry no interaction dependency that would restrict them to 2D only. */
+let SURFACE_DISPLAY={wireframe:true,contours:false,contourInterval:null,slopeArrows:false};   // contourInterval:null = auto-computed per surface from its own Z range
 
 /* ---------- 3D orbit view (ported from FBK-Checker) ----------
    Same oblique-projection scheme: rotate a point about a world pivot (orbit.cx/cy/cz)
@@ -426,7 +446,7 @@ function draw2D(){
   for(let N=Math.ceil(br[1]/step)*step;N<tl[1];N+=step){const[,y]=W2S(0,N);ctx.moveTo(0,y);ctx.lineTo(w,y);}
   ctx.stroke();
   // TIN surfaces — drawn as a wireframe of every triangle edge, per-layer visible/locked
-  SURFACES.forEach(s=>{
+  if(SURFACE_DISPLAY.wireframe)SURFACES.forEach(s=>{
     const ly=LAYERS[s.layer];if(ly&&!ly.visible)return;
     ctx.strokeStyle=ly?ly.color:'#ffb86b';ctx.lineWidth=0.7;ctx.globalAlpha=ly&&ly.locked?0.35:0.6;
     s.tris.forEach(tri=>{ctx.beginPath();
@@ -434,6 +454,8 @@ function draw2D(){
       ctx.closePath();ctx.stroke();});
   });
   ctx.globalAlpha=1;
+  drawContours((E,N)=>W2S(E,N));
+  drawSlopeArrows((E,N)=>W2S(E,N));
   drawWaterParticles();
   // DXF entities
   ENTITIES.forEach(e=>{
@@ -473,7 +495,7 @@ function draw3D(){
   const w=cv.width/devicePixelRatio,h=cv.height/devicePixelRatio;
   ctx.clearRect(0,0,w,h);
   labelOccupied=[];
-  SURFACES.forEach(s=>{
+  if(SURFACE_DISPLAY.wireframe)SURFACES.forEach(s=>{
     const ly=LAYERS[s.layer];if(ly&&!ly.visible)return;
     ctx.strokeStyle=ly?ly.color:'#ffb86b';ctx.lineWidth=0.7;ctx.globalAlpha=ly&&ly.locked?0.35:0.6;
     s.tris.forEach(tri=>{ctx.beginPath();
@@ -481,6 +503,8 @@ function draw3D(){
       ctx.closePath();ctx.stroke();});
   });
   ctx.globalAlpha=1;
+  drawContours((E,N,Z)=>P3(E,N,Z));
+  drawSlopeArrows((E,N,Z)=>P3(E,N,Z));
   ENTITIES.forEach(e=>{
     const ly=LAYERS[e.layer];if(ly&&!ly.visible)return;
     ctx.strokeStyle=ly?ly.color:'#7fd4ff';ctx.fillStyle=ctx.strokeStyle;
@@ -1308,6 +1332,80 @@ function triFlowDir(tri){
   if(mag<1e-9||nz<1e-9)return null;                          // flat or a knife-edge vertical facet — no defined downhill direction
   return{dirE:nx/mag,dirN:ny/mag,slope:mag/nz};
 }
+/* ---------- 🗻 contour lines + slope arrows (shared by 2D plan and 3D orbit) ---------- */
+function surfaceZRange(s){
+  let lo=Infinity,hi=-Infinity;
+  s.tris.forEach(tri=>tri.forEach(p=>{lo=Math.min(lo,p.Z);hi=Math.max(hi,p.Z);}));
+  return{lo,hi};
+}
+function contourLevelsFor(s){
+  const{lo,hi}=surfaceZRange(s);
+  if(!isFinite(lo)||!isFinite(hi)||lo>=hi)return[];
+  const interval=SURFACE_DISPLAY.contourInterval||niceStep((hi-lo)/8)||1;
+  const levels=[],start=Math.ceil(lo/interval)*interval;
+  for(let z=start;z<=hi+1e-9;z+=interval)levels.push(z);
+  return levels;
+}
+// one triangle's crossing of a horizontal plane at `level`, via standard "marching triangles"
+// edge interpolation — exact for this triangle's own planar facet, not a resampled grid.
+function contourSegmentForTri(tri,level){
+  const zs=[tri[0].Z,tri[1].Z,tri[2].Z];
+  const lo=Math.min(...zs),hi=Math.max(...zs);
+  if(level<lo||level>hi)return null;
+  const pts=[];
+  for(let i=0;i<3;i++){
+    const a=tri[i],b=tri[(i+1)%3],za=a.Z,zb=b.Z;
+    if(!((za<=level&&zb>=level)||(za>=level&&zb<=level)))continue;
+    if(za===zb){if(za===level){pts.push({E:a.E,N:a.N});pts.push({E:b.E,N:b.N});}continue;}
+    const t=(level-za)/(zb-za);
+    pts.push({E:a.E+t*(b.E-a.E),N:a.N+t*(b.N-a.N)});
+  }
+  const uniq=[];
+  pts.forEach(p=>{if(!uniq.some(q=>Math.hypot(q.E-p.E,q.N-p.N)<1e-9))uniq.push(p);});
+  return uniq.length>=2?[uniq[0],uniq[1]]:null;
+}
+function drawContours(proj){
+  if(!SURFACE_DISPLAY.contours)return;
+  SURFACES.forEach(s=>{
+    const ly=LAYERS[s.layer];if(ly&&!ly.visible)return;
+    ctx.strokeStyle='#ffd24a';ctx.lineWidth=0.9;ctx.globalAlpha=ly&&ly.locked?0.4:0.85;
+    contourLevelsFor(s).forEach(level=>{
+      s.tris.forEach(tri=>{
+        const seg=contourSegmentForTri(tri,level);if(!seg)return;
+        const[x0,y0]=proj(seg[0].E,seg[0].N,level),[x1,y1]=proj(seg[1].E,seg[1].N,level);
+        ctx.beginPath();ctx.moveTo(x0,y0);ctx.lineTo(x1,y1);ctx.stroke();
+      });
+    });
+  });
+  ctx.globalAlpha=1;
+}
+// one steepest-descent arrow per triangle (decimated so a dense TIN never draws more than
+// ~300 per surface, keeping this legible and fast regardless of triangle count); a fixed
+// SCREEN-pixel arrow length keeps it visible at any zoom, found generically by projecting
+// the centroid and a tiny nearby offset in the flow direction through whichever `proj` is
+// active (2D or 3D) rather than hand-deriving each projection's own linear/rotational math.
+function drawSlopeArrows(proj){
+  if(!SURFACE_DISPLAY.slopeArrows)return;
+  const PIX_LEN=12,EPS=1e-3;
+  SURFACES.forEach(s=>{
+    const ly=LAYERS[s.layer];if(ly&&!ly.visible)return;
+    const color=ly?ly.color:'#ffb86b',tris=s.tris,step=Math.max(1,Math.ceil(tris.length/300));
+    ctx.globalAlpha=ly&&ly.locked?0.4:0.9;
+    for(let i=0;i<tris.length;i+=step){
+      const tri=tris[i],dir=triFlowDir(tri);if(!dir)continue;
+      const cE=(tri[0].E+tri[1].E+tri[2].E)/3,cN=(tri[0].N+tri[1].N+tri[2].N)/3,cZ=(tri[0].Z+tri[1].Z+tri[2].Z)/3;
+      const[x0,y0]=proj(cE,cN,cZ),[x1,y1]=proj(cE+dir.dirE*EPS,cN+dir.dirN*EPS,cZ);
+      let dx=x1-x0,dy=y1-y0;const d=Math.hypot(dx,dy)||1;dx/=d;dy/=d;
+      const hx=x0+dx*PIX_LEN,hy=y0+dy*PIX_LEN,ang=Math.atan2(dy,dx),ah=4;
+      ctx.strokeStyle=color;ctx.lineWidth=1.2;ctx.beginPath();ctx.moveTo(x0,y0);ctx.lineTo(hx,hy);ctx.stroke();
+      ctx.fillStyle=color;ctx.beginPath();ctx.moveTo(hx,hy);
+      ctx.lineTo(hx-ah*Math.cos(ang-Math.PI/6),hy-ah*Math.sin(ang-Math.PI/6));
+      ctx.lineTo(hx-ah*Math.cos(ang+Math.PI/6),hy-ah*Math.sin(ang+Math.PI/6));
+      ctx.closePath();ctx.fill();
+    }
+  });
+  ctx.globalAlpha=1;
+}
 function waterRandomTriangle(){
   const tris=[];
   SURFACES.forEach(s=>{const ly=LAYERS[s.layer];if(ly&&!ly.visible)return;tris.push(...s.tris);});
@@ -1446,7 +1544,7 @@ function importDXF(text){
   }
   if(!nEnt){hud('no recognized entities found (LINE / LWPOLYLINE / POLYLINE / POINT / CIRCLE / 3DFACE)');return;}
   renderLayerPanel();updateJobPill();
-  $('fitBtn').disabled=false;$('elevBtn').disabled=SURFACES.length===0;$('waterBtn').disabled=SURFACES.length===0;
+  $('fitBtn').disabled=false;$('elevBtn').disabled=SURFACES.length===0;$('waterBtn').disabled=SURFACES.length===0;$('surfaceDisplayBtn').disabled=SURFACES.length===0;
   $('orbitBtn').disabled=false;$('snapBtn').disabled=false;
   if(hadNothing)fit();else draw();
   hud(`imported ${nEnt} DXF entit${nEnt===1?'y':'ies'} across ${Object.keys(LAYERS).length} layer(s)`);
@@ -1539,7 +1637,7 @@ function importLandXML(text){
   const{nAlign,nCurve,nProfile}=importAlignments(doc);
   if(!nSurf&&!nPts&&!nNet&&!nAlign){hud('no <Surface> (TIN), <CgPoint>, <PipeNetwork>, or <Alignment> data found in this file');return;}
   renderLayerPanel();updateJobPill();
-  $('fitBtn').disabled=false;$('elevBtn').disabled=SURFACES.length===0;$('waterBtn').disabled=SURFACES.length===0;
+  $('fitBtn').disabled=false;$('elevBtn').disabled=SURFACES.length===0;$('waterBtn').disabled=SURFACES.length===0;$('surfaceDisplayBtn').disabled=SURFACES.length===0;
   $('orbitBtn').disabled=false;$('snapBtn').disabled=false;
   $('geomLabelsBtn').disabled=ALIGNMENTS.length===0;
   $('profileBtn').disabled=ALIGNMENTS.length===0;
@@ -1659,6 +1757,16 @@ $('waterBtn').onclick=()=>{
   waterAnimHandle=requestAnimationFrame(waterTick);
   hud('🌊 water flow — droplets follow steepest-descent across the visible TIN surface(s)');
 };
+$('surfaceDisplayBtn').onclick=()=>{if($('surfaceDisplayBtn').disabled)return;$('surfaceDisplayPanel').classList.toggle('show');};
+$('surfaceDisplayCloseBtn').onclick=()=>$('surfaceDisplayPanel').classList.remove('show');
+$('sdWireframe').onchange=()=>{SURFACE_DISPLAY.wireframe=$('sdWireframe').checked;draw();};
+$('sdContours').onchange=()=>{SURFACE_DISPLAY.contours=$('sdContours').checked;draw();};
+$('sdContourInterval').onchange=()=>{
+  const v=parseFloat($('sdContourInterval').value);
+  SURFACE_DISPLAY.contourInterval=(isFinite(v)&&v>0)?v:null;
+  draw();
+};
+$('sdSlopeArrows').onchange=()=>{SURFACE_DISPLAY.slopeArrows=$('sdSlopeArrows').checked;draw();};
 $('snapBtn').onclick=()=>{
   if($('snapBtn').disabled)return;
   if(is3D){hud('Snap is 2D only — press O or ⟲ 3D to switch back first');return;}
@@ -1785,7 +1893,7 @@ window.addEventListener('resize',resize);
 resize();
 
 /* ---------- version badge — bumped on every push, mirroring FBK-Checker's own fruit badge ---------- */
-const VERSION={animal:'🐬',name:'DOLPHIN',build:7};
+const VERSION={animal:'🦎',name:'GECKO',build:8};
 function rotateAnimal(){const b=$('animalBadge');b.style.transform='rotate(360deg)';setTimeout(()=>{b.style.transform='rotate(0deg)';},200);}
 function showVersion(){const b=$('animalBadge');b.textContent=`${VERSION.animal} ${VERSION.name}`;
   b.title=`Build ${VERSION.build} · ${VERSION.name} — if this matches what Claude pushed, you're on the latest (no cache)`;}

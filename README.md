@@ -31,6 +31,20 @@ dependencies, and nothing to install.
   simulation** — there's no infiltration, ponding capacity, channel
   concentration, or flow accumulation, just "which way does this exact spot
   drain." 2D plan view only, same reasoning as ⛰ Elevation/🧲 Snap.
+- **🗻 Surface Display** offers alternate/additional ways to read a TIN,
+  each independently toggleable and drawn in both 2D plan and 3D orbit:
+  - **Wireframe** (on by default) — the same triangle-edge mesh always
+    drawn before; turn it off to see contours/arrows on their own, e.g.
+    for a cleaner printout.
+  - **Contour lines** — exact per-triangle "marching triangles" extraction
+    (not a resampled grid): each triangle's true planar crossing of a given
+    elevation is found directly from its own 3 vertices. The interval
+    auto-computes a sensible round step from the surface's own elevation
+    range, or type one in to override it.
+  - **Slope arrows** — one steepest-descent arrow per triangle (the same
+    exact plane-normal math 🌊 Water Flow uses to move its droplets),
+    decimated so a dense TIN never draws more than ~300 per surface, with a
+    fixed on-screen arrow length so it stays legible at any zoom.
 - **↥ Import LandXML (TIN / Pipes)** also reads Civil3D **pipe networks**
   (`<PipeNetworks><PipeNetwork><Structs>`/`<Pipes>`) — manholes, catch
   basins, and cleanouts as structures; storm/sanitary pipes as lines between
@@ -345,6 +359,18 @@ already in 3D correctly refused with an explanatory hud message instead of
 silently starting an animation nothing would render, and manual toggling
 on/off cleanly repeated with the animation frame handle and particle array
 always left in the expected state.
+
+A seventh pass verified 🗻 Surface Display against that same known ramp:
+the wireframe checkbox correctly toggled `SURFACE_DISPLAY.wireframe` both
+ways; the auto contour interval produced a sensible, in-range level set
+from the surface's own true 0–10 elevation range; a hand-verified exact
+case — a custom interval of 5 on this exact ramp — produced precisely the
+2 triangle segments expected, both lying exactly on the true `E=5` vertical
+line and together spanning the full `N=0..10` range with no gaps, while a
+level entirely outside the surface's range correctly produced zero
+segments; clearing the typed interval correctly reverted to auto; and
+turning on every overlay together (wireframe, contours, slope arrows) and
+rendering in both 2D plan and 3D orbit produced zero console errors.
 
 Both parsers, the layer visibility/lock toggles, the elevation-query tool
 (including its lock-exclusion behavior), and zoom-to-layer were exercised
