@@ -40,11 +40,18 @@ dependencies, and nothing to install.
     (not a resampled grid): each triangle's true planar crossing of a given
     elevation is found directly from its own 3 vertices. The interval
     auto-computes a sensible round step from the surface's own elevation
-    range, or type one in to override it.
+    range, or type one in to override it. Every Nth level (5 by default,
+    also adjustable) draws **major** — solid and a touch bolder — and the
+    rest draw **minor** — dashed and thinner, the standard cartographic
+    index-contour convention.
   - **Slope arrows** — one steepest-descent arrow per triangle (the same
-    exact plane-normal math 🌊 Water Flow uses to move its droplets),
-    decimated so a dense TIN never draws more than ~300 per surface, with a
-    fixed on-screen arrow length so it stays legible at any zoom.
+    exact plane-normal math 🌊 Water Flow uses to move its droplets), with a
+    **density slider** capping how many draw per surface (20–1000, default
+    300) so a dense TIN stays legible and fast — the fixed on-screen arrow
+    length keeps them visible at any zoom regardless of that setting.
+  - A **droplet-count slider** (5–300, default 50) for 🌊 Water Flow lives
+    in this same panel — dragging it while the animation is already running
+    re-seeds it immediately at the new count, not just on the next toggle.
 - **↥ Import LandXML (TIN / Pipes)** also reads Civil3D **pipe networks**
   (`<PipeNetworks><PipeNetwork><Structs>`/`<Pipes>`) — manholes, catch
   basins, and cleanouts as structures; storm/sanitary pipes as lines between
@@ -371,6 +378,21 @@ level entirely outside the surface's range correctly produced zero
 segments; clearing the typed interval correctly reverted to auto; and
 turning on every overlay together (wireframe, contours, slope arrows) and
 rendering in both 2D plan and 3D orbit produced zero console errors.
+
+An eighth pass verified the three new sliders/controls end-to-end. The
+droplet-count slider updated its backing variable and its live label even
+with the animation off; turning the animation on then spawned exactly the
+slider-set count; and dragging the slider again *while already running*
+re-seeded the particle array immediately to the new count, not merely on
+the next toggle. The slope-arrow density slider updated its backing
+variable, its label, and was confirmed to feed directly into the actual
+per-surface decimation formula. For major/minor contour styling, canvas
+`setLineDash` calls were spied on directly: on a known 6-level contour set
+(interval 2 over the ramp's true 0–10 range, majorEvery set to 3), the
+recorded dash pattern was solid exactly at levels 0 and 6 — the two
+positions `idx % 3 === 0` predicts — and dashed at every other level, with
+the line dash correctly reset to solid at the end of the draw so no other
+layer inherits it.
 
 Both parsers, the layer visibility/lock toggles, the elevation-query tool
 (including its lock-exclusion behavior), and zoom-to-layer were exercised

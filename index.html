@@ -105,12 +105,18 @@ canvas{display:block;width:100%;height:100%;background:var(--bg);cursor:crosshai
     </div>
     <div class="panel" id="surfaceDisplayPanel">
       <h4><span>Surface Display</span><button id="surfaceDisplayCloseBtn" title="Close">✕</button></h4>
-      <p class="note" style="margin-bottom:8px">Alternate ways to read a TIN surface, on top of (or instead of) its wireframe — all three draw in both 2D plan and 3D orbit, on every visible surface layer.</p>
+      <p class="note" style="margin-bottom:8px">Alternate ways to read a TIN surface, on top of (or instead of) its wireframe — all draw in both 2D plan and 3D orbit, on every visible surface layer.</p>
       <label style="display:flex;align-items:center;gap:6px;margin-bottom:6px;cursor:pointer"><input type="checkbox" id="sdWireframe" checked> Wireframe (triangle edges)</label>
       <label style="display:flex;align-items:center;gap:6px;margin-bottom:6px;cursor:pointer"><input type="checkbox" id="sdContours"> Contour lines</label>
       <label style="display:block;margin:0 0 4px 24px;font-size:11px;color:var(--mut)">Contour interval (blank = auto)</label>
-      <input type="text" id="sdContourInterval" placeholder="auto" style="width:calc(100% - 24px);margin:0 0 10px 24px;background:var(--panel2);color:var(--text);border:1px solid var(--rule);border-radius:5px;padding:5px">
-      <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="sdSlopeArrows"> Slope arrows (steepest-descent per triangle)</label>
+      <input type="text" id="sdContourInterval" placeholder="auto" style="width:calc(100% - 24px);margin:0 0 8px 24px;background:var(--panel2);color:var(--text);border:1px solid var(--rule);border-radius:5px;padding:5px">
+      <label style="display:block;margin:0 0 4px 24px;font-size:11px;color:var(--mut)">Major contour every N levels (— solid+bold; others ┄ dashed)</label>
+      <input type="number" id="sdMajorEvery" min="1" max="20" value="5" style="width:calc(100% - 24px);margin:0 0 10px 24px;background:var(--panel2);color:var(--text);border:1px solid var(--rule);border-radius:5px;padding:5px">
+      <label style="display:flex;align-items:center;gap:6px;margin-bottom:4px;cursor:pointer"><input type="checkbox" id="sdSlopeArrows"> Slope arrows (steepest-descent per triangle)</label>
+      <label style="display:block;margin:0 0 4px 24px;font-size:11px;color:var(--mut)">Arrow density (max per surface): <span id="sdArrowDensityVal">300</span></label>
+      <input type="range" id="sdArrowDensity" min="20" max="1000" step="20" value="300" style="width:calc(100% - 24px);margin:0 0 12px 24px">
+      <label style="display:block;margin-bottom:4px;font-size:11px;color:var(--mut)">🌊 Water Flow droplet count: <span id="sdWaterCountVal">50</span></label>
+      <input type="range" id="sdWaterCount" min="5" max="300" step="5" value="50" style="width:100%">
     </div>
     <div class="panel" id="geomLabelPanel">
       <h4><span>Label Geometry Points</span><button id="geomLabelCloseBtn" title="Close">✕</button></h4>
@@ -181,10 +187,11 @@ let waterOn=false;
 let waterParticles=[];                                     // [{E,N,age,trail:[{E,N},...]}]
 let waterAnimHandle=null;
 let waterLastTime=null;
-const WATER_PARTICLE_COUNT=50;
+let WATER_PARTICLE_COUNT=50;                               // adjustable from 🗻 Surface Display; re-seeds live while the animation is running
 const WATER_BASE_SPEED=20;                                 // world units/sec at a moderate slope — tuned for a readable animation pace, not a real flow-velocity model
 const WATER_TRAIL_LEN=14;
 const WATER_MAX_AGE=9;                                     // seconds before a droplet respawns anyway, so one that's pooled on a gentle slope doesn't just sit there forever
+let SLOPE_ARROW_DENSITY=300;                               // max arrows drawn per surface, adjustable from 🗻 Surface Display
 
 /* ---------- 🗻 surface display options ----------
    Alternate/additional ways to read a TIN beyond the always-on wireframe: contour lines
@@ -193,7 +200,7 @@ const WATER_MAX_AGE=9;                                     // seconds before a d
    water flow animation already computes). All three render in both 2D plan and 3D orbit,
    same as the wireframe itself; contours/arrows are pure static geometry so unlike water
    flow they carry no interaction dependency that would restrict them to 2D only. */
-let SURFACE_DISPLAY={wireframe:true,contours:false,contourInterval:null,slopeArrows:false};   // contourInterval:null = auto-computed per surface from its own Z range
+let SURFACE_DISPLAY={wireframe:true,contours:false,contourInterval:null,slopeArrows:false,contourMajorEvery:5};   // contourInterval:null = auto-computed per surface from its own Z range; contourMajorEvery = every Nth level (0-indexed from the lowest) draws solid/bold as a "major" contour, the rest dashed/thin as "minor" — the standard cartographic convention
 
 /* ---------- 3D orbit view (ported from FBK-Checker) ----------
    Same oblique-projection scheme: rotate a point about a world pivot (orbit.cx/cy/cz)
@@ -1366,10 +1373,14 @@ function contourSegmentForTri(tri,level){
 }
 function drawContours(proj){
   if(!SURFACE_DISPLAY.contours)return;
+  const majorEvery=Math.max(1,SURFACE_DISPLAY.contourMajorEvery||5);
   SURFACES.forEach(s=>{
     const ly=LAYERS[s.layer];if(ly&&!ly.visible)return;
-    ctx.strokeStyle='#ffd24a';ctx.lineWidth=0.9;ctx.globalAlpha=ly&&ly.locked?0.4:0.85;
-    contourLevelsFor(s).forEach(level=>{
+    ctx.strokeStyle='#ffd24a';ctx.globalAlpha=ly&&ly.locked?0.4:0.85;
+    contourLevelsFor(s).forEach((level,idx)=>{
+      const isMajor=idx%majorEvery===0;                     // every Nth level (from the lowest) is "major" — solid + bolder; the rest are "minor" — dashed + thinner
+      ctx.lineWidth=isMajor?1.6:0.8;
+      ctx.setLineDash(isMajor?[]:[5,4]);
       s.tris.forEach(tri=>{
         const seg=contourSegmentForTri(tri,level);if(!seg)return;
         const[x0,y0]=proj(seg[0].E,seg[0].N,level),[x1,y1]=proj(seg[1].E,seg[1].N,level);
@@ -1377,10 +1388,11 @@ function drawContours(proj){
       });
     });
   });
-  ctx.globalAlpha=1;
+  ctx.setLineDash([]);ctx.globalAlpha=1;
 }
-// one steepest-descent arrow per triangle (decimated so a dense TIN never draws more than
-// ~300 per surface, keeping this legible and fast regardless of triangle count); a fixed
+// one steepest-descent arrow per triangle (decimated to at most SLOPE_ARROW_DENSITY per
+// surface, adjustable from 🗻 Surface Display, keeping this legible and fast regardless of
+// triangle count); a fixed
 // SCREEN-pixel arrow length keeps it visible at any zoom, found generically by projecting
 // the centroid and a tiny nearby offset in the flow direction through whichever `proj` is
 // active (2D or 3D) rather than hand-deriving each projection's own linear/rotational math.
@@ -1389,7 +1401,7 @@ function drawSlopeArrows(proj){
   const PIX_LEN=12,EPS=1e-3;
   SURFACES.forEach(s=>{
     const ly=LAYERS[s.layer];if(ly&&!ly.visible)return;
-    const color=ly?ly.color:'#ffb86b',tris=s.tris,step=Math.max(1,Math.ceil(tris.length/300));
+    const color=ly?ly.color:'#ffb86b',tris=s.tris,step=Math.max(1,Math.ceil(tris.length/SLOPE_ARROW_DENSITY));
     ctx.globalAlpha=ly&&ly.locked?0.4:0.9;
     for(let i=0;i<tris.length;i+=step){
       const tri=tris[i],dir=triFlowDir(tri);if(!dir)continue;
@@ -1767,6 +1779,23 @@ $('sdContourInterval').onchange=()=>{
   draw();
 };
 $('sdSlopeArrows').onchange=()=>{SURFACE_DISPLAY.slopeArrows=$('sdSlopeArrows').checked;draw();};
+$('sdMajorEvery').onchange=()=>{
+  const v=parseInt($('sdMajorEvery').value,10);
+  SURFACE_DISPLAY.contourMajorEvery=(isFinite(v)&&v>=1)?v:5;
+  draw();
+};
+$('sdArrowDensity').oninput=()=>{
+  const v=parseInt($('sdArrowDensity').value,10);
+  $('sdArrowDensityVal').textContent=v;
+  SLOPE_ARROW_DENSITY=v;
+  draw();
+};
+$('sdWaterCount').oninput=()=>{
+  const v=parseInt($('sdWaterCount').value,10);
+  $('sdWaterCountVal').textContent=v;
+  WATER_PARTICLE_COUNT=v;
+  if(waterOn)initWaterParticles();   // re-seed live so the change is visible immediately, not just on the next toggle
+};
 $('snapBtn').onclick=()=>{
   if($('snapBtn').disabled)return;
   if(is3D){hud('Snap is 2D only — press O or ⟲ 3D to switch back first');return;}
@@ -1893,7 +1922,7 @@ window.addEventListener('resize',resize);
 resize();
 
 /* ---------- version badge — bumped on every push, mirroring FBK-Checker's own fruit badge ---------- */
-const VERSION={animal:'🦎',name:'GECKO',build:8};
+const VERSION={animal:'🦡',name:'BADGER',build:9};
 function rotateAnimal(){const b=$('animalBadge');b.style.transform='rotate(360deg)';setTimeout(()=>{b.style.transform='rotate(0deg)';},200);}
 function showVersion(){const b=$('animalBadge');b.textContent=`${VERSION.animal} ${VERSION.name}`;
   b.title=`Build ${VERSION.build} · ${VERSION.name} — if this matches what Claude pushed, you're on the latest (no cache)`;}
