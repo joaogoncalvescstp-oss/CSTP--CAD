@@ -17,6 +17,20 @@ dependencies, and nothing to install.
   interpolated elevation at that exact point (barycentric interpolation
   across whichever triangle you clicked). This is the actual payoff of
   importing a surface model: getting a spot elevation off it without CAD.
+- **🌊 Water Flow** animates droplets across every visible TIN surface,
+  following real plane geometry rather than a stylistic guess: each droplet
+  repeatedly looks up which triangle it's currently inside and moves along
+  *that triangle's own* steepest-descent direction — computed from the
+  triangle's own upward-facing plane normal `(nx,ny,nz)`, where the descent
+  direction is exactly proportional to `(nx,ny)` (derivable directly from
+  the plane equation, not approximated). A droplet respawns at a fresh
+  random point on the surface once it flows off the modeled edge or lands
+  on a flat/vertical facet with no defined downhill direction, and faster
+  on steeper triangles than gentle ones. This is a **stylized visual
+  approximation of surface runoff direction, not a hydrology/watershed
+  simulation** — there's no infiltration, ponding capacity, channel
+  concentration, or flow accumulation, just "which way does this exact spot
+  drain." 2D plan view only, same reasoning as ⛰ Elevation/🧲 Snap.
 - **↥ Import LandXML (TIN / Pipes)** also reads Civil3D **pipe networks**
   (`<PipeNetworks><PipeNetwork><Structs>`/`<Pipes>`) — manholes, catch
   basins, and cleanouts as structures; storm/sanitary pipes as lines between
@@ -314,6 +328,23 @@ elevation exactly fixed while growing both axis scales together (preserving
 vertical exaggeration); and the close button, plus the `P` keyboard
 shortcut, correctly toggled the view off and back on, restoring the legend
 each time.
+
+A sixth pass verified 🌊 Water Flow's math and lifecycle end-to-end against
+a synthetic 10×10 unit ramp surface (two triangles, elevation running
+exactly 10→0 across the E axis and constant across N — so the true downhill
+direction is exactly `+E`, no other component): the steepest-descent
+formula returned `(dirE:1, dirN:0)` on both triangles to within floating-
+point precision; triangle containment correctly found the surface's center
+and correctly rejected a point far outside it; toggling on spawned the
+expected particle count all placed on the surface, and running the
+simulation for a simulated 2 seconds produced a clear net population drift
+in the `+E` direction with every particle remaining finite and carrying a
+trail; entering 3D orbit or 📈 Profile view each correctly force-stopped the
+animation and cleared its particles, attempting to toggle it on while
+already in 3D correctly refused with an explanatory hud message instead of
+silently starting an animation nothing would render, and manual toggling
+on/off cleanly repeated with the animation frame handle and particle array
+always left in the expected state.
 
 Both parsers, the layer visibility/lock toggles, the elevation-query tool
 (including its lock-exclusion behavior), and zoom-to-layer were exercised

@@ -57,6 +57,7 @@ canvas{display:block;width:100%;height:100%;background:var(--bg);cursor:crosshai
     <label class="btn file" title="DWG is Autodesk's proprietary binary format — this viewer has no bundled DWG parser and can't read it directly. Selecting a .dwg here just explains that and tells you how to get the same data in another way.">↥ Import DWG<input type="file" id="dwgInput" accept=".dwg"></label>
     <button class="btn" id="fitBtn" disabled title="Frame everything currently loaded (F)">⊡ Fit</button>
     <button class="btn" id="elevBtn" disabled title="Click a visible, unlocked TIN surface to read its interpolated elevation at that point (Esc cancels) — 2D only">⛰ Elevation</button>
+    <button class="btn" id="waterBtn" disabled title="Animate droplets following each triangle's own steepest-descent direction across the visible TIN surface(s) — a stylized visual approximation, not a hydrology/runoff model. 2D plan view only">🌊 Water Flow</button>
     <button class="btn" id="snapBtn" disabled title="CAD object snap — hover to snap onto an endpoint, a genuine crossing of two lines, a midpoint, a circle's center/quadrant, or the nearest point on a line, and read its exact E/N/Z off the hud (Esc cancels) — 2D only">🧲 Snap</button>
     <button class="btn" id="orbitBtn" disabled title="Toggle 3D orbit view (O) — drag to rotate (re-centers on whatever's under the cursor), shift-drag or middle-drag to pan, wheel to zoom">⟲ 3D</button>
     <button class="btn" id="profileBtn" disabled title="Toggle profile (station vs. elevation) view (P) of one alignment — shows its design <Profile> grade line and PVC/PVT/PVI/PVCC/PVRC/Hi/Lo, or falls back to its horizontal geometry's own elevation if no <Profile> was imported. Drag to pan, wheel to zoom (both axes together)">📈 Profile</button>
@@ -71,6 +72,7 @@ canvas{display:block;width:100%;height:100%;background:var(--bg);cursor:crosshai
     <div class="legend" id="legend">
       <div><i style="background:var(--accent)"></i>DXF line/poly/circle</div>
       <div><i style="background:#ffb86b"></i>TIN surface (wireframe)</div>
+      <div><i style="background:#5dd0ff"></i>🌊 water flow (steepest descent — visual approximation)</div>
       <div><i style="background:#8fe3a0"></i>LandXML CgPoint</div>
       <div><i style="background:var(--gold)"></i>elevation query</div>
       <div>● manhole/CB · ▬ pipe (own layer color)</div>
@@ -155,6 +157,23 @@ let GEOM_LABEL_SHOW={horizontal:true,spiral:true,vertical:true,reference:true,cu
 let elevPick=false;                                        // ⛰ Elevation tool armed, waiting for a canvas click
 let spot=null;                                             // {E,N,z,name} — last elevation-query result, drawn until cleared
 let drag=null;                                             // {sx,sy,x0,y0} while panning
+
+/* ---------- 🌊 water flow animation ----------
+   A stylized visual approximation, not a hydrology/runoff model: each droplet repeatedly
+   looks up which TIN triangle it's currently inside, follows THAT triangle's own steepest-
+   descent direction (the exact downhill direction of its planar facet — real math, not a
+   guess), and respawns once it wanders off the modeled surface or lands on a flat/vertical
+   facet with no defined downhill direction. 2D plan view only, same reasoning as ⛰
+   Elevation/🧲 Snap — there's no world-space inverse for the 3D/profile projections to
+   resolve triangle containment through. */
+let waterOn=false;
+let waterParticles=[];                                     // [{E,N,age,trail:[{E,N},...]}]
+let waterAnimHandle=null;
+let waterLastTime=null;
+const WATER_PARTICLE_COUNT=50;
+const WATER_BASE_SPEED=20;                                 // world units/sec at a moderate slope — tuned for a readable animation pace, not a real flow-velocity model
+const WATER_TRAIL_LEN=14;
+const WATER_MAX_AGE=9;                                     // seconds before a droplet respawns anyway, so one that's pooled on a gentle slope doesn't just sit there forever
 
 /* ---------- 3D orbit view (ported from FBK-Checker) ----------
    Same oblique-projection scheme: rotate a point about a world pivot (orbit.cx/cy/cz)
@@ -415,6 +434,7 @@ function draw2D(){
       ctx.closePath();ctx.stroke();});
   });
   ctx.globalAlpha=1;
+  drawWaterParticles();
   // DXF entities
   ENTITIES.forEach(e=>{
     const ly=LAYERS[e.layer];if(ly&&!ly.visible)return;
@@ -1262,6 +1282,94 @@ function tinElevationAt(E,N){
   return null;
 }
 
+/* ---------- 🌊 water flow animation ---------- */
+// which visible TIN triangle (if any) contains (E,N) — reuses pointInTri purely as the
+// containment test it already implements, just keeping the triangle reference instead of
+// its interpolated Z (unlike tinElevationAt, a locked surface still animates — locking only
+// ever meant "exclude from the elevation query," not "freeze its terrain").
+function findWaterTriangleAt(E,N){
+  for(const s of SURFACES){
+    const ly=LAYERS[s.layer];if(ly&&!ly.visible)continue;
+    for(const tri of s.tris)if(pointInTri(E,N,tri[0],tri[1],tri[2])!=null)return tri;
+  }
+  return null;
+}
+// exact steepest-descent direction of one triangular facet: n = upward-pointing normal of
+// its plane (nz flipped positive if needed); on a plane nx·E+ny·N+nz·Z=d, dZ/dE=-nx/nz and
+// dZ/dN=-ny/nz, so the descent direction (negative gradient) is simply proportional to
+// (nx,ny) — real plane geometry, not an approximation.
+function triFlowDir(tri){
+  const a=tri[0],b=tri[1],c=tri[2];
+  const v1E=b.E-a.E,v1N=b.N-a.N,v1Z=b.Z-a.Z;
+  const v2E=c.E-a.E,v2N=c.N-a.N,v2Z=c.Z-a.Z;
+  let nx=v1N*v2Z-v1Z*v2N,ny=v1Z*v2E-v1E*v2Z,nz=v1E*v2N-v1N*v2E;
+  if(nz<0){nx=-nx;ny=-ny;nz=-nz;}
+  const mag=Math.hypot(nx,ny);
+  if(mag<1e-9||nz<1e-9)return null;                          // flat or a knife-edge vertical facet — no defined downhill direction
+  return{dirE:nx/mag,dirN:ny/mag,slope:mag/nz};
+}
+function waterRandomTriangle(){
+  const tris=[];
+  SURFACES.forEach(s=>{const ly=LAYERS[s.layer];if(ly&&!ly.visible)return;tris.push(...s.tris);});
+  return tris.length?tris[Math.floor(Math.random()*tris.length)]:null;
+}
+function respawnWaterParticle(p){
+  const tri=waterRandomTriangle();
+  if(!tri){p.E=NaN;p.N=NaN;p.trail=[];p.age=0;return;}
+  let r1=Math.random(),r2=Math.random();if(r1+r2>1){r1=1-r1;r2=1-r2;}   // uniform random point inside the triangle via barycentric sampling
+  const a=tri[0],b=tri[1],c=tri[2];
+  p.E=a.E+r1*(b.E-a.E)+r2*(c.E-a.E);
+  p.N=a.N+r1*(b.N-a.N)+r2*(c.N-a.N);
+  p.age=0;p.trail=[{E:p.E,N:p.N}];
+}
+function initWaterParticles(){
+  waterParticles=[];
+  for(let i=0;i<WATER_PARTICLE_COUNT;i++){
+    const p={E:NaN,N:NaN,age:0,trail:[]};
+    respawnWaterParticle(p);
+    waterParticles.push(p);
+  }
+  if(!waterParticles.some(p=>isFinite(p.E)))hud('no visible TIN surface to animate — show a surface layer from 📑 Layers first');
+}
+function stepWaterParticles(dt){
+  waterParticles.forEach(p=>{
+    if(!isFinite(p.E)){respawnWaterParticle(p);return;}
+    const tri=findWaterTriangleAt(p.E,p.N);
+    if(!tri){respawnWaterParticle(p);return;}                // flowed off the modeled surface
+    const dir=triFlowDir(tri);
+    if(!dir){respawnWaterParticle(p);return;}                // pooled on a flat facet — start a fresh droplet elsewhere rather than freezing in place
+    const speed=WATER_BASE_SPEED*Math.max(0.3,Math.min(1.5,dir.slope*3));   // faster on steeper ground, floored so gentle slopes still visibly creep
+    p.E+=dir.dirE*speed*dt;p.N+=dir.dirN*speed*dt;p.age+=dt;
+    p.trail.push({E:p.E,N:p.N});if(p.trail.length>WATER_TRAIL_LEN)p.trail.shift();
+    if(p.age>WATER_MAX_AGE)respawnWaterParticle(p);
+  });
+}
+function drawWaterParticles(){
+  if(!waterOn)return;
+  waterParticles.forEach(p=>{
+    if(!isFinite(p.E)||p.trail.length<2)return;
+    ctx.strokeStyle='rgba(93,208,255,.55)';ctx.lineWidth=1.4;ctx.beginPath();
+    p.trail.forEach((pt,i)=>{const[x,y]=W2S(pt.E,pt.N);i?ctx.lineTo(x,y):ctx.moveTo(x,y);});
+    ctx.stroke();
+    const[x,y]=W2S(p.E,p.N);
+    ctx.fillStyle='#bfefff';ctx.beginPath();ctx.arc(x,y,2.2,0,Math.PI*2);ctx.fill();
+  });
+}
+function stopWaterAnimation(){
+  waterOn=false;$('waterBtn').classList.remove('on');
+  if(waterAnimHandle){cancelAnimationFrame(waterAnimHandle);waterAnimHandle=null;}
+  waterParticles=[];
+}
+function waterTick(ts){
+  if(!waterOn){waterAnimHandle=null;return;}
+  if(waterLastTime==null)waterLastTime=ts;
+  const dt=Math.min(0.05,(ts-waterLastTime)/1000);           // clamp so a dropped/backgrounded frame doesn't fling particles across the map
+  waterLastTime=ts;
+  stepWaterParticles(dt);
+  draw();
+  waterAnimHandle=requestAnimationFrame(waterTick);
+}
+
 /* ---------- DXF import ---------- */
 function importDXF(text){
   const hadNothing=!ENTITIES.length&&!SURFACES.length&&!POINTS.length;
@@ -1338,7 +1446,7 @@ function importDXF(text){
   }
   if(!nEnt){hud('no recognized entities found (LINE / LWPOLYLINE / POLYLINE / POINT / CIRCLE / 3DFACE)');return;}
   renderLayerPanel();updateJobPill();
-  $('fitBtn').disabled=false;$('elevBtn').disabled=SURFACES.length===0;
+  $('fitBtn').disabled=false;$('elevBtn').disabled=SURFACES.length===0;$('waterBtn').disabled=SURFACES.length===0;
   $('orbitBtn').disabled=false;$('snapBtn').disabled=false;
   if(hadNothing)fit();else draw();
   hud(`imported ${nEnt} DXF entit${nEnt===1?'y':'ies'} across ${Object.keys(LAYERS).length} layer(s)`);
@@ -1431,7 +1539,7 @@ function importLandXML(text){
   const{nAlign,nCurve,nProfile}=importAlignments(doc);
   if(!nSurf&&!nPts&&!nNet&&!nAlign){hud('no <Surface> (TIN), <CgPoint>, <PipeNetwork>, or <Alignment> data found in this file');return;}
   renderLayerPanel();updateJobPill();
-  $('fitBtn').disabled=false;$('elevBtn').disabled=SURFACES.length===0;
+  $('fitBtn').disabled=false;$('elevBtn').disabled=SURFACES.length===0;$('waterBtn').disabled=SURFACES.length===0;
   $('orbitBtn').disabled=false;$('snapBtn').disabled=false;
   $('geomLabelsBtn').disabled=ALIGNMENTS.length===0;
   $('profileBtn').disabled=ALIGNMENTS.length===0;
@@ -1541,6 +1649,16 @@ $('elevBtn').onclick=()=>{
   elevPick=!elevPick;$('elevBtn').classList.toggle('on',elevPick);
   hud(elevPick?'click a visible, unlocked TIN surface to read its elevation there · Esc to cancel':'elevation query cancelled');
 };
+$('waterBtn').onclick=()=>{
+  if($('waterBtn').disabled)return;
+  if(is3D){hud('Water flow is 2D only — press O or ⟲ 3D to switch back first');return;}
+  if(profileOn){hud('Water flow is plan-view only — press P or 📈 Profile to switch back first');return;}
+  if(waterOn){stopWaterAnimation();draw();hud('water flow animation off');return;}
+  waterOn=true;$('waterBtn').classList.add('on');
+  initWaterParticles();waterLastTime=null;
+  waterAnimHandle=requestAnimationFrame(waterTick);
+  hud('🌊 water flow — droplets follow steepest-descent across the visible TIN surface(s)');
+};
 $('snapBtn').onclick=()=>{
   if($('snapBtn').disabled)return;
   if(is3D){hud('Snap is 2D only — press O or ⟲ 3D to switch back first');return;}
@@ -1557,7 +1675,7 @@ $('orbitBtn').onclick=()=>{
   is3D=!is3D;$('orbitBtn').classList.toggle('on',is3D);
   if(is3D&&profileOn){profileOn=false;$('profileBtn').classList.remove('on');$('profilePanel').classList.remove('show');}
   $('legend').style.display=is3D?'none':'';
-  if(is3D){elevPick=false;$('elevBtn').classList.remove('on');snapOn=false;$('snapBtn').classList.remove('on');}
+  if(is3D){elevPick=false;$('elevBtn').classList.remove('on');snapOn=false;$('snapBtn').classList.remove('on');if(waterOn)stopWaterAnimation();}
   cv.style.cursor=is3D?'grab':'crosshair';
   fit();hud(is3D?'3D orbit — drag to rotate (re-centers on click), shift-drag or middle-drag to pan, wheel to zoom':'back to 2D plan view');
 };
@@ -1576,6 +1694,7 @@ $('profileBtn').onclick=()=>{
     elevPick=false;$('elevBtn').classList.remove('on');
     snapOn=false;$('snapBtn').classList.remove('on');
     if(showMap){showMap=false;$('mapBtn').classList.remove('on');}
+    if(waterOn)stopWaterAnimation();
     if(!profileAlignName||!ALIGNMENTS.some(a=>a.name===profileAlignName))profileAlignName=ALIGNMENTS[0]?.name||null;
     renderProfileAlignSelect();
     $('profilePanel').classList.add('show');
@@ -1666,7 +1785,7 @@ window.addEventListener('resize',resize);
 resize();
 
 /* ---------- version badge — bumped on every push, mirroring FBK-Checker's own fruit badge ---------- */
-const VERSION={animal:'🦔',name:'HEDGEHOG',build:6};
+const VERSION={animal:'🐬',name:'DOLPHIN',build:7};
 function rotateAnimal(){const b=$('animalBadge');b.style.transform='rotate(360deg)';setTimeout(()=>{b.style.transform='rotate(0deg)';},200);}
 function showVersion(){const b=$('animalBadge');b.textContent=`${VERSION.animal} ${VERSION.name}`;
   b.title=`Build ${VERSION.build} · ${VERSION.name} — if this matches what Claude pushed, you're on the latest (no cache)`;}
