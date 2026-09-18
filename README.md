@@ -201,6 +201,17 @@ dependencies, and nothing to install.
   exaggeration) — 2D plan-view-only tools (⛰ Elevation, 🧲 Snap, 🗺 Map) are
   unavailable while in profile view, same as in 3D orbit.
 - Pan by dragging, zoom with the mouse wheel (zooms toward the cursor).
+- **Touch gestures** (phone/tablet) — the common navigation set works the
+  same way in 2D plan, 3D orbit, and profile view: pinch with two fingers to
+  zoom (about the pinch midpoint, matching the mouse wheel's zoom-toward-cursor
+  behavior), drag with two fingers to pan without zooming, and double-tap to
+  ⊡ Fit (zoom to extents). In 3D orbit specifically, a single finger rotates
+  (same as a mouse drag) while two fingers pan, mirroring the desktop's
+  drag-to-rotate / shift-drag-to-pan split without needing a modifier key.
+  Lifting one finger mid-pinch smoothly hands off to single-finger
+  panning/rotating with the finger that's still down, rather than stopping
+  the gesture dead. `touch-action:none` on the canvas hands all of this to
+  the app instead of the browser's own native pinch-zoom/scroll.
 
 ## 3D orbit view, aerial MAP background, and CAD object snap
 
@@ -476,6 +487,35 @@ exactly on its intended target — `(E0,N0,Z10)`, `(E10,N0,Z0)`, the edge
 midpoint `(E5,N5,Z5)`, and `(E10,N10,Z0)` — with the table listing all 4 in
 order, each with the correct snap label, and the canvas showing the most
 recent pick at full strength with earlier ones dimmed.
+
+An eleventh pass verified the touch-gesture navigation end-to-end using real
+multi-touch input dispatched through Chromium's input pipeline (Playwright's
+CDP `Input.dispatchTouchEvent`, rather than synthetic `PointerEvent`s, so
+`setPointerCapture` behaves exactly as it would for an actual finger). In 2D
+plan view, spreading two fingers from 60px to 180px apart scaled `view.s` by
+almost exactly 3x, with the world point originally under the pinch's
+midpoint mapping back to within 3px of that same screen position afterward —
+confirming the zoom is correctly anchored, not just scaled. A separate
+constant-distance two-finger drag translated `view.x`/`view.y` by exactly the
+drag delta while leaving scale untouched, proving pinch and pan are handled
+independently. Lifting one finger mid-pinch was confirmed to seamlessly hand
+off to ordinary single-finger panning with the finger still down (no dead
+gesture, no jump), and lifting the last finger cleared all internal touch
+state. Double-tap was verified to reproduce `fit()` exactly (identical
+`view.s`/`x`/`y`), while a single tap alone left the view untouched — and,
+importantly, a two-finger pinch's lift is never mistaken for the first half
+of a double-tap, so pinching then tapping once afterward correctly does
+nothing. In 3D orbit, a two-finger drag was confirmed to pan (`orbit.ox`/`oy`
+move, `orbit.az`/`el` do not) while a pinch zooms `orbit.s`, and — critically
+— a lone single finger still rotates exactly as the mouse-drag desktop
+behavior does, so the touch additions don't regress orbit's primary gesture.
+Profile view's two-finger drag panned `pview.x` without touching either
+scale, and its pinch scaled `pview.sx`/`sy` together, matching the existing
+wheel-zoom's "both axes together" rule so vertical exaggeration is never
+silently changed by a gesture. Finally, a second finger joining an in-progress
+⛰ Elevation tap was confirmed not to save a spurious second spot — only the
+deliberate first-finger tap saves one — so a resting second finger during a
+field-tablet workflow can't quietly double up a saved elevation.
 
 Both parsers, the layer visibility/lock toggles, the elevation-query tool
 (including its lock-exclusion behavior), and zoom-to-layer were exercised

@@ -61,7 +61,7 @@ canvas{display:block;width:100%;height:100%;background:var(--bg);cursor:crosshai
     <button class="btn" id="waterBtn" disabled title="Animate droplets following each triangle's own steepest-descent direction across the visible TIN surface(s) — a stylized visual approximation, not a hydrology/runoff model. 2D plan view only">🌊 Water Flow</button>
     <button class="btn" id="surfaceDisplayBtn" disabled title="Choose how a TIN surface is drawn — wireframe on/off, contour lines, slope arrows">🗻 Surface Display</button>
     <button class="btn" id="snapBtn" disabled title="CAD object snap — hover to snap onto an endpoint, a genuine crossing of two lines, a midpoint, a circle's center/quadrant, or the nearest point on a line, and read its exact E/N/Z off the hud (Esc cancels) — 2D only">🧲 Snap</button>
-    <button class="btn" id="orbitBtn" disabled title="Toggle 3D orbit view (O) — drag to rotate (re-centers on whatever's under the cursor), shift-drag or middle-drag to pan, wheel to zoom">⟲ 3D</button>
+    <button class="btn" id="orbitBtn" disabled title="Toggle 3D orbit view (O) — drag to rotate (re-centers on whatever's under the cursor), shift-drag or middle-drag to pan, wheel to zoom. Touch: one finger rotates, two-finger drag pans, pinch zooms">⟲ 3D</button>
     <button class="btn" id="profileBtn" disabled title="Toggle profile (station vs. elevation) view (P) of one alignment — shows its design <Profile> grade line and PVC/PVT/PVI/PVCC/PVRC/Hi/Lo, or falls back to its horizontal geometry's own elevation if no <Profile> was imported. Drag to pan, wheel to zoom (both axes together)">📈 Profile</button>
     <button class="btn" id="mapBtn" title="Aerial imagery background, tiled from Ramsey County MN's own imagery server (falls back to Esri/USGS NAIP) — only accurate for a job in that county's own survey coordinate system, 2D view only">🗺 Map</button>
     <button class="btn" id="pipeLabelsBtn" title="Choose which manhole/pipe fields show as on-canvas labels">🏷 Pipe Labels</button>
@@ -165,7 +165,7 @@ canvas{display:block;width:100%;height:100%;background:var(--bg);cursor:crosshai
       <label style="display:block;margin-bottom:4px;font-size:11px;color:var(--mut)">Alignment</label>
       <select id="profileAlignSel" style="width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--rule);border-radius:5px;padding:5px"></select>
     </div>
-    <div class="hud" id="hud">Import a DXF or LandXML (TIN / pipe network) file to begin. Drag to pan, wheel to zoom.</div>
+    <div class="hud" id="hud">Import a DXF or LandXML (TIN / pipe network) file to begin. Drag to pan, wheel to zoom (touch: pinch to zoom, two-finger drag to pan, double-tap to fit).</div>
   </div>
 </div>
 <script>
@@ -189,6 +189,21 @@ let GEOM_LABEL_SHOW={horizontal:true,spiral:true,vertical:true,reference:true,cu
 let elevPick=false;                                        // ⛰ Elevation tool armed — stays armed across multiple picks now, so several spots can be saved in a row
 let ELEV_SPOTS=[];                                         // every saved ⛰ Elevation pick: {E,N,z,name,snapLabel}, capped at 500 so a long session can't grow this unbounded
 let drag=null;                                             // {sx,sy,x0,y0} while panning
+
+/* ---------- touch gestures (phone/tablet): pinch-to-zoom, two-finger pan, double-tap-to-fit ---------- */
+const touchPts=new Map();                                  // active touch pointerId -> {x,y,downX,downY,downT}
+let pinch=null;                                             // {dist,mid:{x,y}} while two fingers are down
+let gestureHadPinch=false;                                  // true once a gesture used a second finger — suppresses double-tap-to-fit for it
+let lastTap=null;                                           // {t,x,y} of the previous single-finger tap, for double-tap detection
+const touchDist=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
+const touchMid=(a,b)=>({x:(a.x+b.x)/2,y:(a.y+b.y)/2});
+// re-arms a plain pan/orbit/profile drag from a live touch point — used when a pinch ends with
+// one finger still down, so that finger can keep panning/rotating without having to lift and retouch
+function armPanDrag(sx,sy){
+  if(profileOn)drag={profile:true,sx,sy,x0:pview.x,y0:pview.y};
+  else if(is3D)drag={orbit:true,sx,sy,az:orbit.az,el:orbit.el,ox:orbit.ox,oy:orbit.oy,shift:false};
+  else drag={pan:true,sx,sy,x0:view.x,y0:view.y};
+}
 
 /* ---------- 🌊 water flow animation ----------
    A stylized visual approximation, not a hydrology/runoff model: each droplet repeatedly
@@ -1985,7 +2000,7 @@ $('orbitBtn').onclick=()=>{
   $('legend').style.display=is3D?'none':'';
   if(is3D){elevPick=false;$('elevBtn').classList.remove('on');snapOn=false;$('snapBtn').classList.remove('on');if(waterOn)stopWaterAnimation();}
   cv.style.cursor=is3D?'grab':'crosshair';
-  fit();hud(is3D?'3D orbit — drag to rotate (re-centers on click), shift-drag or middle-drag to pan, wheel to zoom':'back to 2D plan view');
+  fit();hud(is3D?'3D orbit — drag to rotate (re-centers on click), shift-drag or middle-drag to pan, wheel to zoom (touch: two-finger drag to pan, pinch to zoom)':'back to 2D plan view');
 };
 $('mapBtn').onclick=()=>{
   showMap=!showMap;$('mapBtn').classList.toggle('on',showMap);
@@ -2019,6 +2034,21 @@ $('profileAlignSel').onchange=()=>{profileAlignName=$('profileAlignSel').value;f
 /* ---------- canvas interaction: pan, zoom, elevation pick, orbit, snap ---------- */
 cv.addEventListener('pointerdown',e=>{
   const r=cv.getBoundingClientRect(),sx=e.clientX-r.left,sy=e.clientY-r.top;
+  if(e.pointerType==='touch'){
+    touchPts.set(e.pointerId,{x:sx,y:sy,downX:sx,downY:sy,downT:Date.now()});
+    if(touchPts.size===2){
+      // a second finger just landed — hand off from whatever single-finger action was starting
+      // (pan/orbit/profile-pan, or even an elevation/snap tap) into a combined pinch-zoom +
+      // two-finger-pan gesture, the touch equivalent of wheel-zoom / shift-drag pan
+      drag=null;gestureHadPinch=true;
+      const pts=[...touchPts.values()];
+      pinch={dist:touchDist(pts[0],pts[1]),mid:touchMid(pts[0],pts[1])};
+      cv.setPointerCapture(e.pointerId);
+      hud('pinch to zoom · drag with two fingers to pan');
+      return;
+    }
+    if(touchPts.size>2)return;                               // a third+ finger doesn't change anything
+  }
   if(e.button===1){                                        // middle-mouse pan — works in 2D, 3D, and profile
     e.preventDefault();
     drag=is3D?{pan:true,sx,sy,x0:orbit.ox,y0:orbit.oy}
@@ -2066,6 +2096,30 @@ cv.addEventListener('pointerdown',e=>{
 });
 cv.addEventListener('pointermove',e=>{
   const r=cv.getBoundingClientRect(),sx=e.clientX-r.left,sy=e.clientY-r.top;
+  if(e.pointerType==='touch'&&touchPts.has(e.pointerId)){
+    const p=touchPts.get(e.pointerId);p.x=sx;p.y=sy;
+  }
+  if(pinch&&touchPts.size===2){
+    const pts=[...touchPts.values()];
+    const newDist=touchDist(pts[0],pts[1]),newMid=touchMid(pts[0],pts[1]);
+    const f=pinch.dist>1?newDist/pinch.dist:1;                // guard against a div-by-near-zero if fingers start overlapped
+    if(profileOn){
+      const[psta,pelev]=S2STA(pinch.mid.x,pinch.mid.y);        // anchor: the sta/elev under the OLD midpoint
+      pview.sx*=f;pview.sy*=f;
+      pview.x=newMid.x-psta*pview.sx;pview.y=newMid.y+pelev*pview.sy;  // ...re-pinned under the NEW midpoint, so a translating midpoint pans and a spreading/closing one zooms, together
+    }else if(is3D){
+      const w=cv.width/devicePixelRatio,h=cv.height/devicePixelRatio;
+      const cx=(pinch.mid.x-w/2-orbit.ox)/orbit.s,cy=(pinch.mid.y-h/2-orbit.oy)/orbit.s;
+      orbit.s*=f;
+      orbit.ox=newMid.x-w/2-cx*orbit.s;orbit.oy=newMid.y-h/2-cy*orbit.s;
+    }else{
+      const[wx,wy]=S2W(pinch.mid.x,pinch.mid.y);
+      view.s*=f;view.x=newMid.x-wx*view.s;view.y=newMid.y+wy*view.s;
+      scheduleMapRefresh();
+    }
+    pinch={dist:newDist,mid:newMid};
+    draw();return;
+  }
   if((snapOn||elevPick)&&!is3D&&!drag){
     liveSnap=snapPoint(sx,sy);
     const suffix=elevPick?' · click to save an elevation spot there':' · Esc to cancel';
@@ -2080,7 +2134,36 @@ cv.addEventListener('pointermove',e=>{
     else{view.x=drag.x0+(sx-drag.sx);view.y=drag.y0+(sy-drag.sy);scheduleMapRefresh();}draw();return;}
   if(drag.profile){pview.x=drag.x0+(sx-drag.sx);pview.y=drag.y0+(sy-drag.sy);draw();return;}
 });
-window.addEventListener('pointerup',()=>{drag=null;if(showMap&&!is3D)scheduleMapRefresh();});
+function endTouch(e){
+  if(e&&e.pointerType==='touch'){
+    const info=touchPts.get(e.pointerId);
+    touchPts.delete(e.pointerId);
+    if(info&&touchPts.size===0){
+      if(!gestureHadPinch&&!elevPick&&!snapOn){
+        const moved=Math.hypot(info.x-info.downX,info.y-info.downY),now=Date.now();
+        if(moved<12){                                          // a tap, not a drag
+          if(lastTap&&now-lastTap.t<350&&Math.hypot(info.x-lastTap.x,info.y-lastTap.y)<40){
+            if(!$('fitBtn').disabled){fit();hud('double-tap — zoomed to extents');}
+            lastTap=null;
+          }else lastTap={t:now,x:info.x,y:info.y};
+        }
+      }
+      gestureHadPinch=false;
+    }
+  }
+  if(touchPts.size>=2)return;                                 // a third+ finger lifting off doesn't end a still-active pinch
+  if(pinch){
+    pinch=null;
+    if(touchPts.size===1){                                     // one finger remains — keep panning/rotating with it instead of stopping dead
+      const[remaining]=[...touchPts.values()];
+      armPanDrag(remaining.x,remaining.y);
+      return;
+    }
+  }
+  drag=null;
+}
+window.addEventListener('pointerup',e=>{endTouch(e);if(showMap&&!is3D)scheduleMapRefresh();});
+window.addEventListener('pointercancel',e=>{endTouch(e);});
 cv.addEventListener('wheel',e=>{
   e.preventDefault();
   const r=cv.getBoundingClientRect(),sx=e.clientX-r.left,sy=e.clientY-r.top;
@@ -2107,7 +2190,7 @@ window.addEventListener('resize',resize);
 resize();
 
 /* ---------- version badge — bumped on every push, mirroring FBK-Checker's own fruit badge ---------- */
-const VERSION={animal:'🦥',name:'SLOTH',build:11};
+const VERSION={animal:'🐨',name:'KOALA',build:12};
 function rotateAnimal(){const b=$('animalBadge');b.style.transform='rotate(360deg)';setTimeout(()=>{b.style.transform='rotate(0deg)';},200);}
 function showVersion(){const b=$('animalBadge');b.textContent=`${VERSION.animal} ${VERSION.name}`;
   b.title=`Build ${VERSION.build} · ${VERSION.name} — if this matches what Claude pushed, you're on the latest (no cache)`;}
