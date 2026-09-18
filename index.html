@@ -59,6 +59,7 @@ canvas{display:block;width:100%;height:100%;background:var(--bg);cursor:crosshai
     <button class="btn" id="elevBtn" disabled title="Click a visible, unlocked TIN surface to read its interpolated elevation at that point (Esc cancels) — 2D only">⛰ Elevation</button>
     <button class="btn" id="snapBtn" disabled title="CAD object snap — hover to snap onto an endpoint, a genuine crossing of two lines, a midpoint, a circle's center/quadrant, or the nearest point on a line, and read its exact E/N/Z off the hud (Esc cancels) — 2D only">🧲 Snap</button>
     <button class="btn" id="orbitBtn" disabled title="Toggle 3D orbit view (O) — drag to rotate (re-centers on whatever's under the cursor), shift-drag or middle-drag to pan, wheel to zoom">⟲ 3D</button>
+    <button class="btn" id="profileBtn" disabled title="Toggle profile (station vs. elevation) view (P) of one alignment — shows its design <Profile> grade line and PVC/PVT/PVI/PVCC/PVRC/Hi/Lo, or falls back to its horizontal geometry's own elevation if no <Profile> was imported. Drag to pan, wheel to zoom (both axes together)">📈 Profile</button>
     <button class="btn" id="mapBtn" title="Aerial imagery background, tiled from Ramsey County MN's own imagery server (falls back to Esri/USGS NAIP) — only accurate for a job in that county's own survey coordinate system, 2D view only">🗺 Map</button>
     <button class="btn" id="pipeLabelsBtn" title="Choose which manhole/pipe fields show as on-canvas labels">🏷 Pipe Labels</button>
     <button class="btn" id="geomLabelsBtn" disabled title="Label key geometry points — horizontal (PC/PT/PI/MID/CC/PCC/PRC), spiral (TS/SC/CS/ST/SPI/SS), vertical/profile (PVC/PVT/PVI/PVCC/PVRC/Hi/Lo), reference (POB/POE/EQN), and custom stations (POT/POC/POS). Pick a reference alignment for stationing, then one or more alignments/lines to label (needs a LandXML file with an Alignment)">📍 Label Points</button>
@@ -124,6 +125,12 @@ canvas{display:block;width:100%;height:100%;background:var(--bg);cursor:crosshai
         <table id="geomTable" style="width:100%;border-collapse:collapse;font-size:11px;white-space:nowrap"></table>
       </div>
     </div>
+    <div class="panel" id="profilePanel">
+      <h4><span>Profile View</span><button id="profileCloseBtn" title="Exit profile view">✕</button></h4>
+      <p class="note" style="margin-bottom:8px">Station vs. elevation for one alignment. An alignment with an imported <code>&lt;Profile&gt;</code> shows its real design grade line and PVC/PVT/PVI/PVCC/PVRC/Hi/Lo; one without shows its horizontal geometry's own elevation instead, dashed, so it's never mistaken for an actual design profile.</p>
+      <label style="display:block;margin-bottom:4px;font-size:11px;color:var(--mut)">Alignment</label>
+      <select id="profileAlignSel" style="width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--rule);border-radius:5px;padding:5px"></select>
+    </div>
     <div class="hud" id="hud">Import a DXF or LandXML (TIN / pipe network) file to begin. Drag to pan, wheel to zoom.</div>
   </div>
 </div>
@@ -154,6 +161,20 @@ let drag=null;                                             // {sx,sy,x0,y0} whil
    by azimuth/elevation, exaggerate Z by orbit.ve, then scale/pan in screen space. */
 let is3D=false;
 let orbit={az:0.6,el:1.0,s:1,ox:0,oy:0,ve:3,cx:0,cy:0,cz:0};
+
+/* ---------- 📈 profile (station vs elevation) view ----------
+   A third view mode alongside 2D plan/3D orbit — station on the X axis, elevation on Y, each
+   with its OWN scale (pview.sx/sy) rather than one shared scale like the plan view's uniform
+   view.s: a real profile is a strip a few tens of feet tall and thousands of feet long, so
+   forcing equal axes would draw every grade as a nearly flat line. That deliberate mismatch
+   is exactly what "vertical exaggeration" means on a real plan-and-profile sheet, and it's
+   reported on-screen so the distortion is never silently misread as true slope. Shows the
+   design <Profile> grade line (with PVC/PVT/PVI/PVCC/PVRC/Hi/Lo) when the alignment has one,
+   or falls back to the horizontal geometry's own Z as a dashed line when it doesn't. */
+let profileOn=false;
+let profileAlignName=null;
+let pview={sx:1,sy:1,x:0,y:0};                             // station/elev -> screen: [sta*sx+x, -elev*sy+y]
+let profDrag=null;                                          // {sx,sy,x0,y0} while panning the profile view
 
 /* ---------- CAD object snap (ported from FBK-Checker) ----------
    Priority: endpoint (incl. a DXF circle's center/quadrants) > a genuine crossing of two
@@ -208,6 +229,10 @@ const W2S=(E,N)=>[E*view.s+view.x,-N*view.s+view.y];
 const S2W=(sx,sy)=>[(sx-view.x)/view.s,-(sy-view.y)/view.s];
 function niceStep(target){const p=Math.pow(10,Math.floor(Math.log10(target||1)));
   const n=target/p;const m=n<1.5?1:n<3?2:n<7?5:10;return m*p;}
+// same transform shape as W2S/S2W, but with independent X/Y scales (pview.sx/sy) for the
+// profile view's deliberate vertical exaggeration.
+const STA2S=(sta,elev)=>[sta*pview.sx+pview.x,-elev*pview.sy+pview.y];
+const S2STA=(sx,sy)=>[(sx-pview.x)/pview.sx,-(sy-pview.y)/pview.sy];
 
 /* ---------- Ramsey County Lambert Conformal Conic <-> lat/lon <-> Web Mercator (ported from FBK-Checker) ---------- */
 const RC={};
@@ -329,6 +354,7 @@ function fitToBounds(b){
   return true;
 }
 function fit(){
+  if(profileOn){fitProfile();draw();return;}
   const b=bounds();if(b.minE>b.maxE)return;
   if(is3D){
     const w=cv.width/devicePixelRatio,h=cv.height/devicePixelRatio,pad=60;
@@ -366,7 +392,7 @@ function zoomToLayer(name){
   draw();hud(`zoomed to layer: ${name}`);
 }
 
-function draw(){syncSnapBox();is3D?draw3D():draw2D();}
+function draw(){syncSnapBox();profileOn?drawProfile():(is3D?draw3D():draw2D());}
 function draw2D(){
   const w=cv.width/devicePixelRatio,h=cv.height/devicePixelRatio;
   ctx.clearRect(0,0,w,h);
@@ -683,11 +709,15 @@ function collectAlignmentKeyPoints(alignment){
 // ordering, and a curve tag is treated as parabolic regardless of its own tag name (a true
 // circular vertical curve is a rare, near-identical-in-practice approximation of a parabola
 // over these lengths, so this is a documented simplification, not an error).
+function profileGrades(pvis){
+  const g=[];
+  for(let k=0;k<pvis.length-1;k++)g.push((pvis[k+1].elev-pvis[k].elev)/(pvis[k+1].sta-pvis[k].sta));
+  return g;
+}
 function collectVerticalKeyPoints(alignment){
   const pvis=alignment.profile.pvis;
   if(pvis.length<2)return[];
-  const grades=[];
-  for(let k=0;k<pvis.length-1;k++)grades.push((pvis[k+1].elev-pvis[k].elev)/(pvis[k+1].sta-pvis[k].sta));
+  const grades=profileGrades(pvis);
   const pts=[],curveInfo=[];
   for(let i=1;i<pvis.length-1;i++){
     const pvi=pvis[i],g1=grades[i-1],g2=grades[i];
@@ -718,6 +748,111 @@ function collectVerticalKeyPoints(alignment){
     }
   }
   return pts;
+}
+// 📈 profile view — the design grade line itself (straight tangents, with a sampled parabola
+// wherever a PVI has a vertical curve), same station-splitting convention as
+// collectVerticalKeyPoints so the line and its labeled PVC/PVT points always agree exactly.
+function sampleProfileLine(alignment,steps=24){
+  const pvis=alignment.profile.pvis;
+  const grades=profileGrades(pvis);
+  const pts=[{sta:pvis[0].sta,elev:pvis[0].elev}];
+  for(let i=1;i<pvis.length-1;i++){
+    const pvi=pvis[i],g1=grades[i-1],g2=grades[i];
+    if(!pvi.curveLength){pts.push({sta:pvi.sta,elev:pvi.elev});continue;}
+    const L=pvi.curveLength,A=g2-g1;
+    const pvcSta=pvi.sta-L/2,pvcElev=pvi.elev-g1*(L/2);
+    const pvtSta=pvi.sta+L/2,pvtElev=pvi.elev+g2*(L/2);
+    pts.push({sta:pvcSta,elev:pvcElev});
+    for(let s=1;s<steps;s++){const x=L*s/steps;pts.push({sta:pvcSta+x,elev:pvcElev+g1*x+(A/(2*L))*x*x});}
+    pts.push({sta:pvtSta,elev:pvtElev});
+  }
+  const last=pvis[pvis.length-1];
+  pts.push({sta:last.sta,elev:last.elev});
+  return pts;
+}
+// fallback when the file gave no <Profile> at all — the horizontal geometry's own elevation
+// (interpolated Start/End/Center Z) sampled along station, so a profile view is still
+// available for plain horizontal-only alignments, clearly drawn dashed/gray to mark it as
+// "not a real design profile" rather than being mistaken for one.
+function sampleGeometryElevationLine(alignment,steps=200){
+  const els=alignment.elements,first=els[0],last=els[els.length-1];
+  const staStart=first.staStart,staEnd=last.staStart+last.length;
+  const pts=[];
+  for(let i=0;i<=steps;i++){
+    const sta=staStart+(staEnd-staStart)*i/steps;
+    const p=stationToPoint(alignment,sta);
+    pts.push({sta,elev:p.Z||0});
+  }
+  return pts;
+}
+function profileLineFor(alignment){return alignment.profile?sampleProfileLine(alignment):sampleGeometryElevationLine(alignment);}
+function profileBounds(line){
+  let minSta=Infinity,maxSta=-Infinity,minElev=Infinity,maxElev=-Infinity;
+  line.forEach(p=>{minSta=Math.min(minSta,p.sta);maxSta=Math.max(maxSta,p.sta);minElev=Math.min(minElev,p.elev);maxElev=Math.max(maxElev,p.elev);});
+  return{minSta,maxSta,minElev,maxElev};
+}
+function fitProfile(){
+  const a=ALIGNMENTS.find(x=>x.name===profileAlignName);if(!a)return;
+  const b=profileBounds(profileLineFor(a));
+  if(b.minSta>b.maxSta)return;
+  const w=cv.width/devicePixelRatio,h=cv.height/devicePixelRatio,padX=60,padY=40;
+  pview.sx=(w-2*padX)/((b.maxSta-b.minSta)||1);
+  pview.sy=(h-2*padY)/((b.maxElev-b.minElev)||1);
+  pview.x=padX-b.minSta*pview.sx;
+  pview.y=h-padY+b.minElev*pview.sy;
+}
+function renderProfileAlignSelect(){
+  const sel=$('profileAlignSel');
+  sel.innerHTML=ALIGNMENTS.map(a=>`<option value="${a.name}"${a.name===profileAlignName?' selected':''}>${a.name}${a.profile?'':' (no profile — showing geometry elevation)'}</option>`).join('');
+}
+function drawProfile(){
+  const w=cv.width/devicePixelRatio,h=cv.height/devicePixelRatio;
+  ctx.clearRect(0,0,w,h);
+  labelOccupied=[];
+  const a=ALIGNMENTS.find(x=>x.name===profileAlignName);
+  if(!a){ctx.fillStyle='#8a99b8';ctx.font='13px ui-monospace,monospace';ctx.fillText('pick an alignment from the Profile panel',20,30);return;}
+  const hasProfile=!!a.profile;
+  const line=profileLineFor(a);
+  // grid + axis tick labels
+  ctx.strokeStyle='#16203a';ctx.lineWidth=1;
+  const stepX=niceStep(80/pview.sx),stepY=niceStep(40/pview.sy);
+  const tl=S2STA(0,0),br=S2STA(w,h);
+  ctx.beginPath();
+  for(let s=Math.ceil(tl[0]/stepX)*stepX;s<br[0];s+=stepX){const[x]=STA2S(s,0);ctx.moveTo(x,0);ctx.lineTo(x,h);}
+  for(let e=Math.ceil(br[1]/stepY)*stepY;e<tl[1];e+=stepY){const[,y]=STA2S(0,e);ctx.moveTo(0,y);ctx.lineTo(w,y);}
+  ctx.stroke();
+  ctx.fillStyle='#8a99b8';ctx.font='10px ui-monospace,monospace';
+  for(let s=Math.ceil(tl[0]/stepX)*stepX;s<br[0];s+=stepX){const[x]=STA2S(s,0);ctx.fillText(formatStation(s),x+2,h-4);}
+  for(let e=Math.ceil(br[1]/stepY)*stepY;e<tl[1];e+=stepY){const[,y]=STA2S(0,e);ctx.fillText(e.toFixed(1),4,y-2);}
+  // vertical tick + label at each horizontal PC/PT station — the plan/profile sheet convention
+  // of showing where the plan-view curves fall along this same profile.
+  collectAlignmentKeyPoints(a).filter(p=>p.type==='PC'||p.type==='PT').forEach(p=>{
+    const[x]=STA2S(p.sta,0);
+    ctx.strokeStyle='rgba(231,236,247,.18)';ctx.lineWidth=1;
+    ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,h);ctx.stroke();
+    ctx.fillStyle='#cfe0ff';ctx.font='9px ui-monospace,monospace';ctx.fillText(p.type,x+2,12);
+  });
+  // the grade line itself
+  ctx.strokeStyle=hasProfile?'#7fd4ff':'#8a99b8';ctx.lineWidth=1.8;
+  if(!hasProfile)ctx.setLineDash([6,4]);
+  ctx.beginPath();line.forEach((p,i)=>{const[x,y]=STA2S(p.sta,p.elev);i?ctx.lineTo(x,y):ctx.moveTo(x,y);});ctx.stroke();
+  ctx.setLineDash([]);
+  // PVC/PVT/PVI/PVCC/PVRC/Hi/Lo
+  if(hasProfile){
+    collectVerticalKeyPoints(a).forEach(p=>{
+      const[x,y]=STA2S(p.sta,p.elev??p.Z);
+      const color=GEOM_CATEGORY_COLOR.vertical;
+      drawGeomMarker(x,y,p.type,color);
+      ctx.font='700 10px ui-monospace,monospace';
+      const lines=[p.type,`STA ${formatStation(p.sta)}`];
+      if(p.elev!=null)lines.push(`EL ${p.elev.toFixed(2)}`);
+      placeLabelBlock(lines,x+6,y-6,color,11);
+    });
+  }
+  ctx.fillStyle='#e7ecf7';ctx.font='700 12px ui-monospace,monospace';
+  ctx.fillText(`${a.name} — profile${hasProfile?'':' (no <Profile> in file — showing horizontal geometry elevation)'}`,12,18);
+  ctx.fillStyle='#8a99b8';ctx.font='10px ui-monospace,monospace';
+  ctx.fillText(`vertical exaggeration ≈ ${(pview.sy/pview.sx).toFixed(1)}×`,12,32);
 }
 // only these types get re-stationed against whichever alignment is picked as the reference —
 // they're plain (E,N) geometry that legitimately could belong to a different alignment's
@@ -1299,6 +1434,7 @@ function importLandXML(text){
   $('fitBtn').disabled=false;$('elevBtn').disabled=SURFACES.length===0;
   $('orbitBtn').disabled=false;$('snapBtn').disabled=false;
   $('geomLabelsBtn').disabled=ALIGNMENTS.length===0;
+  $('profileBtn').disabled=ALIGNMENTS.length===0;
   if(hadNothing)fit();else draw();
   const parts=[];
   if(nSurf)parts.push(`${nSurf} surface(s) (${nTri} tri)`);
@@ -1401,12 +1537,14 @@ $('fitBtn').onclick=fit;
 $('elevBtn').onclick=()=>{
   if($('elevBtn').disabled)return;
   if(is3D){hud('Elevation query is 2D only — press O or ⟲ 3D to switch back first');return;}
+  if(profileOn){hud('Elevation query is plan-view only — press P or 📈 Profile to switch back first');return;}
   elevPick=!elevPick;$('elevBtn').classList.toggle('on',elevPick);
   hud(elevPick?'click a visible, unlocked TIN surface to read its elevation there · Esc to cancel':'elevation query cancelled');
 };
 $('snapBtn').onclick=()=>{
   if($('snapBtn').disabled)return;
   if(is3D){hud('Snap is 2D only — press O or ⟲ 3D to switch back first');return;}
+  if(profileOn){hud('Snap is plan-view only — press P or 📈 Profile to switch back first');return;}
   snapOn=!snapOn;$('snapBtn').classList.toggle('on',snapOn);liveSnap=null;
   hud(snapOn?'hover to snap onto an endpoint/intersection/midpoint/nearest point · Esc to cancel':'snap cancelled');
   draw();
@@ -1417,6 +1555,7 @@ $('snapBtn').onclick=()=>{
 $('orbitBtn').onclick=()=>{
   if($('orbitBtn').disabled)return;
   is3D=!is3D;$('orbitBtn').classList.toggle('on',is3D);
+  if(is3D&&profileOn){profileOn=false;$('profileBtn').classList.remove('on');$('profilePanel').classList.remove('show');}
   $('legend').style.display=is3D?'none':'';
   if(is3D){elevPick=false;$('elevBtn').classList.remove('on');snapOn=false;$('snapBtn').classList.remove('on');}
   cv.style.cursor=is3D?'grab':'crosshair';
@@ -1425,16 +1564,43 @@ $('orbitBtn').onclick=()=>{
 $('mapBtn').onclick=()=>{
   showMap=!showMap;$('mapBtn').classList.toggle('on',showMap);
   if(is3D)hud('MAP is 2D only — it stays off until you switch back with O / ⟲ 3D');
-  if(showMap&&!is3D){mapSource='ramsey';mapTiles=[];mapErr=null;fetchMapTiles();}
+  else if(profileOn)hud('MAP is plan-view only — it stays off until you exit Profile view');
+  if(showMap&&!is3D&&!profileOn){mapSource='ramsey';mapTiles=[];mapErr=null;fetchMapTiles();}
   draw();
 };
+$('profileBtn').onclick=()=>{
+  if($('profileBtn').disabled)return;
+  profileOn=!profileOn;$('profileBtn').classList.toggle('on',profileOn);
+  if(profileOn){
+    if(is3D){is3D=false;$('orbitBtn').classList.remove('on');}
+    elevPick=false;$('elevBtn').classList.remove('on');
+    snapOn=false;$('snapBtn').classList.remove('on');
+    if(showMap){showMap=false;$('mapBtn').classList.remove('on');}
+    if(!profileAlignName||!ALIGNMENTS.some(a=>a.name===profileAlignName))profileAlignName=ALIGNMENTS[0]?.name||null;
+    renderProfileAlignSelect();
+    $('profilePanel').classList.add('show');
+  }else{
+    $('profilePanel').classList.remove('show');
+  }
+  $('legend').style.display=(profileOn||is3D)?'none':'';
+  fit();
+  hud(profileOn?'profile view — drag to pan, wheel to zoom (both axes together) · pick an alignment from the Profile panel':'back to 2D plan view');
+};
+$('profileCloseBtn').onclick=()=>{if(!$('profileBtn').disabled)$('profileBtn').onclick();};
+$('profileAlignSel').onchange=()=>{profileAlignName=$('profileAlignSel').value;fit();};
 
 /* ---------- canvas interaction: pan, zoom, elevation pick, orbit, snap ---------- */
 cv.addEventListener('pointerdown',e=>{
   const r=cv.getBoundingClientRect(),sx=e.clientX-r.left,sy=e.clientY-r.top;
-  if(e.button===1){                                        // middle-mouse pan — works in both 2D and 3D
+  if(e.button===1){                                        // middle-mouse pan — works in 2D, 3D, and profile
     e.preventDefault();
-    drag=is3D?{pan:true,sx,sy,x0:orbit.ox,y0:orbit.oy}:{pan:true,sx,sy,x0:view.x,y0:view.y};
+    drag=is3D?{pan:true,sx,sy,x0:orbit.ox,y0:orbit.oy}
+      :profileOn?{profile:true,sx,sy,x0:pview.x,y0:pview.y}
+      :{pan:true,sx,sy,x0:view.x,y0:view.y};
+    cv.setPointerCapture(e.pointerId);return;
+  }
+  if(profileOn){
+    drag={profile:true,sx,sy,x0:pview.x,y0:pview.y};
     cv.setPointerCapture(e.pointerId);return;
   }
   if(is3D){
@@ -1471,13 +1637,19 @@ cv.addEventListener('pointermove',e=>{
     else{orbit.az=drag.az+(sx-drag.sx)*0.008;orbit.el=Math.max(0.12,Math.min(1.55,drag.el-(sy-drag.sy)*0.006));}draw();return;}
   if(drag.pan){if(is3D){orbit.ox=drag.x0+(sx-drag.sx);orbit.oy=drag.y0+(sy-drag.sy);}
     else{view.x=drag.x0+(sx-drag.sx);view.y=drag.y0+(sy-drag.sy);scheduleMapRefresh();}draw();return;}
+  if(drag.profile){pview.x=drag.x0+(sx-drag.sx);pview.y=drag.y0+(sy-drag.sy);draw();return;}
 });
 window.addEventListener('pointerup',()=>{drag=null;if(showMap&&!is3D)scheduleMapRefresh();});
 cv.addEventListener('wheel',e=>{
   e.preventDefault();
   const r=cv.getBoundingClientRect(),sx=e.clientX-r.left,sy=e.clientY-r.top;
   const f=e.deltaY<0?1.12:1/1.12;
-  if(is3D){zoomOrbit(f,sx,sy);}
+  if(profileOn){
+    const[psta,pelev]=S2STA(sx,sy);
+    pview.sx*=f;pview.sy*=f;                                 // scale both axes together — zooming never changes the chosen vertical exaggeration
+    pview.x=sx-psta*pview.sx;pview.y=sy+pelev*pview.sy;
+  }
+  else if(is3D){zoomOrbit(f,sx,sy);}
   else{const[wx,wy]=S2W(sx,sy);view.s*=f;view.x=sx-wx*view.s;view.y=sy+wy*view.s;scheduleMapRefresh();}
   draw();
 },{passive:false});
@@ -1488,12 +1660,13 @@ window.addEventListener('keydown',e=>{
   }
   else if(e.key.toLowerCase()==='f'&&!$('fitBtn').disabled)fit();
   else if(e.key.toLowerCase()==='o'&&!$('orbitBtn').disabled)$('orbitBtn').onclick();
+  else if(e.key.toLowerCase()==='p'&&!$('profileBtn').disabled)$('profileBtn').onclick();
 });
 window.addEventListener('resize',resize);
 resize();
 
 /* ---------- version badge — bumped on every push, mirroring FBK-Checker's own fruit badge ---------- */
-const VERSION={animal:'🐿️',name:'SQUIRREL',build:5};
+const VERSION={animal:'🦔',name:'HEDGEHOG',build:6};
 function rotateAnimal(){const b=$('animalBadge');b.style.transform='rotate(360deg)';setTimeout(()=>{b.style.transform='rotate(0deg)';},200);}
 function showVersion(){const b=$('animalBadge');b.textContent=`${VERSION.animal} ${VERSION.name}`;
   b.title=`Build ${VERSION.build} · ${VERSION.name} — if this matches what Claude pushed, you're on the latest (no cache)`;}

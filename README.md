@@ -117,6 +117,23 @@ dependencies, and nothing to install.
   sheet. It shows everything computed regardless of the on-canvas category
   toggles, and **⬇ Export CSV** saves the same table to a file for printing
   or loading into a data collector.
+- **📈 Profile** (P) is a third view mode, alongside 2D plan and 3D orbit,
+  for one alignment at a time: station on the X axis, elevation on Y, each
+  with its **own independent scale** rather than the plan view's single
+  shared one — a real profile is a strip a few tens of feet tall and
+  thousands of feet long, so forcing equal axes would draw every grade as a
+  nearly flat line. That deliberate mismatch is exactly what "vertical
+  exaggeration" means on a real plan-and-profile sheet, and the current
+  ratio is always shown on-screen so it's never silently misread as true
+  slope. An alignment with an imported `<Profile>` shows its real design
+  grade line plus PVC/PVT/PVI/PVCC/PVRC/Hi/Lo; one without falls back to a
+  dashed line tracing its horizontal geometry's own elevation, clearly
+  marked as not a real design profile. A light vertical tick at each
+  horizontal PC/PT station cross-references the plan-view curves, matching
+  how a real plan-and-profile sheet lines the two up. Drag to pan, wheel to
+  zoom (both axes scale together, so zooming never changes the chosen
+  exaggeration) — 2D plan-view-only tools (⛰ Elevation, 🧲 Snap, 🗺 Map) are
+  unavailable while in profile view, same as in 3D orbit.
 - Pan by dragging, zoom with the mouse wheel (zooms toward the cursor).
 
 ## 3D orbit view, aerial MAP background, and CAD object snap
@@ -282,6 +299,21 @@ not just vertical/profile points: against a curve with distinct, non-zero
 elevations at each end, PC/PT/MID/CC/POB/POE all printed the exact expected
 `EL` value (the curve's own Start/End/Center Z, or the correct interpolated
 average for MID), matching what the table's Elevation column already shows.
+
+A fifth pass verified the 📈 Profile view end-to-end: toggling it on defaults
+to the first imported alignment and shows the alignment picker; entering 3D
+orbit correctly exits profile view (and vice versa); an alignment with a
+`<Profile>` reproduced the exact same PVI/PVC/PVT/Hi/Lo/PVRC set already
+verified for the plan-view labeling feature, now drawn as a real sampled
+parabola on independent station/elevation axes; an alignment with no
+`<Profile>` fell back to its horizontal geometry's own elevation, sampled
+across 200 points and matching that geometry's true start/end elevations
+exactly; a real mouse drag panned the view by exactly the pointer's pixel
+delta; a real mouse-wheel zoom kept the cursor's underlying station and
+elevation exactly fixed while growing both axis scales together (preserving
+vertical exaggeration); and the close button, plus the `P` keyboard
+shortcut, correctly toggled the view off and back on, restoring the legend
+each time.
 
 Both parsers, the layer visibility/lock toggles, the elevation-query tool
 (including its lock-exclusion behavior), and zoom-to-layer were exercised
