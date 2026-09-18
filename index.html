@@ -74,7 +74,8 @@ canvas{display:block;width:100%;height:100%;background:var(--bg);cursor:crosshai
       <div><i style="background:var(--accent)"></i>DXF line/poly/circle</div>
       <div><i style="background:#ffb86b"></i>TIN surface (wireframe)</div>
       <div><i style="background:#5dd0ff"></i>🌊 water flow (steepest descent — visual approximation)</div>
-      <div><i style="background:#ffd24a"></i>contour line (📑 layer's own color for wireframe/slope arrows)</div>
+      <div><i style="background:#ffd24a"></i>contour line — solid=major, dashed=minor (📑 layer's own color for wireframe/slope arrows)</div>
+      <div><i style="background:#2ecc71"></i><i style="background:#a3d977"></i><i style="background:#f1c40f"></i><i style="background:#e67e22"></i><i style="background:#e74c3c"></i>slope shading (gentle → steep, 5-class per surface)</div>
       <div><i style="background:#8fe3a0"></i>LandXML CgPoint</div>
       <div><i style="background:var(--gold)"></i>elevation query</div>
       <div>● manhole/CB · ▬ pipe (own layer color)</div>
@@ -112,11 +113,13 @@ canvas{display:block;width:100%;height:100%;background:var(--bg);cursor:crosshai
       <input type="text" id="sdContourInterval" placeholder="auto" style="width:calc(100% - 24px);margin:0 0 8px 24px;background:var(--panel2);color:var(--text);border:1px solid var(--rule);border-radius:5px;padding:5px">
       <label style="display:block;margin:0 0 4px 24px;font-size:11px;color:var(--mut)">Major contour every N levels (— solid+bold; others ┄ dashed)</label>
       <input type="number" id="sdMajorEvery" min="1" max="20" value="5" style="width:calc(100% - 24px);margin:0 0 10px 24px;background:var(--panel2);color:var(--text);border:1px solid var(--rule);border-radius:5px;padding:5px">
+      <label style="display:flex;align-items:center;gap:6px;margin-bottom:8px;cursor:pointer"><input type="checkbox" id="sdSlopeShading"> Slope shading (5-class, gentle <span style="color:#2ecc71">■</span>→<span style="color:#e74c3c">■</span> steep)</label>
       <label style="display:flex;align-items:center;gap:6px;margin-bottom:4px;cursor:pointer"><input type="checkbox" id="sdSlopeArrows"> Slope arrows (steepest-descent per triangle)</label>
       <label style="display:block;margin:0 0 4px 24px;font-size:11px;color:var(--mut)">Arrow density (max per surface): <span id="sdArrowDensityVal">300</span></label>
       <input type="range" id="sdArrowDensity" min="20" max="1000" step="20" value="300" style="width:calc(100% - 24px);margin:0 0 12px 24px">
       <label style="display:block;margin-bottom:4px;font-size:11px;color:var(--mut)">🌊 Water Flow droplet count: <span id="sdWaterCountVal">50</span></label>
-      <input type="range" id="sdWaterCount" min="5" max="300" step="5" value="50" style="width:100%">
+      <input type="range" id="sdWaterCount" min="5" max="5000" step="5" value="50" style="width:100%">
+      <p class="note" style="margin-top:6px">Very high droplet counts on a large/dense TIN can slow the frame rate — each droplet still falls back to a full-surface search on the rare frame it crosses into a new triangle.</p>
     </div>
     <div class="panel" id="geomLabelPanel">
       <h4><span>Label Geometry Points</span><button id="geomLabelCloseBtn" title="Close">✕</button></h4>
@@ -200,7 +203,9 @@ let SLOPE_ARROW_DENSITY=300;                               // max arrows drawn p
    water flow animation already computes). All three render in both 2D plan and 3D orbit,
    same as the wireframe itself; contours/arrows are pure static geometry so unlike water
    flow they carry no interaction dependency that would restrict them to 2D only. */
-let SURFACE_DISPLAY={wireframe:true,contours:false,contourInterval:null,slopeArrows:false,contourMajorEvery:5};   // contourInterval:null = auto-computed per surface from its own Z range; contourMajorEvery = every Nth level (0-indexed from the lowest) draws solid/bold as a "major" contour, the rest dashed/thin as "minor" — the standard cartographic convention
+let SURFACE_DISPLAY={wireframe:true,contours:false,contourInterval:null,slopeArrows:false,slopeShading:false,contourMajorEvery:5};   // contourInterval:null = auto-computed per surface from its own Z range; contourMajorEvery = every Nth level (0-indexed from the lowest) draws solid/bold as a "major" contour, the rest dashed/thin as "minor" — the standard cartographic convention
+// gentle -> steep, 5 classes — a standard slope-analysis ramp (green=flat through red=steep)
+const SLOPE_SHADE_COLORS=['#2ecc71','#a3d977','#f1c40f','#e67e22','#e74c3c'];
 
 /* ---------- 3D orbit view (ported from FBK-Checker) ----------
    Same oblique-projection scheme: rotate a point about a world pivot (orbit.cx/cy/cz)
@@ -452,6 +457,7 @@ function draw2D(){
   for(let E=Math.ceil(tl[0]/step)*step;E<br[0];E+=step){const[x]=W2S(E,0);ctx.moveTo(x,0);ctx.lineTo(x,h);}
   for(let N=Math.ceil(br[1]/step)*step;N<tl[1];N+=step){const[,y]=W2S(0,N);ctx.moveTo(0,y);ctx.lineTo(w,y);}
   ctx.stroke();
+  drawSlopeShading((E,N)=>W2S(E,N));
   // TIN surfaces — drawn as a wireframe of every triangle edge, per-layer visible/locked
   if(SURFACE_DISPLAY.wireframe)SURFACES.forEach(s=>{
     const ly=LAYERS[s.layer];if(ly&&!ly.visible)return;
@@ -502,6 +508,7 @@ function draw3D(){
   const w=cv.width/devicePixelRatio,h=cv.height/devicePixelRatio;
   ctx.clearRect(0,0,w,h);
   labelOccupied=[];
+  drawSlopeShading((E,N,Z)=>P3(E,N,Z));
   if(SURFACE_DISPLAY.wireframe)SURFACES.forEach(s=>{
     const ly=LAYERS[s.layer];if(ly&&!ly.visible)return;
     ctx.strokeStyle=ly?ly.color:'#ffb86b';ctx.lineWidth=0.7;ctx.globalAlpha=ly&&ly.locked?0.35:0.6;
@@ -1321,7 +1328,7 @@ function tinElevationAt(E,N){
 function findWaterTriangleAt(E,N){
   for(const s of SURFACES){
     const ly=LAYERS[s.layer];if(ly&&!ly.visible)continue;
-    for(const tri of s.tris)if(pointInTri(E,N,tri[0],tri[1],tri[2])!=null)return tri;
+    for(const tri of s.tris)if(pointInTri(E,N,tri[0],tri[1],tri[2])!=null)return{tri,layer:s.layer};
   }
   return null;
 }
@@ -1371,24 +1378,115 @@ function contourSegmentForTri(tri,level){
   pts.forEach(p=>{if(!uniq.some(q=>Math.hypot(q.E-p.E,q.N-p.N)<1e-9))uniq.push(p);});
   return uniq.length>=2?[uniq[0],uniq[1]]:null;
 }
+// Chains independent per-triangle contour segments into continuous polylines: every segment
+// endpoint is the exact intersection point of the SAME level with a shared triangle edge, so
+// two triangles sharing that edge produce identically-valued endpoints — walking outward from
+// each unused segment via a point-key lookup reassembles the real, continuous contour line
+// (or closed loop) that was always implicit in the triangulation, rather than leaving it as a
+// pile of disconnected line fragments. A rare 3+-way junction (a level touching one exact
+// shared vertex among many triangles) resolves to whichever unused branch is found first —
+// a reasonable, non-crashing choice for a genuinely rare, near-measure-zero case.
+function chainContourSegments(segs){
+  const key=p=>`${Math.round(p.E*1e4)},${Math.round(p.N*1e4)}`;
+  const used=new Array(segs.length).fill(false);
+  const map=new Map();
+  segs.forEach((seg,i)=>{[0,1].forEach(end=>{
+    const k=key(seg[end]);if(!map.has(k))map.set(k,[]);map.get(k).push({i,end});
+  });});
+  const chains=[];
+  for(let i=0;i<segs.length;i++){
+    if(used[i])continue;
+    used[i]=true;
+    const chain=[segs[i][0],segs[i][1]];
+    let extended=true;
+    while(extended){                                         // grow forward from the chain's current last point
+      extended=false;
+      for(const c of map.get(key(chain[chain.length-1]))||[]){
+        if(used[c.i])continue;
+        used[c.i]=true;chain.push(segs[c.i][c.end===0?1:0]);extended=true;break;
+      }
+    }
+    extended=true;
+    while(extended){                                         // grow backward from the chain's current first point
+      extended=false;
+      for(const c of map.get(key(chain[0]))||[]){
+        if(used[c.i])continue;
+        used[c.i]=true;chain.unshift(segs[c.i][c.end===0?1:0]);extended=true;break;
+      }
+    }
+    chains.push(chain);
+  }
+  return chains;
+}
+// Smooth a polyline of already-projected [x,y] screen points into a Catmull-Rom spline
+// (converted to cubic Beziers, the standard uniform 1/6-tension formula) instead of straight
+// segments between vertices — a real curve through the same true crossing points, not a
+// resampled/approximated shape. Falls back to a straight line for a 2-point chain, since a
+// spline needs at least one interior point to curve through.
+function drawSmoothPath(pts,closed){
+  const n=pts.length;
+  if(n<2)return;
+  ctx.moveTo(pts[0][0],pts[0][1]);
+  if(n===2){ctx.lineTo(pts[1][0],pts[1][1]);return;}
+  const at=i=>closed?pts[(i+n)%n]:pts[Math.max(0,Math.min(n-1,i))];
+  const segCount=closed?n:n-1;
+  for(let i=0;i<segCount;i++){
+    const p0=at(i-1),p1=at(i),p2=at(i+1),p3=at(i+2);
+    const c1x=p1[0]+(p2[0]-p0[0])/6,c1y=p1[1]+(p2[1]-p0[1])/6;
+    const c2x=p2[0]-(p3[0]-p1[0])/6,c2y=p2[1]-(p3[1]-p1[1])/6;
+    ctx.bezierCurveTo(c1x,c1y,c2x,c2y,p2[0],p2[1]);
+  }
+  if(closed)ctx.closePath();
+}
 function drawContours(proj){
   if(!SURFACE_DISPLAY.contours)return;
   const majorEvery=Math.max(1,SURFACE_DISPLAY.contourMajorEvery||5);
   SURFACES.forEach(s=>{
     const ly=LAYERS[s.layer];if(ly&&!ly.visible)return;
-    ctx.strokeStyle='#ffd24a';ctx.globalAlpha=ly&&ly.locked?0.4:0.85;
+    ctx.strokeStyle='#ffd24a';ctx.lineJoin='round';ctx.globalAlpha=ly&&ly.locked?0.4:0.85;
     contourLevelsFor(s).forEach((level,idx)=>{
       const isMajor=idx%majorEvery===0;                     // every Nth level (from the lowest) is "major" — solid + bolder; the rest are "minor" — dashed + thinner
       ctx.lineWidth=isMajor?1.6:0.8;
       ctx.setLineDash(isMajor?[]:[5,4]);
-      s.tris.forEach(tri=>{
-        const seg=contourSegmentForTri(tri,level);if(!seg)return;
-        const[x0,y0]=proj(seg[0].E,seg[0].N,level),[x1,y1]=proj(seg[1].E,seg[1].N,level);
-        ctx.beginPath();ctx.moveTo(x0,y0);ctx.lineTo(x1,y1);ctx.stroke();
+      const segs=[];
+      s.tris.forEach(tri=>{const seg=contourSegmentForTri(tri,level);if(seg)segs.push(seg);});
+      chainContourSegments(segs).forEach(chain=>{
+        if(chain.length<2)return;
+        const closed=chain.length>2&&Math.hypot(chain[0].E-chain[chain.length-1].E,chain[0].N-chain[chain.length-1].N)<1e-6;
+        const pts=(closed?chain.slice(0,-1):chain).map(p=>proj(p.E,p.N,level));
+        ctx.beginPath();drawSmoothPath(pts,closed);ctx.stroke();
       });
     });
   });
   ctx.setLineDash([]);ctx.globalAlpha=1;
+}
+// a surface's own slope range (min/max steepness across its triangles) — 5-class shading is
+// classified relative to THIS surface's own range (equal-interval, like contourLevelsFor's
+// own auto-interval logic), not a fixed absolute %, so it stays informative whether the
+// surface loaded is a nearly-flat lot or a steep hillside.
+function surfaceSlopeRange(s){
+  let lo=Infinity,hi=-Infinity;
+  s.tris.forEach(tri=>{const d=triFlowDir(tri);if(!d)return;lo=Math.min(lo,d.slope);hi=Math.max(hi,d.slope);});
+  return{lo,hi};
+}
+function drawSlopeShading(proj){
+  if(!SURFACE_DISPLAY.slopeShading)return;
+  SURFACES.forEach(s=>{
+    const ly=LAYERS[s.layer];if(ly&&!ly.visible)return;
+    const{lo,hi}=surfaceSlopeRange(s);
+    if(!isFinite(lo)||!isFinite(hi))return;                  // every triangle degenerate — nothing to classify
+    const range=(hi-lo)||1;
+    ctx.globalAlpha=ly&&ly.locked?0.25:0.45;
+    s.tris.forEach(tri=>{
+      const d=triFlowDir(tri);if(!d)return;
+      const cls=Math.max(0,Math.min(4,Math.floor(((d.slope-lo)/range)*5)));
+      ctx.fillStyle=SLOPE_SHADE_COLORS[cls];
+      ctx.beginPath();
+      tri.forEach((p,i)=>{const[x,y]=proj(p.E,p.N,p.Z);i?ctx.lineTo(x,y):ctx.moveTo(x,y);});
+      ctx.closePath();ctx.fill();
+    });
+  });
+  ctx.globalAlpha=1;
 }
 // one steepest-descent arrow per triangle (decimated to at most SLOPE_ARROW_DENSITY per
 // surface, adjustable from 🗻 Surface Display, keeping this legible and fast regardless of
@@ -1419,35 +1517,49 @@ function drawSlopeArrows(proj){
   ctx.globalAlpha=1;
 }
 function waterRandomTriangle(){
-  const tris=[];
-  SURFACES.forEach(s=>{const ly=LAYERS[s.layer];if(ly&&!ly.visible)return;tris.push(...s.tris);});
-  return tris.length?tris[Math.floor(Math.random()*tris.length)]:null;
+  const cands=[];
+  SURFACES.forEach(s=>{const ly=LAYERS[s.layer];if(ly&&!ly.visible)return;s.tris.forEach(tri=>cands.push({tri,layer:s.layer}));});
+  return cands.length?cands[Math.floor(Math.random()*cands.length)]:null;
 }
 function respawnWaterParticle(p){
-  const tri=waterRandomTriangle();
-  if(!tri){p.E=NaN;p.N=NaN;p.trail=[];p.age=0;return;}
+  const pick=waterRandomTriangle();
+  if(!pick){p.E=NaN;p.N=NaN;p.trail=[];p.age=0;p._tri=null;p._triLayer=null;return;}
+  const tri=pick.tri;
   let r1=Math.random(),r2=Math.random();if(r1+r2>1){r1=1-r1;r2=1-r2;}   // uniform random point inside the triangle via barycentric sampling
   const a=tri[0],b=tri[1],c=tri[2];
   p.E=a.E+r1*(b.E-a.E)+r2*(c.E-a.E);
   p.N=a.N+r1*(b.N-a.N)+r2*(c.N-a.N);
-  p.age=0;p.trail=[{E:p.E,N:p.N}];
+  p.age=0;p.trail=[{E:p.E,N:p.N}];p._tri=tri;p._triLayer=pick.layer;   // cache — see stepWaterParticles
 }
 function initWaterParticles(){
   waterParticles=[];
   for(let i=0;i<WATER_PARTICLE_COUNT;i++){
-    const p={E:NaN,N:NaN,age:0,trail:[]};
+    const p={E:NaN,N:NaN,age:0,trail:[],_tri:null,_triLayer:null};
     respawnWaterParticle(p);
     waterParticles.push(p);
   }
   if(!waterParticles.some(p=>isFinite(p.E)))hud('no visible TIN surface to animate — show a surface layer from 📑 Layers first');
 }
+// A droplet moves a tiny distance per frame, so it's almost always still inside the SAME
+// triangle it was in last frame — checking that one triangle first (O(1), also re-checking
+// its own surface's current visibility) instead of scanning every triangle on every surface
+// (O(triangles)) is what keeps thousands of droplets animating smoothly; the full scan only
+// runs on the rare frame a droplet actually crosses into a new triangle, leaves the surface,
+// or its surface's layer gets hidden mid-animation.
 function stepWaterParticles(dt){
   waterParticles.forEach(p=>{
     if(!isFinite(p.E)){respawnWaterParticle(p);return;}
-    const tri=findWaterTriangleAt(p.E,p.N);
-    if(!tri){respawnWaterParticle(p);return;}                // flowed off the modeled surface
+    const cachedLy=p._tri?LAYERS[p._triLayer]:null;
+    const cachedOk=p._tri&&!(cachedLy&&!cachedLy.visible)&&pointInTri(p.E,p.N,p._tri[0],p._tri[1],p._tri[2])!=null;
+    let tri=p._tri,layer=p._triLayer;
+    if(!cachedOk){
+      const hit=findWaterTriangleAt(p.E,p.N);
+      if(!hit){respawnWaterParticle(p);return;}              // flowed off the modeled surface (or its layer was hidden)
+      tri=hit.tri;layer=hit.layer;
+    }
     const dir=triFlowDir(tri);
     if(!dir){respawnWaterParticle(p);return;}                // pooled on a flat facet — start a fresh droplet elsewhere rather than freezing in place
+    p._tri=tri;p._triLayer=layer;
     const speed=WATER_BASE_SPEED*Math.max(0.3,Math.min(1.5,dir.slope*3));   // faster on steeper ground, floored so gentle slopes still visibly creep
     p.E+=dir.dirE*speed*dt;p.N+=dir.dirN*speed*dt;p.age+=dt;
     p.trail.push({E:p.E,N:p.N});if(p.trail.length>WATER_TRAIL_LEN)p.trail.shift();
@@ -1778,6 +1890,7 @@ $('sdContourInterval').onchange=()=>{
   SURFACE_DISPLAY.contourInterval=(isFinite(v)&&v>0)?v:null;
   draw();
 };
+$('sdSlopeShading').onchange=()=>{SURFACE_DISPLAY.slopeShading=$('sdSlopeShading').checked;draw();};
 $('sdSlopeArrows').onchange=()=>{SURFACE_DISPLAY.slopeArrows=$('sdSlopeArrows').checked;draw();};
 $('sdMajorEvery').onchange=()=>{
   const v=parseInt($('sdMajorEvery').value,10);
@@ -1922,7 +2035,7 @@ window.addEventListener('resize',resize);
 resize();
 
 /* ---------- version badge — bumped on every push, mirroring FBK-Checker's own fruit badge ---------- */
-const VERSION={animal:'🦡',name:'BADGER',build:9};
+const VERSION={animal:'🐢',name:'TORTOISE',build:10};
 function rotateAnimal(){const b=$('animalBadge');b.style.transform='rotate(360deg)';setTimeout(()=>{b.style.transform='rotate(0deg)';},200);}
 function showVersion(){const b=$('animalBadge');b.textContent=`${VERSION.animal} ${VERSION.name}`;
   b.title=`Build ${VERSION.build} · ${VERSION.name} — if this matches what Claude pushed, you're on the latest (no cache)`;}

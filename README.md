@@ -34,8 +34,8 @@ dependencies, and nothing to install.
 - **🗻 Surface Display** offers alternate/additional ways to read a TIN,
   each independently toggleable and drawn in both 2D plan and 3D orbit:
   - **Wireframe** (on by default) — the same triangle-edge mesh always
-    drawn before; turn it off to see contours/arrows on their own, e.g.
-    for a cleaner printout.
+    drawn before; turn it off to see contours/shading/arrows on their own,
+    e.g. for a cleaner printout.
   - **Contour lines** — exact per-triangle "marching triangles" extraction
     (not a resampled grid): each triangle's true planar crossing of a given
     elevation is found directly from its own 3 vertices. The interval
@@ -43,15 +43,34 @@ dependencies, and nothing to install.
     range, or type one in to override it. Every Nth level (5 by default,
     also adjustable) draws **major** — solid and a touch bolder — and the
     rest draw **minor** — dashed and thinner, the standard cartographic
-    index-contour convention.
-  - **Slope arrows** — one steepest-descent arrow per triangle (the same
-    exact plane-normal math 🌊 Water Flow uses to move its droplets), with a
+    index-contour convention. Rather than drawing each triangle's raw
+    straight-line crossing in isolation, the true crossing points are
+    **chained into continuous polylines** first (two triangles sharing an
+    edge share that edge's exact crossing point, so the real, connected
+    contour line — or closed loop, for a hill/depression — was always
+    implicit in the triangulation) and then rendered as a **smooth spline**
+    (Catmull-Rom, converted to cubic Béziers) through those same true
+    points, instead of a jagged polyline.
+  - **Slope shading** — every triangle filled by its own steepest-descent
+    steepness (the same exact plane-normal math 🌊 Water Flow uses),
+    classified into **5 shades** from gentle (green) to steep (red).
+    Classification is relative to *that surface's own* slope range
+    (equal-interval, the same auto-scaling idea the contour interval
+    already uses), so it stays informative whether the surface loaded is a
+    nearly-flat lot or a steep hillside, rather than assuming a fixed,
+    possibly-meaningless absolute % scale.
+  - **Slope arrows** — one steepest-descent arrow per triangle, with a
     **density slider** capping how many draw per surface (20–1000, default
     300) so a dense TIN stays legible and fast — the fixed on-screen arrow
     length keeps them visible at any zoom regardless of that setting.
-  - A **droplet-count slider** (5–300, default 50) for 🌊 Water Flow lives
-    in this same panel — dragging it while the animation is already running
-    re-seeds it immediately at the new count, not just on the next toggle.
+  - A **droplet-count slider** (5–5,000, default 50) for 🌊 Water Flow
+    lives in this same panel — dragging it while the animation is already
+    running re-seeds it immediately at the new count, not just on the next
+    toggle. Thousands of droplets stay smooth because each one caches which
+    triangle it's currently in and only re-scans the whole surface on the
+    rare frame it actually crosses into a new one (or that triangle's
+    layer gets hidden) — an O(1) fast path instead of an O(triangle count)
+    scan on every droplet, every frame.
 - **↥ Import LandXML (TIN / Pipes)** also reads Civil3D **pipe networks**
   (`<PipeNetworks><PipeNetwork><Structs>`/`<Pipes>`) — manholes, catch
   basins, and cleanouts as structures; storm/sanitary pipes as lines between
@@ -393,6 +412,31 @@ recorded dash pattern was solid exactly at levels 0 and 6 — the two
 positions `idx % 3 === 0` predicts — and dashed at every other level, with
 the line dash correctly reset to solid at the end of the draw so no other
 layer inherits it.
+
+A ninth pass verified 5-class slope shading, contour spline smoothing, and
+the droplet scale-up together against two new synthetic surfaces: a set of
+5 independent triangles built with exact, hand-derived slopes (0.1, 0.325,
+0.55, 0.775, 1.0) landed in exactly the 5 distinct classes 0–4 the
+equal-interval formula predicts, one triangle per class. Contour chaining
+was checked on two shapes: the known ramp's level-5 crossing (2 raw,
+disconnected triangle segments) was correctly reassembled into 1 continuous
+3-point chain lying exactly on its true `E=5` line, and spying on
+`bezierCurveTo` confirmed the resulting "spline" through 3 exactly-colinear
+points stayed perfectly straight, as it mathematically must; a synthetic
+8-facet cone's level-5 crossing (8 raw segments, one per facet) was
+correctly reassembled into a single **closed loop** of 8 unique vertices,
+each sitting at exactly half the cone's true rim radius, rendered as a
+smooth curve rather than a jagged octagon (screenshot-verified — the raw
+octagonal data visibly rounds into a near-circle). For the droplet slider,
+raising it to its new 5,000 maximum spawned exactly 5,000 particles, all
+finite and on the surface, and 120 simulated steps of all 5,000 completed
+in ~126ms while the population still net-drifted in the true downhill
+direction — confirming the new per-particle "last known triangle" cache
+keeps this responsive. The cache's two invalidation paths were each forced
+directly: a deliberately wrong cached triangle self-corrected to the real
+one containing the particle on the very next step, and hiding a droplet's
+only surface layer mid-animation correctly respawned it to nothing rather
+than silently continuing to use the now-hidden surface's stale cache.
 
 Both parsers, the layer visibility/lock toggles, the elevation-query tool
 (including its lock-exclusion behavior), and zoom-to-layer were exercised
