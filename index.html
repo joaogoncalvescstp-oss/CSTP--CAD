@@ -784,7 +784,8 @@ function drawGeomLabels(proj){
     ctx.font='700 10px ui-monospace,monospace';
     const lines=[p.type];
     if(p.sta!=null)lines.push(`STA ${formatStation(p.sta)}`);
-    if(p.elev!=null)lines.push(`EL ${p.elev.toFixed(2)}`);
+    const elev=geomPointElev(p);   // a vertical/profile point's own design elevation, or the point's plain geometry Z otherwise — same fallback the table uses, so every category shows an elevation whenever the source data actually carries one
+    if(elev!=null)lines.push(`EL ${elev.toFixed(2)}`);
     if(p.note)lines.push(p.note);
     placeLabelBlock(lines,x+7,y-7,color,11);
   });
@@ -1492,7 +1493,7 @@ window.addEventListener('resize',resize);
 resize();
 
 /* ---------- version badge — bumped on every push, mirroring FBK-Checker's own fruit badge ---------- */
-const VERSION={animal:'🦦',name:'OTTER',build:4};
+const VERSION={animal:'🐿️',name:'SQUIRREL',build:5};
 function rotateAnimal(){const b=$('animalBadge');b.style.transform='rotate(360deg)';setTimeout(()=>{b.style.transform='rotate(0deg)';},200);}
 function showVersion(){const b=$('animalBadge');b.textContent=`${VERSION.animal} ${VERSION.name}`;
   b.title=`Build ${VERSION.build} · ${VERSION.name} — if this matches what Claude pushed, you're on the latest (no cache)`;}

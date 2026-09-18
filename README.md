@@ -63,7 +63,10 @@ dependencies, and nothing to install.
   alignment becomes its own layer (tangents as lines, curves sampled as a
   smooth arc).
 - **📍 Label Points** labels an alignment's key geometry points across four
-  categories, each with its station (and elevation, for vertical points):
+  categories, each with its station and elevation (a vertical/profile
+  point's own design elevation, or the point's plain geometry Z otherwise —
+  every category shows one on-canvas whenever the source data actually
+  carries it, matching the 📋 Points Table's Elevation column):
   - **Horizontal curve** — PC, PT, PI (only when the file's own `<PI>` is
     given — never derived by trig), MID (arc midpoint), CC (the circle's own
     center — off the physical curve, at radius distance), PCC/PRC (compound/
@@ -273,6 +276,12 @@ from; the table opened with every expected column (including Northing/
 Easting/Elevation), rendered exactly one row per computed point, and the
 rows came back sorted by station ascending; and the CSV export's header and
 row count matched the on-screen table exactly.
+
+A fourth pass confirmed on-canvas labels show elevation for every category,
+not just vertical/profile points: against a curve with distinct, non-zero
+elevations at each end, PC/PT/MID/CC/POB/POE all printed the exact expected
+`EL` value (the curve's own Start/End/Center Z, or the correct interpolated
+average for MID), matching what the table's Elevation column already shows.
 
 Both parsers, the layer visibility/lock toggles, the elevation-query tool
 (including its lock-exclusion behavior), and zoom-to-layer were exercised
