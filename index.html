@@ -61,7 +61,8 @@ canvas{display:block;width:100%;height:100%;background:var(--bg);cursor:crosshai
     <button class="btn" id="orbitBtn" disabled title="Toggle 3D orbit view (O) — drag to rotate (re-centers on whatever's under the cursor), shift-drag or middle-drag to pan, wheel to zoom">⟲ 3D</button>
     <button class="btn" id="mapBtn" title="Aerial imagery background, tiled from Ramsey County MN's own imagery server (falls back to Esri/USGS NAIP) — only accurate for a job in that county's own survey coordinate system, 2D view only">🗺 Map</button>
     <button class="btn" id="pipeLabelsBtn" title="Choose which manhole/pipe fields show as on-canvas labels">🏷 Pipe Labels</button>
-    <button class="btn" id="geomLabelsBtn" disabled title="Label key geometry points — horizontal (PC/PT/PI/MID/CC/PCC/PRC), spiral (TS/SC/CS/ST/SPI/SS), vertical/profile (PVC/PVT/PVI/PVCC/PVRC/Hi/Lo), reference (POB/POE/EQN), and custom stations (POT/POC/POS). Pick a reference alignment for stationing, then the alignment or line to label (needs a LandXML file with an Alignment)">📍 Label Points</button>
+    <button class="btn" id="geomLabelsBtn" disabled title="Label key geometry points — horizontal (PC/PT/PI/MID/CC/PCC/PRC), spiral (TS/SC/CS/ST/SPI/SS), vertical/profile (PVC/PVT/PVI/PVCC/PVRC/Hi/Lo), reference (POB/POE/EQN), and custom stations (POT/POC/POS). Pick a reference alignment for stationing, then one or more alignments/lines to label (needs a LandXML file with an Alignment)">📍 Label Points</button>
+    <button class="btn" id="geomTableBtn" disabled title="View every currently labeled point as a table — station, northing, easting, elevation — a quick reference sheet for field stakeout, with CSV export">📋 Points Table</button>
     <button class="btn gold" id="layersBtn" title="Show/hide and lock layers">📑 Layers</button>
   </div>
   <div class="main">
@@ -99,12 +100,12 @@ canvas{display:block;width:100%;height:100%;background:var(--bg);cursor:crosshai
     </div>
     <div class="panel" id="geomLabelPanel">
       <h4><span>Label Geometry Points</span><button id="geomLabelCloseBtn" title="Close">✕</button></h4>
-      <p class="note" style="margin-bottom:8px">1) Pick the <b>reference alignment</b> — this defines station 0 and direction. 2) Pick the <b>target</b> to label: an alignment (its own curves/spirals/profile give real PC/PT/PI/MID/CC/PCC/PRC/TS/SC/CS/ST/SPI/PVC/PVT/PVI/PVCC/PVRC/Hi/Lo/POB/POE/EQN) or a plain line/layer (no curve data, so only its segment MID points can be labeled). Most types' station is the closest match along the reference (so picking the same alignment for both recovers native stationing); a few — EQN, POT/POC/POS, and every vertical/profile point — always keep the station they're actually defined at, since re-stationing them against an unrelated alignment wouldn't mean anything. CC (circle center) shows no station at all — it's off the physical roadway, at radius distance from the curve.</p>
+      <p class="note" style="margin-bottom:8px">1) Pick the <b>reference alignment</b> — this defines station 0 and direction. 2) Check one or more <b>targets</b> to label: an alignment (its own curves/spirals/profile give real PC/PT/PI/MID/CC/PCC/PRC/TS/SC/CS/ST/SPI/PVC/PVT/PVI/PVCC/PVRC/Hi/Lo/POB/POE/EQN) or a plain line/layer (no curve data, so only its segment MID points can be labeled). Checking several targets at once labels them all together, stationed against the same reference — handy for e.g. labeling a mainline plus every side street off it in one pass. Most types' station is the closest match along the reference (so checking the reference as its own target recovers native stationing); a few — EQN, POT/POC/POS, and every vertical/profile point — always keep the station they're actually defined at, since re-stationing them against an unrelated alignment wouldn't mean anything. CC (circle center) shows no station at all — it's off the physical roadway, at radius distance from the curve.</p>
       <label style="display:block;margin-bottom:4px;font-size:11px;color:var(--mut)">Reference alignment (stationing)</label>
       <select id="geomRefSel" style="width:100%;margin-bottom:8px;background:var(--panel2);color:var(--text);border:1px solid var(--rule);border-radius:5px;padding:5px"></select>
-      <label style="display:block;margin-bottom:4px;font-size:11px;color:var(--mut)">Target alignment or line to label</label>
-      <select id="geomTargetSel" style="width:100%;margin-bottom:8px;background:var(--panel2);color:var(--text);border:1px solid var(--rule);border-radius:5px;padding:5px"></select>
-      <label style="display:block;margin-bottom:4px;font-size:11px;color:var(--mut)">Also label station(s) on target (POT/POC/POS) — alignment target only</label>
+      <label style="display:block;margin-bottom:4px;font-size:11px;color:var(--mut)">Target alignment(s)/line(s) to label — check one or more</label>
+      <div id="geomTargetList" style="max-height:130px;overflow:auto;background:var(--panel2);border:1px solid var(--rule);border-radius:5px;padding:6px;margin-bottom:8px"></div>
+      <label style="display:block;margin-bottom:4px;font-size:11px;color:var(--mut)">Also label station(s) on target alignment(s) (POT/POC/POS)</label>
       <input type="text" id="geomStationInput" placeholder="e.g. 12+50, 18+00" style="width:100%;margin-bottom:10px;background:var(--panel2);color:var(--text);border:1px solid var(--rule);border-radius:5px;padding:5px">
       <button class="btn gold" id="geomApplyBtn" style="width:100%;margin-bottom:10px">Label points</button>
       <label style="display:flex;align-items:center;gap:6px;margin-bottom:6px;cursor:pointer"><input type="checkbox" id="glAll" checked> All categories</label>
@@ -114,6 +115,14 @@ canvas{display:block;width:100%;height:100%;background:var(--bg);cursor:crosshai
       <label style="display:flex;align-items:center;gap:6px;margin-bottom:6px;cursor:pointer"><input type="checkbox" id="glRef" checked> <span style="color:#a8b6e0">● Alignment reference</span> — POB/POE/EQN</label>
       <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="glCustom" checked> <span style="color:#ff9f6b">● Custom station</span> — POT/POC/POS</label>
       <p class="note" id="geomLabelStatus" style="margin-top:8px"></p>
+    </div>
+    <div class="panel" id="geomTablePanel" style="width:600px">
+      <h4><span>Points Table</span><button id="geomTableCloseBtn" title="Close">✕</button></h4>
+      <p class="note" style="margin-bottom:8px">Every currently labeled point, sorted by station — a field stakeout reference sheet. Shows everything computed, including types hidden on-canvas by a category toggle.</p>
+      <button class="btn gold" id="geomTableExportBtn" style="width:100%;margin-bottom:8px">⬇ Export CSV</button>
+      <div style="overflow:auto;max-height:min(55vh,420px)">
+        <table id="geomTable" style="width:100%;border-collapse:collapse;font-size:11px;white-space:nowrap"></table>
+      </div>
     </div>
     <div class="hud" id="hud">Import a DXF or LandXML (TIN / pipe network) file to begin. Drag to pan, wheel to zoom.</div>
   </div>
@@ -856,25 +865,71 @@ function importAlignments(doc){
   return{nAlign,nCurve,nProfile};
 }
 function renderGeomLabelSelects(){
-  const refSel=$('geomRefSel'),tgtSel=$('geomTargetSel');
-  const prevRef=refSel.value,prevTgt=tgtSel.value;
+  const refSel=$('geomRefSel');
+  const prevRef=refSel.value;
   refSel.innerHTML=ALIGNMENTS.length
     ?ALIGNMENTS.map(a=>`<option value="align:${a.name}">${a.name}</option>`).join('')
     :'<option value="">— import a LandXML file with an Alignment first —</option>';
+  if(prevRef&&[...refSel.options].some(o=>o.value===prevRef))refSel.value=prevRef;
+
+  // target is a checklist (not a single <select>) so several alignments/lines can be
+  // labeled together in one pass — e.g. a mainline plus every side street off it.
+  const list=$('geomTargetList');
+  const prevChecked=new Set(Array.from(list.querySelectorAll('input:checked')).map(c=>c.value));
   const layerOpts=Object.keys(LAYERS).filter(n=>!n.startsWith('ALIGN-')&&!n.startsWith('TIN-')&&!n.startsWith('PIPE-')
     &&ENTITIES.some(e=>e.layer===n&&(e.type==='line'||e.type==='poly')));
-  const opts=[];
-  if(ALIGNMENTS.length)opts.push(`<optgroup label="Alignments">${ALIGNMENTS.map(a=>`<option value="align:${a.name}">${a.name}</option>`).join('')}</optgroup>`);
-  if(layerOpts.length)opts.push(`<optgroup label="Lines / layers">${layerOpts.map(n=>`<option value="layer:${n}">${n}</option>`).join('')}</optgroup>`);
-  tgtSel.innerHTML=opts.join('')||'<option value="">— nothing to label —</option>';
-  if(prevRef&&[...refSel.options].some(o=>o.value===prevRef))refSel.value=prevRef;
-  if(prevTgt&&[...tgtSel.options].some(o=>o.value===prevTgt))tgtSel.value=prevTgt;
+  const row=(val,label)=>`<label style="display:flex;align-items:center;gap:6px;cursor:pointer;padding:1px 0"><input type="checkbox" class="geomTgt" value="${val}"${prevChecked.has(val)?' checked':''}> ${label}</label>`;
+  const rows=[];
+  if(ALIGNMENTS.length){
+    rows.push('<div style="font-size:10px;color:var(--mut);margin:1px 0">Alignments</div>');
+    ALIGNMENTS.forEach(a=>rows.push(row(`align:${a.name}`,a.name)));
+  }
+  if(layerOpts.length){
+    rows.push('<div style="font-size:10px;color:var(--mut);margin:5px 0 1px">Lines / layers</div>');
+    layerOpts.forEach(n=>rows.push(row(`layer:${n}`,n)));
+  }
+  list.innerHTML=rows.join('')||'<p class="note">nothing to label — import a LandXML Alignment or a DXF line first</p>';
 }
 function resolveTargetRef(val){
   if(!val)return null;
   if(val.startsWith('align:')){const a=ALIGNMENTS.find(x=>x.name===val.slice(6));return a?{kind:'alignment',obj:a}:null;}
   if(val.startsWith('layer:'))return{kind:'layer',name:val.slice(6)};
   return null;
+}
+// elevation to show in the table/export: a vertical/profile point's own design elevation
+// takes priority (that's the authoritative number for those), otherwise fall back to the
+// point's plain geometry Z.
+function geomPointElev(p){return p.elev!=null?p.elev:(p.Z!=null?p.Z:null);}
+function geomTableRows(){
+  return GEOM_POINTS.slice().sort((a,b)=>{
+    const sa=a.sta==null?Infinity:a.sta,sb=b.sta==null?Infinity:b.sta;
+    return sa-sb;
+  });
+}
+function renderGeomTable(){
+  const tbl=$('geomTable');
+  if(!GEOM_POINTS.length){tbl.innerHTML='<tr><td class="note" style="padding:6px">no points labeled yet — use 📍 Label Points first</td></tr>';return;}
+  const rows=geomTableRows();
+  const heads=['#','Type','Category','Target','Station','Northing','Easting','Elevation','Note'];
+  let html='<thead><tr>'+heads.map(h=>`<th style="text-align:left;padding:3px 8px;border-bottom:1px solid var(--rule);position:sticky;top:0;background:var(--panel)">${h}</th>`).join('')+'</tr></thead><tbody>';
+  rows.forEach((p,i)=>{
+    const cat=GEOM_TYPE_CATEGORY[p.type]||'reference';
+    const elev=geomPointElev(p);
+    const cells=[i+1,p.type,cat,p.target||'',p.sta!=null?formatStation(p.sta):'—',p.N.toFixed(3),p.E.toFixed(3),elev!=null?elev.toFixed(2):'—',p.note||''];
+    html+='<tr>'+cells.map(v=>`<td style="padding:3px 8px;border-bottom:1px solid var(--rule)">${v}</td>`).join('')+'</tr>';
+  });
+  tbl.innerHTML=html+'</tbody>';
+}
+function geomCSVField(v){v=String(v??'');return/[",\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v;}
+function geomTableCSV(){
+  const heads=['#','Type','Category','Target','Station','Northing','Easting','Elevation','Note'];
+  const lines=[heads.join(',')];
+  geomTableRows().forEach((p,i)=>{
+    const cat=GEOM_TYPE_CATEGORY[p.type]||'reference';
+    const elev=geomPointElev(p);
+    lines.push([i+1,p.type,cat,p.target||'',p.sta!=null?formatStation(p.sta):'',p.N.toFixed(3),p.E.toFixed(3),elev!=null?elev.toFixed(2):'',p.note||''].map(geomCSVField).join(','));
+  });
+  return lines.join('\r\n');
 }
 
 /* ---------- aerial MAP background (ported from FBK-Checker) ---------- */
@@ -1289,18 +1344,35 @@ $('geomLabelsBtn').onclick=()=>{if($('geomLabelsBtn').disabled)return;renderGeom
 $('geomLabelCloseBtn').onclick=()=>$('geomLabelPanel').classList.remove('show');
 $('geomApplyBtn').onclick=()=>{
   const ref=ALIGNMENTS.find(a=>a.name===($('geomRefSel').value||'').slice(6));
-  const target=resolveTargetRef($('geomTargetSel').value);
-  if(!ref||!target){$('geomLabelStatus').textContent='pick a reference alignment and a target first.';return;}
-  const extraStations=target.kind==='alignment'?parseStationList($('geomStationInput').value):[];
-  const raw=collectKeyPoints(target,extraStations);
+  const targets=Array.from(document.querySelectorAll('#geomTargetList input.geomTgt:checked')).map(c=>resolveTargetRef(c.value)).filter(Boolean);
+  if(!ref||!targets.length){$('geomLabelStatus').textContent='pick a reference alignment and at least one target first.';return;}
+  const extraStations=parseStationList($('geomStationInput').value);
+  let raw=[];
+  targets.forEach(target=>{
+    const targetName=target.kind==='alignment'?target.obj.name:target.name;
+    const pts=collectKeyPoints(target,target.kind==='alignment'?extraStations:[]);
+    pts.forEach(p=>p.target=targetName);
+    raw=raw.concat(pts);
+  });
   GEOM_POINTS=raw.map(p=>GEOM_REPROJECT.has(p.type)?{...p,sta:projectStation(ref,p.E,p.N)}:p);
-  const targetName=target.kind==='alignment'?target.obj.name:target.name;
+  const targetNames=targets.map(t=>t.kind==='alignment'?t.obj.name:t.name).join(', ');
   const counts={};GEOM_POINTS.forEach(p=>{counts[p.type]=(counts[p.type]||0)+1;});
   const summary=Object.keys(counts).sort().map(t=>`${counts[t]} ${t}`).join(', ')||'none';
-  let msg=`labeled ${GEOM_POINTS.length} point(s) on "${targetName}" — ${summary} — stationed along "${ref.name}"`;
-  if(target.kind==='layer')msg+=' (plain line/layer has no curve/profile data — only MID computed)';
+  let msg=`labeled ${GEOM_POINTS.length} point(s) on ${targets.length} target(s) [${targetNames}] — ${summary} — stationed along "${ref.name}"`;
+  if(targets.some(t=>t.kind==='layer'))msg+=' (plain line/layer target(s) have no curve/profile data — only MID computed there)';
   $('geomLabelStatus').textContent=msg;hud(msg);
+  $('geomTableBtn').disabled=GEOM_POINTS.length===0;
+  renderGeomTable();
   draw();
+};
+$('geomTableBtn').onclick=()=>{if($('geomTableBtn').disabled)return;renderGeomTable();$('geomTablePanel').classList.toggle('show');};
+$('geomTableCloseBtn').onclick=()=>$('geomTablePanel').classList.remove('show');
+$('geomTableExportBtn').onclick=()=>{
+  if(!GEOM_POINTS.length)return;
+  const blob=new Blob([geomTableCSV()],{type:'text/csv'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');a.href=url;a.download='geometry-points.csv';a.click();
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
 };
 const GEOM_CATEGORY_IDS=['glHoriz','glSpiral','glVert','glRef','glCustom'];
 function syncGeomAll(){$('glAll').checked=GEOM_CATEGORY_IDS.every(id=>$(id).checked);}
@@ -1420,7 +1492,7 @@ window.addEventListener('resize',resize);
 resize();
 
 /* ---------- version badge — bumped on every push, mirroring FBK-Checker's own fruit badge ---------- */
-const VERSION={animal:'🦫',name:'BEAVER',build:3};
+const VERSION={animal:'🦦',name:'OTTER',build:4};
 function rotateAnimal(){const b=$('animalBadge');b.style.transform='rotate(360deg)';setTimeout(()=>{b.style.transform='rotate(0deg)';},200);}
 function showVersion(){const b=$('animalBadge');b.textContent=`${VERSION.animal} ${VERSION.name}`;
   b.title=`Build ${VERSION.build} · ${VERSION.name} — if this matches what Claude pushed, you're on the latest (no cache)`;}

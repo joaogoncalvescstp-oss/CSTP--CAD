@@ -88,22 +88,32 @@ dependencies, and nothing to install.
     at an arbitrary point along the target alignment.
 
   The workflow matches how this is actually done in Civil3D: first pick the
-  **reference alignment**, which defines station 0 and direction; then pick
-  the **target** to label, either another alignment (its own geometry gives
-  every real point type above) or a plain DXF line/layer (which has no
-  curve/profile data at all, so only its segment midpoints can honestly be
-  labeled as MID — nothing else is ever invented without real geometry
-  behind it). Most point types' displayed station is the closest station/
-  offset projection onto the reference alignment as a whole (not just its
-  nearest single segment), so picking the same alignment as both reference
-  and target recovers native stationing; EQN, POT/POC/POS, and every
-  vertical/profile point instead always keep the station they're actually
-  defined at, since re-stationing a profile point or an authored station
-  equation against an unrelated alignment wouldn't mean anything. CC never
-  shows a station at all. Display is toggleable by category (plus an "all
-  categories" convenience toggle) — 25 individual colors would be
-  unreadable, so color/marker-shape denote the category at a glance while
-  the printed 2-4 letter code always gives the exact point type.
+  **reference alignment**, which defines station 0 and direction; then check
+  one or more **targets** to label from a checklist — each can independently
+  be an alignment (its own geometry gives every real point type above) or a
+  plain DXF line/layer (which has no curve/profile data at all, so only its
+  segment midpoints can honestly be labeled as MID — nothing else is ever
+  invented without real geometry behind it). Checking several targets at
+  once labels them all together against the same reference in a single
+  pass — e.g. a mainline plus every side street off it. Most point types'
+  displayed station is the closest station/offset projection onto the
+  reference alignment as a whole (not just its nearest single segment), so
+  checking the reference as its own target recovers native stationing; EQN,
+  POT/POC/POS, and every vertical/profile point instead always keep the
+  station they're actually defined at, since re-stationing a profile point
+  or an authored station equation against an unrelated alignment wouldn't
+  mean anything. CC never shows a station at all. Display is toggleable by
+  category (plus an "all categories" convenience toggle) — 25 individual
+  colors would be unreadable, so color/marker-shape denote the category at
+  a glance while the printed 2-4 letter code always gives the exact point
+  type.
+- **📋 Points Table** lists every currently labeled point — type, category,
+  which target it came from, station, northing, easting, and elevation
+  (a vertical/profile point's own design elevation, or the point's plain
+  geometry Z otherwise) — sorted by station, as a field stakeout reference
+  sheet. It shows everything computed regardless of the on-canvas category
+  toggles, and **⬇ Export CSV** saves the same table to a file for printing
+  or loading into a data collector.
 - Pan by dragging, zoom with the mouse wheel (zooms toward the cursor).
 
 ## 3D orbit view, aerial MAP background, and CAD object snap
@@ -253,6 +263,16 @@ headless-browser session, in two passes:
   separate, disconnected curves. The category display toggles (each of the
   5 individually, and the "all categories" master, in both directions) were
   also driven programmatically with zero console errors.
+
+Multi-target selection and the 📋 Points Table were verified together in a
+third headless-browser pass: importing two separate alignments ("Test2" and
+"Main St") and checking both as targets against one reference in a single
+📍 Label Points pass correctly labeled all of both alignments' points in
+one combined result, each point correctly tagged with which target it came
+from; the table opened with every expected column (including Northing/
+Easting/Elevation), rendered exactly one row per computed point, and the
+rows came back sorted by station ascending; and the CSV export's header and
+row count matched the on-screen table exactly.
 
 Both parsers, the layer visibility/lock toggles, the elevation-query tool
 (including its lock-exclusion behavior), and zoom-to-layer were exercised
