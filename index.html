@@ -197,7 +197,22 @@ const WATER_TRAIL_LEN=14;
 const WATER_MAX_AGE=9;                                     // seconds before an AMBIENT droplet respawns anyway, so one that's pooled on a gentle slope doesn't just sit there forever — a dumped burst (below) ignores this and lives by its own 15s decay instead
 let waterDumpOn=false;                                     // 💧 Dump Water tool armed, waiting for a canvas click
 const WATER_DUMP_COUNT=40;                                 // droplets per dump
+const WATER_DUMP_SPREAD_RADIUS=1.2;                        // world units — the burst spreads within roughly this radius of the clicked point, never across whichever triangle happens to contain the click (a coarse TIN's triangle can span tens of units — "dump AT a point" shouldn't mean "scatter across a big chunk of the model")
 const WATER_DUMP_LIFE=15;                                  // seconds a dumped burst survives before it fully decays (removed, not respawned) — regardless of where it's flowed to by then
+/* A dumped burst is a real (if small/local) FLIP fluid — grid-based PIC/FLIP transfer +
+   an incompressibility (pressure) solve, the same technique as Matthias Müller's "Ten
+   Minute Physics" FLIP tutorials (matthias-research.github.io/pages/tenMinutePhysics) —
+   not the ambient droplets' simpler "each one independently follows steepest-descent"
+   model. This is what makes a dump actually SPREAD/SLOSH as one connected body of water
+   instead of 40 particles moving past each other with no interaction. See flipStepDumped(). */
+const WATER_DUMP_GRAVITY=16;                               // world units/sec² pulling a dumped particle along the LOCAL terrain's own downhill direction (triFlowDir) — the heightfield equivalent of the tutorial's constant (0,-9.81) box gravity
+const WATER_DUMP_FLIP_RATIO=0.9;                           // PIC/FLIP blend for the post-solve velocity — 0=pure grid-smoothed PIC, 1=pure particle-carried FLIP; 0.9 matches the tutorial's own default
+const WATER_DUMP_PRESSURE_ITERS=30;                        // Gauss-Seidel iterations for the incompressibility solve
+const WATER_DUMP_OVERRELAX=1.9;                            // SOR overrelaxation factor, same value the tutorial uses
+const WATER_DUMP_SEP_ITERS=2;                              // pushParticlesApart() passes per frame
+const WATER_DUMP_GRID_CELLS_ACROSS=18;                     // grid resolution across the burst's OWN current bounding diagonal — the grid re-fits itself to wherever the burst has spread to each frame, rather than one fixed-size tank
+const WATER_DUMP_MIN_CELL=0.08;                            // world-unit floor on cell size, so a burst that's collapsed to a tight puddle doesn't build a degenerately fine (slow) grid
+const WATER_DUMP_MAX_SPEED=45;                             // world units/sec cap after the PIC/FLIP blend — real FLIP has no such cap (incompressibility alone keeps it stable), but our grid rebuilds fresh every frame instead of persisting, so a cap keeps that simplification from ever letting one frame's velocity run away
 let SLOPE_ARROW_DENSITY=300;                               // max arrows drawn per surface, adjustable from 🗻 Surface Display
 
 /* ---------- 🗻 surface display options ----------
@@ -1554,7 +1569,7 @@ function initWaterParticles(){
 function makeDumpParticle(E,N,tri,layer){
   const bornAt=performance.now();
   const decayed=now=>(now-bornAt)/1000>=WATER_DUMP_LIFE;
-  return{E,N,age:0,trail:[{E,N}],_tri:tri,_triLayer:layer,dumped:true,decayed};
+  return{E,N,vE:0,vN:0,age:0,trail:[{E,N}],_tri:tri,_triLayer:layer,dumped:true,decayed};
 }
 function dumpWaterAt(E,N){
   const hit=findWaterTriangleAt(E,N);
@@ -1565,11 +1580,13 @@ function dumpWaterAt(E,N){
     waterAnimHandle=requestAnimationFrame(waterTick);
   }
   for(let i=0;i<WATER_DUMP_COUNT;i++){
-    // spread the burst around the click point (barycentric jitter within the clicked triangle)
-    // instead of stacking every droplet on the exact same pixel
-    let r1=Math.random(),r2=Math.random();if(r1+r2>1){r1=1-r1;r2=1-r2;}
-    const[a,b,c]=hit.tri;
-    const jE=a.E+r1*(b.E-a.E)+r2*(c.E-a.E),jN=a.N+r1*(b.N-a.N)+r2*(c.N-a.N);
+    // spread the burst in a small disk AROUND the click point — NOT a uniform sample across
+    // the whole clicked triangle (a real bug this build fixes: on a coarse TIN a single
+    // triangle can span tens of world units, so the old barycentric jitter could scatter the
+    // "burst" almost anywhere on the model instead of at a point). sqrt(rand) keeps the disk
+    // uniform-density rather than center-biased.
+    const ang=Math.random()*Math.PI*2,rad=Math.sqrt(Math.random())*WATER_DUMP_SPREAD_RADIUS;
+    const jE=E+rad*Math.cos(ang),jN=N+rad*Math.sin(ang);
     const jHit=findWaterTriangleAt(jE,jN)||hit;              // the jitter can land just over the edge into a neighboring triangle
     waterParticles.push(makeDumpParticle(jE,jN,jHit.tri,jHit.layer));
   }
@@ -1581,28 +1598,163 @@ function dumpWaterAt(E,N){
 // its own surface's current visibility) instead of scanning every triangle on every surface
 // (O(triangles)) is what keeps thousands of droplets animating smoothly; the full scan only
 // runs on the rare frame a droplet actually crosses into a new triangle, leaves the surface,
-// or its surface's layer gets hidden mid-animation.
+// or its surface's layer gets hidden mid-animation. This function only handles the AMBIENT
+// (non-dumped) droplets' simple independent motion — a dumped burst is stepped separately,
+// as one interacting fluid, by flipStepDumped() below.
 function stepWaterParticles(dt,now){
+  const dumped=[];
   for(let i=waterParticles.length-1;i>=0;i--){
     const p=waterParticles[i];
-    if(p.dumped&&p.decayed(now)){waterParticles.splice(i,1);continue;}   // 15s is up — vanish outright, never respawn
-    const gone=()=>{if(p.dumped)waterParticles.splice(i,1);else respawnWaterParticle(p);};
-    if(!isFinite(p.E)){gone();continue;}
+    if(p.dumped){
+      if(p.decayed(now)){waterParticles.splice(i,1);continue;}   // 15s is up — vanish outright, never respawn
+      dumped.push(p);continue;                                   // stepped as a group below, not one at a time here
+    }
+    if(!isFinite(p.E)){respawnWaterParticle(p);continue;}
     const cachedLy=p._tri?LAYERS[p._triLayer]:null;
     const cachedOk=p._tri&&!(cachedLy&&!cachedLy.visible)&&pointInTri(p.E,p.N,p._tri[0],p._tri[1],p._tri[2])!=null;
     let tri=p._tri,layer=p._triLayer;
     if(!cachedOk){
       const hit=findWaterTriangleAt(p.E,p.N);
-      if(!hit){gone();continue;}                              // flowed off the modeled surface (or its layer was hidden)
+      if(!hit){respawnWaterParticle(p);continue;}               // flowed off the modeled surface (or its layer was hidden)
       tri=hit.tri;layer=hit.layer;
     }
     const dir=triFlowDir(tri);
-    if(!dir){gone();continue;}                                // pooled on a flat facet — an ambient droplet restarts elsewhere; a dumped one is just done
+    if(!dir){respawnWaterParticle(p);continue;}                 // pooled on a flat facet — restart elsewhere
     p._tri=tri;p._triLayer=layer;
     const speed=WATER_BASE_SPEED*Math.max(0.3,Math.min(1.5,dir.slope*3));   // faster on steeper ground, floored so gentle slopes still visibly creep
     p.E+=dir.dirE*speed*dt;p.N+=dir.dirN*speed*dt;p.age+=dt;
     p.trail.push({E:p.E,N:p.N});if(p.trail.length>WATER_TRAIL_LEN)p.trail.shift();
-    if(!p.dumped&&p.age>WATER_MAX_AGE)respawnWaterParticle(p);   // ambient-only — a dumped burst lives by its own 15s decay closure, not this cap
+    if(p.age>WATER_MAX_AGE)respawnWaterParticle(p);
+  }
+  if(dumped.length)flipStepDumped(dumped,dt);
+}
+
+/* ---------- 💧 dumped-burst FLIP fluid (grid PIC/FLIP transfer + incompressibility solve) ----------
+   A compact re-derivation of the standard staggered-MAC-grid method (Bridson / "Ten Minute
+   Physics" #17-18: integrate -> separate particles -> handle collisions -> splat velocities
+   to a grid -> solve for zero divergence -> blend the corrected grid velocity back onto each
+   particle via PIC/FLIP -> advect), NOT a line-for-line copy of that page's own JS (this
+   sandbox can't reach it to copy from even if that were desirable) — adapted to a heightfield:
+   "gravity" is the LOCAL terrain's own downhill direction (triFlowDir, the exact same
+   plane-normal math 🌊 Water Flow/🗻 Slope Shading already use) instead of one constant
+   downward vector in a flat-bottomed box, and there's no separate Z-axis to fall through —
+   a puddle on flat ground is a valid, stable resting state here, not a "stuck, respawn me"
+   case the way it is for the ambient droplets' much simpler independent model. The grid
+   itself is rebuilt fresh every frame, snugly bounding wherever the live dumped burst(s)
+   currently are (with margin) — cheap at our dump-sized particle counts (tens, not the
+   thousands a real interactive fluid demo targets), and it means the "tank" always exactly
+   fits the water instead of needing a fixed world-sized grid maintained forever. */
+function flipCellSizeFor(pts){
+  let e0=Infinity,e1=-Infinity,n0=Infinity,n1=-Infinity;
+  pts.forEach(p=>{e0=Math.min(e0,p.E);e1=Math.max(e1,p.E);n0=Math.min(n0,p.N);n1=Math.max(n1,p.N);});
+  const diag=Math.hypot(e1-e0,n1-n0)||1;
+  return Math.max(WATER_DUMP_MIN_CELL,diag/WATER_DUMP_GRID_CELLS_ACROSS);
+}
+function flipBuildGrid(pts){
+  const h=flipCellSizeFor(pts);
+  let e0=Infinity,e1=-Infinity,n0=Infinity,n1=-Infinity;
+  pts.forEach(p=>{e0=Math.min(e0,p.E);e1=Math.max(e1,p.E);n0=Math.min(n0,p.N);n1=Math.max(n1,p.N);});
+  const margin=3*h;
+  e0-=margin;e1+=margin;n0-=margin;n1+=margin;
+  const nx=Math.max(3,Math.ceil((e1-e0)/h)),ny=Math.max(3,Math.ceil((n1-n0)/h));
+  return{E0:e0,N0:n0,h,nx,ny,r:0.3*h,
+    u:new Float64Array((nx+1)*ny),uw:new Float64Array((nx+1)*ny),
+    v:new Float64Array(nx*(ny+1)),vw:new Float64Array(nx*(ny+1)),
+    cellType:new Uint8Array(nx*ny).fill(1)};                    // 1=air, 0=fluid
+}
+// bilinear splat of one scalar sample into a field array laid out W×H with its own (ox,oy,h)
+// origin/spacing — shared by both the u-splat (staggered on x) and v-splat (staggered on y).
+function flipSplatTo(arr,wArr,W,H,ox,oy,h,E,N,val){
+  const fx=(E-ox)/h,fy=(N-oy)/h,i0=Math.floor(fx),j0=Math.floor(fy),tx=fx-i0,ty=fy-j0;
+  for(let di=0;di<=1;di++)for(let dj=0;dj<=1;dj++){
+    const i=i0+di,j=j0+dj;if(i<0||i>=W||j<0||j>=H)continue;
+    const w=(di?tx:1-tx)*(dj?ty:1-ty);
+    arr[i*H+j]+=val*w;wArr[i*H+j]+=w;
+  }
+}
+function flipSampleField(arr,W,H,ox,oy,h,E,N){
+  const fx=Math.max(0,Math.min(W-1.001,(E-ox)/h)),fy=Math.max(0,Math.min(H-1.001,(N-oy)/h));
+  const i0=Math.floor(fx),j0=Math.floor(fy),tx=fx-i0,ty=fy-j0;
+  const v00=arr[i0*H+j0],v10=arr[(i0+1)*H+j0],v01=arr[i0*H+j0+1],v11=arr[(i0+1)*H+j0+1];
+  return v00*(1-tx)*(1-ty)+v10*tx*(1-ty)+v01*(1-tx)*ty+v11*tx*ty;
+}
+// Gauss-Seidel pressure projection with overrelaxation: repeatedly nudges each fluid cell's 4
+// face velocities so the cell's net outflow (divergence) goes to zero — the standard MAC-grid
+// incompressibility solve (Bridson §5). Domain edges are treated as solid walls (zero normal
+// velocity), same as the tutorial's own tank boundary.
+function flipSolveIncompressibility(grid){
+  const{nx,ny,u,v,cellType}=grid;
+  for(let j=0;j<ny;j++){u[0*ny+j]=0;u[nx*ny+j]=0;}
+  for(let i=0;i<nx;i++){v[i*(ny+1)+0]=0;v[i*(ny+1)+ny]=0;}
+  for(let it=0;it<WATER_DUMP_PRESSURE_ITERS;it++){
+    for(let i=0;i<nx;i++)for(let j=0;j<ny;j++){
+      if(cellType[i*ny+j]!==0)continue;
+      const sL=i>0?1:0,sR=i<nx-1?1:0,sB=j>0?1:0,sT=j<ny-1?1:0,s=sL+sR+sB+sT;
+      if(s===0)continue;
+      const div=(u[(i+1)*ny+j]-u[i*ny+j])+(v[i*(ny+1)+(j+1)]-v[i*(ny+1)+j]);
+      const p=-WATER_DUMP_OVERRELAX*div/s;
+      u[i*ny+j]-=sL*p;u[(i+1)*ny+j]+=sR*p;
+      v[i*(ny+1)+j]-=sB*p;v[i*(ny+1)+(j+1)]+=sT*p;
+    }
+  }
+}
+function flipStepDumped(dumped,dt){
+  // 1) integrate — each particle's velocity picks up the LOCAL terrain's own downhill pull
+  //    (triFlowDir, same math as the base flow), then its position advects by that velocity.
+  dumped.forEach(p=>{
+    const cachedLy=p._tri?LAYERS[p._triLayer]:null;
+    const cachedOk=p._tri&&!(cachedLy&&!cachedLy.visible)&&pointInTri(p.E,p.N,p._tri[0],p._tri[1],p._tri[2])!=null;
+    if(!cachedOk){const hit=findWaterTriangleAt(p.E,p.N);if(hit){p._tri=hit.tri;p._triLayer=hit.layer;}}
+    const dir=p._tri?triFlowDir(p._tri):null;
+    if(dir){const g=WATER_DUMP_GRAVITY*Math.min(1.5,dir.slope);p.vE+=dir.dirE*g*dt;p.vN+=dir.dirN*g*dt;}
+    p.E+=p.vE*dt;p.N+=p.vN*dt;
+  });
+  // 2) push overlapping particles apart so a burst spreads into a puddle instead of stacking
+  const minD=2*0.3*flipCellSizeFor(dumped);
+  for(let it=0;it<WATER_DUMP_SEP_ITERS;it++){
+    for(let a=0;a<dumped.length;a++)for(let b=a+1;b<dumped.length;b++){
+      const pa=dumped[a],pb=dumped[b],dE=pb.E-pa.E,dN=pb.N-pa.N,d=Math.hypot(dE,dN);
+      if(d>1e-9&&d<minD){const push=(minD-d)/2/d;
+        pa.E-=dE*push;pa.N-=dN*push;pb.E+=dE*push;pb.N+=dN*push;}
+    }
+  }
+  // 3) build this frame's grid around wherever the burst now is, splat velocities, snapshot
+  //    the pre-solve field (needed for the FLIP correction below), then project to zero divergence.
+  const grid=flipBuildGrid(dumped);
+  const{E0,N0,h,nx,ny,u,uw,v,vw,cellType}=grid;
+  dumped.forEach(p=>{
+    const ci=Math.max(0,Math.min(nx-1,Math.floor((p.E-E0)/h))),cj=Math.max(0,Math.min(ny-1,Math.floor((p.N-N0)/h)));
+    cellType[ci*ny+cj]=0;
+    flipSplatTo(u,uw,nx+1,ny,E0,N0-0.5*h,h,p.E,p.N,p.vE);
+    flipSplatTo(v,vw,nx,ny+1,E0-0.5*h,N0,h,p.E,p.N,p.vN);
+  });
+  for(let i=0;i<u.length;i++)if(uw[i]>0)u[i]/=uw[i];
+  for(let i=0;i<v.length;i++)if(vw[i]>0)v[i]/=vw[i];
+  const uOld=u.slice(),vOld=v.slice();
+  flipSolveIncompressibility(grid);
+  // 4) PIC/FLIP blend back onto each particle, clamp to a sane top speed, then clamp position
+  //    back onto whichever local grid box we just built (a free-slip solid wall, like the tank).
+  dumped.forEach(p=>{
+    const picE=flipSampleField(u,nx+1,ny,E0,N0-0.5*h,h,p.E,p.N),picN=flipSampleField(v,nx,ny+1,E0-0.5*h,N0,h,p.E,p.N);
+    const oldE=flipSampleField(uOld,nx+1,ny,E0,N0-0.5*h,h,p.E,p.N),oldN=flipSampleField(vOld,nx,ny+1,E0-0.5*h,N0,h,p.E,p.N);
+    const flipE=p.vE+(picE-oldE),flipN=p.vN+(picN-oldN);
+    let vE=(1-WATER_DUMP_FLIP_RATIO)*picE+WATER_DUMP_FLIP_RATIO*flipE;
+    let vN=(1-WATER_DUMP_FLIP_RATIO)*picN+WATER_DUMP_FLIP_RATIO*flipN;
+    const sp=Math.hypot(vE,vN);
+    if(sp>WATER_DUMP_MAX_SPEED){vE*=WATER_DUMP_MAX_SPEED/sp;vN*=WATER_DUMP_MAX_SPEED/sp;}
+    p.vE=vE;p.vN=vN;
+    const r=grid.r;
+    p.E=Math.max(E0+r,Math.min(E0+nx*h-r,p.E));
+    p.N=Math.max(N0+r,Math.min(N0+ny*h-r,p.N));
+    p.trail.push({E:p.E,N:p.N});if(p.trail.length>WATER_TRAIL_LEN)p.trail.shift();
+  });
+  // 5) a particle that's genuinely left the modeled TIN surface entirely is done — decay early
+  //    rather than let it sit forever off-terrain with nothing to compute a downhill pull from.
+  //    (findWaterTriangleAt scans every visible surface directly — no point re-checking the
+  //    now-stale per-particle triangle cache first, since that scan already covers it.)
+  for(let i=waterParticles.length-1;i>=0;i--){
+    const p=waterParticles[i];
+    if(p.dumped&&!findWaterTriangleAt(p.E,p.N))waterParticles.splice(i,1);
   }
 }
 function drawWaterParticles(){
@@ -2086,7 +2238,7 @@ window.addEventListener('resize',resize);
 resize();
 
 /* ---------- version badge — bumped on every push, mirroring FBK-Checker's own fruit badge ---------- */
-const VERSION={animal:'🐬',name:'DOLPHIN',build:11};
+const VERSION={animal:'🦭',name:'SEAL',build:12};
 function rotateAnimal(){const b=$('animalBadge');b.style.transform='rotate(360deg)';setTimeout(()=>{b.style.transform='rotate(0deg)';},200);}
 function showVersion(){const b=$('animalBadge');b.textContent=`${VERSION.animal} ${VERSION.name}`;
   b.title=`Build ${VERSION.build} · ${VERSION.name} — if this matches what Claude pushed, you're on the latest (no cache)`;}

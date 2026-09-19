@@ -32,20 +32,50 @@ dependencies, and nothing to install.
   concentration, or flow accumulation, just "which way does this exact spot
   drain." 2D plan view only, same reasoning as ⛰ Elevation/🧲 Snap.
 - **💧 Dump Water** — click a point on a visible TIN surface to pour a
-  one-shot burst of 40 droplets there, spread slightly around the click
-  (barycentric jitter within the clicked triangle) rather than stacked on
-  one pixel. The burst flows using the exact same steepest-descent physics
-  as the ambient 🌊 Water Flow droplets — clicking Dump Water on an idle
-  surface starts that ambient flow too, with the burst added on top of it,
-  not instead of it. What makes a dumped burst different: each one carries
-  its own **decay closure** — `makeDumpParticle(E,N,tri,layer)` captures the
-  exact timestamp the particle was born and returns a `decayed(now)` function
-  closed over that birth time — so **15 seconds after being dumped, it's
-  removed outright, wherever it's since flowed to**, instead of respawning
-  elsewhere the way an ambient droplet does when it wanders off the surface
-  or exceeds its own (unrelated) 9-second "stuck on a flat facet" cap. The
-  tool stays armed for repeat dumps at different points; Esc cancels it.
-  2D plan view only, same reasoning as 🌊 Water Flow itself.
+  one-shot burst of 40 droplets there, spread in a small ~1.2-unit disk
+  around the click (not stacked on one pixel, and not scattered across
+  whichever triangle happens to contain the click — a coarse TIN's own
+  triangles can span tens of units, so a naive "random point in this
+  triangle" jitter can badly overshoot "at a point"). Clicking Dump Water
+  on an idle surface starts the ambient 🌊 Water Flow too, with the burst
+  added on top of it, not instead of it.
+  - **The burst is a real (if small/local) fluid, not 40 independent
+    droplets.** Unlike the ambient droplets — which each just teleport at a
+    slope-dependent constant speed along their own current triangle,
+    completely unaware of each other — a dumped burst is simulated with the
+    same core technique as Matthias Müller's "Ten Minute Physics" FLIP
+    tutorials (a staggered MAC-grid PIC/FLIP fluid solver), re-derived
+    independently for this heightfield rather than copied line-for-line:
+    each frame, every dumped particle (1) picks up the LOCAL terrain's own
+    downhill pull (the same `triFlowDir` plane-normal math the base flow
+    already uses, standing in for the tutorial's one constant box-gravity
+    vector) and advects; (2) gets pushed apart from anything it's now
+    overlapping; (3) splats its velocity onto a small grid, freshly rebuilt
+    every frame to snugly bound wherever the live burst currently is; (4)
+    that grid is solved to zero divergence (Gauss-Seidel with
+    overrelaxation — the actual incompressibility projection, not a
+    cosmetic effect) so the water can't compress into itself; (5) the
+    corrected grid velocity is blended back onto each particle via a
+    90% FLIP / 10% PIC mix, the tutorial's own default ratio. The net
+    effect: a dump visibly spreads into a puddle and slides downhill as one
+    connected body, with real momentum (it has inertia — releasing on a
+    slope keeps it accelerating, unlike the ambient droplets' instant
+    constant speed), instead of 40 particles passing through each other.
+  - What still makes a dumped particle behave like a one-time pour rather
+    than a permanent fixture: each one carries its own **decay closure** —
+    `makeDumpParticle(E,N,tri,layer)` captures the exact timestamp the
+    particle was born and returns a `decayed(now)` function closed over
+    that birth time — so **15 seconds after being dumped, it's removed
+    outright, wherever it's since flowed to**, rather than respawning
+    elsewhere. A dumped particle sitting on flat ground is left alone as a
+    valid resting puddle (unlike an ambient droplet, which respawns the
+    instant it hits a flat facet with no defined downhill direction) — it's
+    only removed early if it genuinely flows off the modeled TIN surface
+    entirely, or once its own 15s is up.
+  - The tool stays armed for repeat dumps at different points (each new
+    burst joins the same shared local grid, so overlapping dumps interact
+    with each other too); Esc cancels it. 2D plan view only, same reasoning
+    as 🌊 Water Flow itself.
 - **🗻 Surface Display** offers alternate/additional ways to read a TIN,
   each independently toggleable and drawn in both 2D plan and 3D orbit:
   - **Wireframe** (on by default) — the same triangle-edge mesh always
@@ -471,6 +501,43 @@ particles was spliced out of the array entirely (down to exactly the
 50 ambient particles, unaffected) rather than respawned the way an ambient
 droplet would be. Turning off 🌊 Water Flow afterward correctly cleared
 the array back to empty, dumps included.
+
+An eleventh pass verified the FLIP-fluid upgrade to 💧 Dump Water and, along
+the way, caught and fixed a real pre-existing bug in the original dump
+jitter. **The bug:** the burst's "spread around the click" sampled a
+uniformly random point across the ENTIRE clicked triangle via barycentric
+coordinates — fine on the tenth pass's small synthetic pyramid, but on a
+real/coarser TIN a single triangle can span tens of world units, so the
+"burst" could land scattered across a large chunk of the model instead of
+near the actual click. Caught directly: a two-triangle 40×40-unit ramp
+produced an initial burst with a 33+ unit spread on the very first test
+run. Fixed by sampling a small disk (`WATER_DUMP_SPREAD_RADIUS`, 1.2 world
+units, `sqrt(rand)` for uniform density) around the clicked point itself
+and only falling back to the clicked triangle if a jittered point lands
+off every triangle; re-verified the same ramp scenario now spreads within
+~2.2 units of the click, as intended. **The FLIP physics itself:** (1) a
+direct unit test built a synthetic splat with deliberately divergent
+velocities, confirmed real nonzero divergence existed pre-solve, then
+confirmed `flipSolveIncompressibility` drove it down by >95%; (2) a direct
+separation-only test confirmed 3 overlapping synthetic particles end up
+farther apart after `pushParticlesApart`'s formula, not closer/unchanged;
+(3) end-to-end on the (correctly re-authored, LandXML N-E-Z order double
+-checked) ramp, `triFlowDir` was queried directly at the dump point FIRST
+to get the real ground-truth downhill vector (rather than assuming a
+direction), then 40 real animation-frame steps of the actual dumped burst
+were run and its net displacement projected onto that real downhill vector
+came back clearly positive (+4.07 units) — confirming actual accelerating
+motion in the physically correct direction, not just "moved somewhere."
+The burst's bounding spread also grew over those same 40 steps (confirming
+it visibly spreads/sloshes rather than staying in its initial tight
+cluster), and every particle's E/N/vE/vN stayed finite throughout (no
+NaN/Infinity blow-up). Ambient droplets were re-confirmed completely
+unaffected by any of this (still exactly 50, untouched, after the FLIP
+burst ran its 40 steps), and the pre-existing 15-second decay-closure
+behavior was re-verified unchanged on top of the new physics. Re-ran the
+complete existing regression battery (DXF/LandXML/pipe-network import,
+elevation query, 3D orbit, snap, aerial map) — all pass unchanged.
+`index.html`'s inline script still parses clean (`node --check`).
 
 Both parsers, the layer visibility/lock toggles, the elevation-query tool
 (including its lock-exclusion behavior), and zoom-to-layer were exercised
