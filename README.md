@@ -31,6 +31,21 @@ dependencies, and nothing to install.
   simulation** — there's no infiltration, ponding capacity, channel
   concentration, or flow accumulation, just "which way does this exact spot
   drain." 2D plan view only, same reasoning as ⛰ Elevation/🧲 Snap.
+- **💧 Dump Water** — click a point on a visible TIN surface to pour a
+  one-shot burst of 40 droplets there, spread slightly around the click
+  (barycentric jitter within the clicked triangle) rather than stacked on
+  one pixel. The burst flows using the exact same steepest-descent physics
+  as the ambient 🌊 Water Flow droplets — clicking Dump Water on an idle
+  surface starts that ambient flow too, with the burst added on top of it,
+  not instead of it. What makes a dumped burst different: each one carries
+  its own **decay closure** — `makeDumpParticle(E,N,tri,layer)` captures the
+  exact timestamp the particle was born and returns a `decayed(now)` function
+  closed over that birth time — so **15 seconds after being dumped, it's
+  removed outright, wherever it's since flowed to**, instead of respawning
+  elsewhere the way an ambient droplet does when it wanders off the surface
+  or exceeds its own (unrelated) 9-second "stuck on a flat facet" cap. The
+  tool stays armed for repeat dumps at different points; Esc cancels it.
+  2D plan view only, same reasoning as 🌊 Water Flow itself.
 - **🗻 Surface Display** offers alternate/additional ways to read a TIN,
   each independently toggleable and drawn in both 2D plan and 3D orbit:
   - **Wireframe** (on by default) — the same triangle-edge mesh always
@@ -437,6 +452,25 @@ directly: a deliberately wrong cached triangle self-corrected to the real
 one containing the particle on the very next step, and hiding a droplet's
 only surface layer mid-animation correctly respawned it to nothing rather
 than silently continuing to use the now-hidden surface's stale cache.
+
+A tenth pass verified 💧 Dump Water against the same 5-triangle synthetic
+pyramid (a real, non-degenerate slope everywhere, so nothing is "pooled"):
+clicking Dump Water on an idle surface (Water Flow not yet running)
+correctly auto-started the ambient animation with its own default droplet
+count AND added the 40-particle burst on top, both confirmed by counting
+`waterParticles` split by its new `dumped` flag; the tool stayed armed and
+a second click at a different point correctly stacked a second, independent
+40-particle burst (80 dumped total) without touching the ambient count;
+Esc correctly disarmed the tool. For the decay itself, `stepWaterParticles`
+was called directly with a fabricated timestamp ~15.1 simulated seconds
+past a burst's own real birth time (`performance.now()` at dump time,
+captured inside each particle's own closure) — confirmed a freshly-dumped
+particle's `decayed(now)` correctly reads `false` immediately after being
+dumped, and that after the simulated 15.1s every one of the 80 dumped
+particles was spliced out of the array entirely (down to exactly the
+50 ambient particles, unaffected) rather than respawned the way an ambient
+droplet would be. Turning off 🌊 Water Flow afterward correctly cleared
+the array back to empty, dumps included.
 
 Both parsers, the layer visibility/lock toggles, the elevation-query tool
 (including its lock-exclusion behavior), and zoom-to-layer were exercised

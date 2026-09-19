@@ -58,6 +58,7 @@ canvas{display:block;width:100%;height:100%;background:var(--bg);cursor:crosshai
     <button class="btn" id="fitBtn" disabled title="Frame everything currently loaded (F)">⊡ Fit</button>
     <button class="btn" id="elevBtn" disabled title="Click a visible, unlocked TIN surface to read its interpolated elevation at that point (Esc cancels) — 2D only">⛰ Elevation</button>
     <button class="btn" id="waterBtn" disabled title="Animate droplets following each triangle's own steepest-descent direction across the visible TIN surface(s) — a stylized visual approximation, not a hydrology/runoff model. 2D plan view only">🌊 Water Flow</button>
+    <button class="btn" id="waterDumpBtn" disabled title="Click a point on a visible TIN surface to dump a burst of water droplets there — they flow downhill the same steepest-descent way as 🌊 Water Flow, then fully decay (vanish, not respawn) 15 seconds after being dumped, wherever they've flowed to by then. Stays armed for repeat dumps; Esc cancels. 2D plan view only">💧 Dump Water</button>
     <button class="btn" id="surfaceDisplayBtn" disabled title="Choose how a TIN surface is drawn — wireframe on/off, contour lines, slope arrows">🗻 Surface Display</button>
     <button class="btn" id="snapBtn" disabled title="CAD object snap — hover to snap onto an endpoint, a genuine crossing of two lines, a midpoint, a circle's center/quadrant, or the nearest point on a line, and read its exact E/N/Z off the hud (Esc cancels) — 2D only">🧲 Snap</button>
     <button class="btn" id="orbitBtn" disabled title="Toggle 3D orbit view (O) — drag to rotate (re-centers on whatever's under the cursor), shift-drag or middle-drag to pan, wheel to zoom">⟲ 3D</button>
@@ -193,7 +194,10 @@ let waterLastTime=null;
 let WATER_PARTICLE_COUNT=50;                               // adjustable from 🗻 Surface Display; re-seeds live while the animation is running
 const WATER_BASE_SPEED=20;                                 // world units/sec at a moderate slope — tuned for a readable animation pace, not a real flow-velocity model
 const WATER_TRAIL_LEN=14;
-const WATER_MAX_AGE=9;                                     // seconds before a droplet respawns anyway, so one that's pooled on a gentle slope doesn't just sit there forever
+const WATER_MAX_AGE=9;                                     // seconds before an AMBIENT droplet respawns anyway, so one that's pooled on a gentle slope doesn't just sit there forever — a dumped burst (below) ignores this and lives by its own 15s decay instead
+let waterDumpOn=false;                                     // 💧 Dump Water tool armed, waiting for a canvas click
+const WATER_DUMP_COUNT=40;                                 // droplets per dump
+const WATER_DUMP_LIFE=15;                                  // seconds a dumped burst survives before it fully decays (removed, not respawned) — regardless of where it's flowed to by then
 let SLOPE_ARROW_DENSITY=300;                               // max arrows drawn per surface, adjustable from 🗻 Surface Display
 
 /* ---------- 🗻 surface display options ----------
@@ -1532,7 +1536,7 @@ function respawnWaterParticle(p){
   p.age=0;p.trail=[{E:p.E,N:p.N}];p._tri=tri;p._triLayer=pick.layer;   // cache — see stepWaterParticles
 }
 function initWaterParticles(){
-  waterParticles=[];
+  waterParticles=waterParticles.filter(p=>p.dumped);         // preserve any still-decaying 💧 dump burst across a re-seed (e.g. dragging the ambient droplet-count slider)
   for(let i=0;i<WATER_PARTICLE_COUNT;i++){
     const p={E:NaN,N:NaN,age:0,trail:[],_tri:null,_triLayer:null};
     respawnWaterParticle(p);
@@ -1540,31 +1544,66 @@ function initWaterParticles(){
   }
   if(!waterParticles.some(p=>isFinite(p.E)))hud('no visible TIN surface to animate — show a surface layer from 📑 Layers first');
 }
+// 💧 Dump Water — a one-shot burst at a clicked point, distinct from the ambient droplets
+// initWaterParticles() seeds forever: each dumped particle carries its OWN `decayed` closure,
+// capturing the exact timestamp it was born so its 15s lifetime is self-contained and doesn't
+// depend on any shared/global clock field — stepWaterParticles just asks each particle "are
+// you decayed yet?" and removes it outright the moment it says yes, instead of respawning it
+// the way an ambient droplet would (a dump is a one-time pour, not a permanent recirculating
+// fixture on the surface).
+function makeDumpParticle(E,N,tri,layer){
+  const bornAt=performance.now();
+  const decayed=now=>(now-bornAt)/1000>=WATER_DUMP_LIFE;
+  return{E,N,age:0,trail:[{E,N}],_tri:tri,_triLayer:layer,dumped:true,decayed};
+}
+function dumpWaterAt(E,N){
+  const hit=findWaterTriangleAt(E,N);
+  if(!hit){hud('no visible TIN surface under that click to dump water on');return;}
+  if(!waterOn){                                              // dumping onto an idle surface starts the normal ambient flow too (same as clicking 🌊 Water Flow) — the burst is added on top of it, not instead of it
+    waterOn=true;$('waterBtn').classList.add('on');
+    initWaterParticles();waterLastTime=null;
+    waterAnimHandle=requestAnimationFrame(waterTick);
+  }
+  for(let i=0;i<WATER_DUMP_COUNT;i++){
+    // spread the burst around the click point (barycentric jitter within the clicked triangle)
+    // instead of stacking every droplet on the exact same pixel
+    let r1=Math.random(),r2=Math.random();if(r1+r2>1){r1=1-r1;r2=1-r2;}
+    const[a,b,c]=hit.tri;
+    const jE=a.E+r1*(b.E-a.E)+r2*(c.E-a.E),jN=a.N+r1*(b.N-a.N)+r2*(c.N-a.N);
+    const jHit=findWaterTriangleAt(jE,jN)||hit;              // the jitter can land just over the edge into a neighboring triangle
+    waterParticles.push(makeDumpParticle(jE,jN,jHit.tri,jHit.layer));
+  }
+  hud(`💧 dumped ${WATER_DUMP_COUNT} droplets — decays in ${WATER_DUMP_LIFE}s`);
+  draw();
+}
 // A droplet moves a tiny distance per frame, so it's almost always still inside the SAME
 // triangle it was in last frame — checking that one triangle first (O(1), also re-checking
 // its own surface's current visibility) instead of scanning every triangle on every surface
 // (O(triangles)) is what keeps thousands of droplets animating smoothly; the full scan only
 // runs on the rare frame a droplet actually crosses into a new triangle, leaves the surface,
 // or its surface's layer gets hidden mid-animation.
-function stepWaterParticles(dt){
-  waterParticles.forEach(p=>{
-    if(!isFinite(p.E)){respawnWaterParticle(p);return;}
+function stepWaterParticles(dt,now){
+  for(let i=waterParticles.length-1;i>=0;i--){
+    const p=waterParticles[i];
+    if(p.dumped&&p.decayed(now)){waterParticles.splice(i,1);continue;}   // 15s is up — vanish outright, never respawn
+    const gone=()=>{if(p.dumped)waterParticles.splice(i,1);else respawnWaterParticle(p);};
+    if(!isFinite(p.E)){gone();continue;}
     const cachedLy=p._tri?LAYERS[p._triLayer]:null;
     const cachedOk=p._tri&&!(cachedLy&&!cachedLy.visible)&&pointInTri(p.E,p.N,p._tri[0],p._tri[1],p._tri[2])!=null;
     let tri=p._tri,layer=p._triLayer;
     if(!cachedOk){
       const hit=findWaterTriangleAt(p.E,p.N);
-      if(!hit){respawnWaterParticle(p);return;}              // flowed off the modeled surface (or its layer was hidden)
+      if(!hit){gone();continue;}                              // flowed off the modeled surface (or its layer was hidden)
       tri=hit.tri;layer=hit.layer;
     }
     const dir=triFlowDir(tri);
-    if(!dir){respawnWaterParticle(p);return;}                // pooled on a flat facet — start a fresh droplet elsewhere rather than freezing in place
+    if(!dir){gone();continue;}                                // pooled on a flat facet — an ambient droplet restarts elsewhere; a dumped one is just done
     p._tri=tri;p._triLayer=layer;
     const speed=WATER_BASE_SPEED*Math.max(0.3,Math.min(1.5,dir.slope*3));   // faster on steeper ground, floored so gentle slopes still visibly creep
     p.E+=dir.dirE*speed*dt;p.N+=dir.dirN*speed*dt;p.age+=dt;
     p.trail.push({E:p.E,N:p.N});if(p.trail.length>WATER_TRAIL_LEN)p.trail.shift();
-    if(p.age>WATER_MAX_AGE)respawnWaterParticle(p);
-  });
+    if(!p.dumped&&p.age>WATER_MAX_AGE)respawnWaterParticle(p);   // ambient-only — a dumped burst lives by its own 15s decay closure, not this cap
+  }
 }
 function drawWaterParticles(){
   if(!waterOn)return;
@@ -1587,7 +1626,7 @@ function waterTick(ts){
   if(waterLastTime==null)waterLastTime=ts;
   const dt=Math.min(0.05,(ts-waterLastTime)/1000);           // clamp so a dropped/backgrounded frame doesn't fling particles across the map
   waterLastTime=ts;
-  stepWaterParticles(dt);
+  stepWaterParticles(dt,ts);
   draw();
   waterAnimHandle=requestAnimationFrame(waterTick);
 }
@@ -1668,7 +1707,7 @@ function importDXF(text){
   }
   if(!nEnt){hud('no recognized entities found (LINE / LWPOLYLINE / POLYLINE / POINT / CIRCLE / 3DFACE)');return;}
   renderLayerPanel();updateJobPill();
-  $('fitBtn').disabled=false;$('elevBtn').disabled=SURFACES.length===0;$('waterBtn').disabled=SURFACES.length===0;$('surfaceDisplayBtn').disabled=SURFACES.length===0;
+  $('fitBtn').disabled=false;$('elevBtn').disabled=SURFACES.length===0;$('waterBtn').disabled=SURFACES.length===0;$('waterDumpBtn').disabled=SURFACES.length===0;$('surfaceDisplayBtn').disabled=SURFACES.length===0;
   $('orbitBtn').disabled=false;$('snapBtn').disabled=false;
   if(hadNothing)fit();else draw();
   hud(`imported ${nEnt} DXF entit${nEnt===1?'y':'ies'} across ${Object.keys(LAYERS).length} layer(s)`);
@@ -1761,7 +1800,7 @@ function importLandXML(text){
   const{nAlign,nCurve,nProfile}=importAlignments(doc);
   if(!nSurf&&!nPts&&!nNet&&!nAlign){hud('no <Surface> (TIN), <CgPoint>, <PipeNetwork>, or <Alignment> data found in this file');return;}
   renderLayerPanel();updateJobPill();
-  $('fitBtn').disabled=false;$('elevBtn').disabled=SURFACES.length===0;$('waterBtn').disabled=SURFACES.length===0;$('surfaceDisplayBtn').disabled=SURFACES.length===0;
+  $('fitBtn').disabled=false;$('elevBtn').disabled=SURFACES.length===0;$('waterBtn').disabled=SURFACES.length===0;$('waterDumpBtn').disabled=SURFACES.length===0;$('surfaceDisplayBtn').disabled=SURFACES.length===0;
   $('orbitBtn').disabled=false;$('snapBtn').disabled=false;
   $('geomLabelsBtn').disabled=ALIGNMENTS.length===0;
   $('profileBtn').disabled=ALIGNMENTS.length===0;
@@ -1881,6 +1920,13 @@ $('waterBtn').onclick=()=>{
   waterAnimHandle=requestAnimationFrame(waterTick);
   hud('🌊 water flow — droplets follow steepest-descent across the visible TIN surface(s)');
 };
+$('waterDumpBtn').onclick=()=>{
+  if($('waterDumpBtn').disabled)return;
+  if(is3D){hud('Dump Water is 2D only — press O or ⟲ 3D to switch back first');return;}
+  if(profileOn){hud('Dump Water is plan-view only — press P or 📈 Profile to switch back first');return;}
+  waterDumpOn=!waterDumpOn;$('waterDumpBtn').classList.toggle('on',waterDumpOn);
+  hud(waterDumpOn?'click a visible TIN surface to dump a burst of water there (decays in 15s) · Esc to cancel':'dump water cancelled');
+};
 $('surfaceDisplayBtn').onclick=()=>{if($('surfaceDisplayBtn').disabled)return;$('surfaceDisplayPanel').classList.toggle('show');};
 $('surfaceDisplayCloseBtn').onclick=()=>$('surfaceDisplayPanel').classList.remove('show');
 $('sdWireframe').onchange=()=>{SURFACE_DISPLAY.wireframe=$('sdWireframe').checked;draw();};
@@ -1925,7 +1971,7 @@ $('orbitBtn').onclick=()=>{
   is3D=!is3D;$('orbitBtn').classList.toggle('on',is3D);
   if(is3D&&profileOn){profileOn=false;$('profileBtn').classList.remove('on');$('profilePanel').classList.remove('show');}
   $('legend').style.display=is3D?'none':'';
-  if(is3D){elevPick=false;$('elevBtn').classList.remove('on');snapOn=false;$('snapBtn').classList.remove('on');if(waterOn)stopWaterAnimation();}
+  if(is3D){elevPick=false;$('elevBtn').classList.remove('on');snapOn=false;$('snapBtn').classList.remove('on');waterDumpOn=false;$('waterDumpBtn').classList.remove('on');if(waterOn)stopWaterAnimation();}
   cv.style.cursor=is3D?'grab':'crosshair';
   fit();hud(is3D?'3D orbit — drag to rotate (re-centers on click), shift-drag or middle-drag to pan, wheel to zoom':'back to 2D plan view');
 };
@@ -1943,6 +1989,7 @@ $('profileBtn').onclick=()=>{
     if(is3D){is3D=false;$('orbitBtn').classList.remove('on');}
     elevPick=false;$('elevBtn').classList.remove('on');
     snapOn=false;$('snapBtn').classList.remove('on');
+    waterDumpOn=false;$('waterDumpBtn').classList.remove('on');
     if(showMap){showMap=false;$('mapBtn').classList.remove('on');}
     if(waterOn)stopWaterAnimation();
     if(!profileAlignName||!ALIGNMENTS.some(a=>a.name===profileAlignName))profileAlignName=ALIGNMENTS[0]?.name||null;
@@ -1983,6 +2030,9 @@ cv.addEventListener('pointerdown',e=>{
     if(hit){spot={E,N,z:hit.z,name:hit.name};hud(`${hit.name}: elevation ${hit.z.toFixed(3)}`);}
     else{spot=null;hud('no visible, unlocked TIN surface under that click');}
     draw();return;
+  }
+  if(waterDumpOn){                                         // stays armed — click again to dump another burst elsewhere
+    const[E,N]=S2W(sx,sy);dumpWaterAt(E,N);return;
   }
   if(snapOn){
     const s=snapPoint(sx,sy);
@@ -2025,6 +2075,7 @@ cv.addEventListener('wheel',e=>{
 window.addEventListener('keydown',e=>{
   if(e.key==='Escape'){
     if(elevPick){elevPick=false;$('elevBtn').classList.remove('on');hud('elevation query cancelled');draw();}
+    else if(waterDumpOn){waterDumpOn=false;$('waterDumpBtn').classList.remove('on');hud('dump water cancelled');draw();}
     else if(snapOn){snapOn=false;$('snapBtn').classList.remove('on');liveSnap=null;hud('snap cancelled');draw();}
   }
   else if(e.key.toLowerCase()==='f'&&!$('fitBtn').disabled)fit();
@@ -2035,7 +2086,7 @@ window.addEventListener('resize',resize);
 resize();
 
 /* ---------- version badge — bumped on every push, mirroring FBK-Checker's own fruit badge ---------- */
-const VERSION={animal:'🐢',name:'TORTOISE',build:10};
+const VERSION={animal:'🐬',name:'DOLPHIN',build:11};
 function rotateAnimal(){const b=$('animalBadge');b.style.transform='rotate(360deg)';setTimeout(()=>{b.style.transform='rotate(0deg)';},200);}
 function showVersion(){const b=$('animalBadge');b.textContent=`${VERSION.animal} ${VERSION.name}`;
   b.title=`Build ${VERSION.build} · ${VERSION.name} — if this matches what Claude pushed, you're on the latest (no cache)`;}
