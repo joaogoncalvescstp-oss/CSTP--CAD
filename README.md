@@ -30,7 +30,14 @@ dependencies, and nothing to install.
   approximation of surface runoff direction, not a hydrology/watershed
   simulation** — there's no infiltration, ponding capacity, channel
   concentration, or flow accumulation, just "which way does this exact spot
-  drain." 2D plan view only, same reasoning as ⛰ Elevation/🧲 Snap.
+  drain." Renders in **both 2D plan and 3D orbit** — each droplet's true
+  terrain-interpolated elevation is looked up from its own cached triangle,
+  so in 3D the flow visibly sits on and follows the tilted surface, not a
+  flat plane. Only *starting a dump by clicking a point* (below) stays 2D
+  only, same reasoning as ⛰ Elevation/🧲 Snap — once water is flowing, both
+  it and any dumped bursts keep animating and rendering correctly if you
+  switch to 3D orbit mid-flow, and the 🌊 Water Flow toggle itself now works
+  from either view.
 - **💧 Dump Water** — click a point on a visible TIN surface to pour a
   one-shot burst of 40 droplets there, spread in a small ~1.2-unit disk
   around the click (not stacked on one pixel, and not scattered across
@@ -85,8 +92,12 @@ dependencies, and nothing to install.
     entirely, or once its own 15s is up.
   - The tool stays armed for repeat dumps at different points (each new
     burst joins the same shared local grid, so overlapping dumps interact
-    with each other too); Esc cancels it. 2D plan view only, same reasoning
-    as 🌊 Water Flow itself.
+    with each other too); Esc cancels it. *Starting* a dump by clicking a
+    point on the canvas is still 2D plan view only (there's no valid
+    world-space inverse for the oblique 3D orbit projection to resolve a
+    click against — the same limitation ⛰ Elevation/🧲 Snap/COGO picking
+    already have) — but once a burst exists, it renders and keeps flowing
+    correctly in 3D orbit too, same as 🌊 Water Flow itself.
 - **🗻 Surface Display** offers alternate/additional ways to read a TIN,
   each independently toggleable and drawn in both 2D plan and 3D orbit:
   - **Wireframe** (on by default) — the same triangle-edge mesh always
@@ -573,6 +584,49 @@ qualitative behavior. Re-ran the complete existing regression battery
 (FLIP unit tests, dump/decay lifecycle, DXF/LandXML/pipe-network import,
 elevation query, 3D orbit, snap, aerial map) — all pass unchanged.
 `index.html`'s inline script still parses clean (`node --check`).
+
+A thirteenth pass fixed water flow going 2D-only, read by the owner as
+"still floating in the air" after the twelfth pass's gravity fix — a
+report that only makes sense in a 3D context, since a flat top-down 2D
+view has no vertical axis to perceive floating in. Root cause: the whole
+feature was 2D-only in a way that went beyond the documented "starting a
+dump needs a click" limitation — entering 3D orbit unconditionally called
+`stopWaterAnimation()`, killing any running flow outright, and even if it
+had kept running, `draw3D()` never called a water-drawing function at all,
+so nothing would have appeared regardless. Fixed by: (1) generalizing
+`drawWaterParticles` to take a `proj(E,N,Z)` callback and a `need3DZ` flag,
+matching the same shared-projection pattern already used by
+`drawPipeNetworks`/`drawSlopeShading`/`drawContours`/`drawGeomLabels` — in
+3D it looks up each particle's real terrain Z via its own cached `_tri`
+and the existing `pointInTri` barycentric helper, rather than assuming
+Z=0; (2) wiring a `drawWaterParticles((E,N,Z)=>P3(E,N,Z),true)` call into
+`draw3D()`, alongside the pre-existing `drawWaterParticles((E,N)=>W2S(E,N),
+false)` call in `draw2D()`; (3) removing the forced `stopWaterAnimation()`
+from entering 3D orbit, so a running flow (ambient or a dumped burst)
+keeps simulating and rendering across the view switch instead of being
+killed; (4) removing 🌊 Water Flow's own "2D only" refusal, since the
+toggle itself has no click-to-place step and works identically in either
+view now. 💧 Dump Water's click-to-place trigger deliberately stays 2D-only
+and untouched — there's still no valid world-space inverse for the oblique
+3D orbit projection to resolve a canvas click against, the same reasoning
+⛰ Elevation/🧲 Snap/COGO picking already document. Verified end-to-end in a
+real headless-browser session on the same realistic 2%-slope fixture the
+twelfth pass used: a burst dumped in 2D (90 total particles: 40 dumped +
+50 ambient) survived switching to 3D orbit completely unstopped (still 90,
+`waterOn` still true); a live `P3` projection of a real dumped particle
+using its true interpolated terrain Z differed from a naive Z=0 projection
+by ~14px on screen — proof the 3D draw path is actually using real
+elevation, not floating at a flat Z=0 plane; a real `draw3D()` frame ran
+with the water drawn and threw no error; clicking 💧 Dump Water while in 3D
+still correctly refused to arm (`waterDumpOn` stayed `false`); and 🌊 Water
+Flow's own toggle button correctly stopped AND restarted the ambient
+animation from within 3D orbit, something it previously refused outright.
+Re-ran the complete existing regression battery (FLIP unit tests, dump/
+decay lifecycle, gentle-slope gravity, DXF/LandXML/pipe-network import,
+elevation query, 3D orbit, snap, aerial map) — all pass unchanged, zero
+console errors beyond the pre-existing, already-documented aerial-map
+tunnel-connection failures this sandbox always produces. `index.html`'s
+inline script still parses clean (`node --check`).
 
 Both parsers, the layer visibility/lock toggles, the elevation-query tool
 (including its lock-exclusion behavior), and zoom-to-layer were exercised

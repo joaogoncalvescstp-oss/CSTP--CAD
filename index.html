@@ -57,8 +57,8 @@ canvas{display:block;width:100%;height:100%;background:var(--bg);cursor:crosshai
     <label class="btn file" title="DWG is Autodesk's proprietary binary format — this viewer has no bundled DWG parser and can't read it directly. Selecting a .dwg here just explains that and tells you how to get the same data in another way.">↥ Import DWG<input type="file" id="dwgInput" accept=".dwg"></label>
     <button class="btn" id="fitBtn" disabled title="Frame everything currently loaded (F)">⊡ Fit</button>
     <button class="btn" id="elevBtn" disabled title="Click a visible, unlocked TIN surface to read its interpolated elevation at that point (Esc cancels) — 2D only">⛰ Elevation</button>
-    <button class="btn" id="waterBtn" disabled title="Animate droplets following each triangle's own steepest-descent direction across the visible TIN surface(s) — a stylized visual approximation, not a hydrology/runoff model. 2D plan view only">🌊 Water Flow</button>
-    <button class="btn" id="waterDumpBtn" disabled title="Click a point on a visible TIN surface to dump a burst of water droplets there — they flow downhill the same steepest-descent way as 🌊 Water Flow, then fully decay (vanish, not respawn) 15 seconds after being dumped, wherever they've flowed to by then. Stays armed for repeat dumps; Esc cancels. 2D plan view only">💧 Dump Water</button>
+    <button class="btn" id="waterBtn" disabled title="Animate droplets following each triangle's own steepest-descent direction across the visible TIN surface(s) — a stylized visual approximation, not a hydrology/runoff model. Renders on the real 3D terrain in ⟲ 3D orbit too, not just 2D plan">🌊 Water Flow</button>
+    <button class="btn" id="waterDumpBtn" disabled title="Click a point on a visible TIN surface to dump a burst of water droplets there — they flow downhill the same steepest-descent way as 🌊 Water Flow, then fully decay (vanish, not respawn) 15 seconds after being dumped, wherever they've flowed to by then. Stays armed for repeat dumps; Esc cancels. Click-to-dump itself is 2D plan view only (no way to resolve a click to a 3D world position), but an already-dumped burst keeps flowing and renders correctly if you switch to ⟲ 3D">💧 Dump Water</button>
     <button class="btn" id="surfaceDisplayBtn" disabled title="Choose how a TIN surface is drawn — wireframe on/off, contour lines, slope arrows">🗻 Surface Display</button>
     <button class="btn" id="snapBtn" disabled title="CAD object snap — hover to snap onto an endpoint, a genuine crossing of two lines, a midpoint, a circle's center/quadrant, or the nearest point on a line, and read its exact E/N/Z off the hud (Esc cancels) — 2D only">🧲 Snap</button>
     <button class="btn" id="orbitBtn" disabled title="Toggle 3D orbit view (O) — drag to rotate (re-centers on whatever's under the cursor), shift-drag or middle-drag to pan, wheel to zoom">⟲ 3D</button>
@@ -488,7 +488,7 @@ function draw2D(){
   ctx.globalAlpha=1;
   drawContours((E,N)=>W2S(E,N));
   drawSlopeArrows((E,N)=>W2S(E,N));
-  drawWaterParticles();
+  drawWaterParticles((E,N)=>W2S(E,N),false);
   // DXF entities
   ENTITIES.forEach(e=>{
     const ly=LAYERS[e.layer];if(ly&&!ly.visible)return;
@@ -556,6 +556,7 @@ function draw3D(){
     if(orbit.s>2){ctx.font='600 10px ui-monospace,monospace';drawLabel(p.id,s3[0]+6,s3[1]-5,'#cfe0ff');}});
   drawPipeNetworks((E,N,Z)=>P3(E,N,Z),orbit.s);
   drawGeomLabels((E,N,Z)=>P3(E,N,Z));
+  drawWaterParticles((E,N,Z)=>P3(E,N,Z),true);
   if(spot){const s3=P3(spot.E,spot.N,spot.z);
     ctx.strokeStyle='#ffd24a';ctx.lineWidth=1.6;ctx.beginPath();
     ctx.moveTo(s3[0]-8,s3[1]);ctx.lineTo(s3[0]+8,s3[1]);ctx.moveTo(s3[0],s3[1]-8);ctx.lineTo(s3[0],s3[1]+8);ctx.stroke();
@@ -1757,14 +1758,31 @@ function flipStepDumped(dumped,dt){
     if(p.dumped&&!findWaterTriangleAt(p.E,p.N))waterParticles.splice(i,1);
   }
 }
-function drawWaterParticles(){
+// proj(E,N,Z) -> [x,y] screen coords, same shared convention as drawPipeNetworks/
+// drawSlopeShading/drawContours/drawGeomLabels elsewhere in this file — W2S (Z ignored)
+// for 2D, P3 for 3D orbit. `need3DZ` is false for the 2D call (W2S doesn't care what Z
+// is, so there's nothing to look up) and true for 3D, where a real Z is required to place
+// the droplet ON the terrain's own oblique-projected surface instead of leaving it stuck
+// at Z=0 — which, once P3's rotation/elevation tilts the view, reads as the droplet
+// floating disconnected in space above (or below) the actual ground it should be
+// following. Reuses each particle's own already-current `_tri` cache (refreshed this same
+// frame by stepWaterParticles/flipStepDumped) via the same barycentric `pointInTri` the
+// elevation query uses — no extra per-particle surface scan needed.
+function drawWaterParticles(proj,need3DZ){
   if(!waterOn)return;
   waterParticles.forEach(p=>{
-    if(!isFinite(p.E)||p.trail.length<2)return;
-    ctx.strokeStyle='rgba(93,208,255,.55)';ctx.lineWidth=1.4;ctx.beginPath();
-    p.trail.forEach((pt,i)=>{const[x,y]=W2S(pt.E,pt.N);i?ctx.lineTo(x,y):ctx.moveTo(x,y);});
-    ctx.stroke();
-    const[x,y]=W2S(p.E,p.N);
+    if(!isFinite(p.E))return;
+    let z=0;
+    if(need3DZ){
+      z=p._tri?pointInTri(p.E,p.N,p._tri[0],p._tri[1],p._tri[2]):null;
+      if(z==null)return;                                    // can't place it on the 3D surface without a real Z this instant — skip the frame rather than guess one
+    }
+    if(p.trail.length>=2){
+      ctx.strokeStyle='rgba(93,208,255,.55)';ctx.lineWidth=1.4;ctx.beginPath();
+      p.trail.forEach((pt,i)=>{const[x,y]=proj(pt.E,pt.N,z);i?ctx.lineTo(x,y):ctx.moveTo(x,y);});   // the trail's own older E/N points reuse the CURRENT z as a close approximation (a short, recent tail) rather than tracking a separate Z per trail point
+      ctx.stroke();
+    }
+    const[x,y]=proj(p.E,p.N,z);
     ctx.fillStyle='#bfefff';ctx.beginPath();ctx.arc(x,y,2.2,0,Math.PI*2);ctx.fill();
   });
 }
@@ -2064,7 +2082,6 @@ $('elevBtn').onclick=()=>{
 };
 $('waterBtn').onclick=()=>{
   if($('waterBtn').disabled)return;
-  if(is3D){hud('Water flow is 2D only — press O or ⟲ 3D to switch back first');return;}
   if(profileOn){hud('Water flow is plan-view only — press P or 📈 Profile to switch back first');return;}
   if(waterOn){stopWaterAnimation();draw();hud('water flow animation off');return;}
   waterOn=true;$('waterBtn').classList.add('on');
@@ -2123,7 +2140,7 @@ $('orbitBtn').onclick=()=>{
   is3D=!is3D;$('orbitBtn').classList.toggle('on',is3D);
   if(is3D&&profileOn){profileOn=false;$('profileBtn').classList.remove('on');$('profilePanel').classList.remove('show');}
   $('legend').style.display=is3D?'none':'';
-  if(is3D){elevPick=false;$('elevBtn').classList.remove('on');snapOn=false;$('snapBtn').classList.remove('on');waterDumpOn=false;$('waterDumpBtn').classList.remove('on');if(waterOn)stopWaterAnimation();}
+  if(is3D){elevPick=false;$('elevBtn').classList.remove('on');snapOn=false;$('snapBtn').classList.remove('on');waterDumpOn=false;$('waterDumpBtn').classList.remove('on');}   // 🌊 Water Flow / a live 💧 dump keep running and rendering in 3D too — only the CLICK-driven tools (which need a screen->world inverse the oblique 3D projection doesn't have) get disarmed here
   cv.style.cursor=is3D?'grab':'crosshair';
   fit();hud(is3D?'3D orbit — drag to rotate (re-centers on click), shift-drag or middle-drag to pan, wheel to zoom':'back to 2D plan view');
 };
@@ -2238,7 +2255,7 @@ window.addEventListener('resize',resize);
 resize();
 
 /* ---------- version badge — bumped on every push, mirroring FBK-Checker's own fruit badge ---------- */
-const VERSION={animal:'🐧',name:'PENGUIN',build:13};
+const VERSION={animal:'🦊',name:'FOX',build:14};
 function rotateAnimal(){const b=$('animalBadge');b.style.transform='rotate(360deg)';setTimeout(()=>{b.style.transform='rotate(0deg)';},200);}
 function showVersion(){const b=$('animalBadge');b.textContent=`${VERSION.animal} ${VERSION.name}`;
   b.title=`Build ${VERSION.build} · ${VERSION.name} — if this matches what Claude pushed, you're on the latest (no cache)`;}
