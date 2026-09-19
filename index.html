@@ -1345,12 +1345,24 @@ function tinElevationAt(E,N){
 // containment test it already implements, just keeping the triangle reference instead of
 // its interpolated Z (unlike tinElevationAt, a locked surface still animates — locking only
 // ever meant "exclude from the elevation query," not "freeze its terrain").
+// Real Civil3D exports routinely carry MORE THAN ONE surface overlapping the same plan
+// footprint (existing ground + a raised/graded proposed pad, a building surface set inside a
+// larger site TIN, etc). Water has to physically collide with whichever surface is actually
+// on TOP at that point — the same way real water would run off a pad instead of silently
+// draining through it into the ground surface underneath — so this scans every visible
+// surface and keeps the HIGHEST elevation hit, not just the first surface listed in the file.
+// A valid TIN never has two overlapping triangles within itself, so once one triangle in a
+// given surface matches, no need to keep checking the rest of that surface's own triangles.
 function findWaterTriangleAt(E,N){
+  let best=null,bestZ=-Infinity;
   for(const s of SURFACES){
     const ly=LAYERS[s.layer];if(ly&&!ly.visible)continue;
-    for(const tri of s.tris)if(pointInTri(E,N,tri[0],tri[1],tri[2])!=null)return{tri,layer:s.layer};
+    for(const tri of s.tris){
+      const z=pointInTri(E,N,tri[0],tri[1],tri[2]);
+      if(z!=null){if(z>bestZ){bestZ=z;best={tri,layer:s.layer};}break;}
+    }
   }
-  return null;
+  return best;
 }
 // exact steepest-descent direction of one triangular facet: n = upward-pointing normal of
 // its plane (nz flipped positive if needed); on a plane nx·E+ny·N+nz·Z=d, dZ/dE=-nx/nz and
@@ -2255,7 +2267,7 @@ window.addEventListener('resize',resize);
 resize();
 
 /* ---------- version badge — bumped on every push, mirroring FBK-Checker's own fruit badge ---------- */
-const VERSION={animal:'🦊',name:'FOX',build:14};
+const VERSION={animal:'🐢',name:'TURTLE',build:15};
 function rotateAnimal(){const b=$('animalBadge');b.style.transform='rotate(360deg)';setTimeout(()=>{b.style.transform='rotate(0deg)';},200);}
 function showVersion(){const b=$('animalBadge');b.textContent=`${VERSION.animal} ${VERSION.name}`;
   b.title=`Build ${VERSION.build} · ${VERSION.name} — if this matches what Claude pushed, you're on the latest (no cache)`;}

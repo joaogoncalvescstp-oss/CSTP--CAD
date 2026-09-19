@@ -23,7 +23,14 @@ dependencies, and nothing to install.
   *that triangle's own* steepest-descent direction — computed from the
   triangle's own upward-facing plane normal `(nx,ny,nz)`, where the descent
   direction is exactly proportional to `(nx,ny)` (derivable directly from
-  the plane equation, not approximated). A droplet respawns at a fresh
+  the plane equation, not approximated). When more than one surface
+  overlaps the same plan footprint (a real Civil3D export routinely has an
+  existing-ground surface AND a proposed/graded surface sitting on top of
+  it in the same area — a pad, a driveway, a building pad), the lookup
+  collides with whichever surface is actually **highest** at that exact
+  point, the same way real water would run off a raised pad instead of
+  silently draining straight through it into the ground surface
+  underneath. A droplet respawns at a fresh
   random point on the surface once it flows off the modeled edge or lands
   on a flat/vertical facet with no defined downhill direction, and faster
   on steeper triangles than gentle ones. This is a **stylized visual
@@ -627,6 +634,46 @@ elevation query, 3D orbit, snap, aerial map) — all pass unchanged, zero
 console errors beyond the pre-existing, already-documented aerial-map
 tunnel-connection failures this sandbox always produces. `index.html`'s
 inline script still parses clean (`node --check`).
+
+A fourteenth pass fixed water silently ignoring/passing through whichever
+surface should have stopped it — the owner reported "the particles are not
+colliding with the surfaces." Root cause: `findWaterTriangleAt`, the one
+lookup every water function (ambient flow, dumping, the FLIP solver's
+per-frame terrain pull) uses to find which triangle a point sits on,
+scanned `SURFACES` in plain file order and returned the FIRST surface
+whose triangle contained the point — with no regard for elevation at all.
+A real Civil3D LandXML export routinely has more than one surface
+overlapping the same plan footprint (an existing-ground surface plus a
+raised/graded proposed surface — a pad, a driveway) — wherever they
+overlap, water always locked onto whichever surface happened to be listed
+first in the file, even where a different, physically higher surface was
+the one actually there. From the user's point of view this looks exactly
+like water failing to collide with (i.e. passing straight through) the
+surface that should have been in the way. Reproduced directly with a
+synthetic two-surface fixture — a broad, gently-sloped "EG" surface
+(elevations 0–2) fully underlying a smaller, steeper "PAD" surface
+(elevations 10–12) covering the middle of it: dumping water at a point
+inside PAD's footprint resolved to `TIN-EG` at `Z=1`, confirming the old
+code fell straight through the higher PAD surface onto the lower one
+listed first. Fixed by having `findWaterTriangleAt` scan every visible
+surface's matching triangle and keep the one with the **highest**
+interpolated Z, not just the first found — physically the correct
+"collision" semantics for a set of heightfield surfaces, since real water
+would rest on / run off whichever surface is actually uppermost at that
+point rather than the ground surface underneath it (a valid TIN never has
+two overlapping triangles within itself, so it's still only ever one
+triangle test per surface, just no longer short-circuiting after the
+first surface). Verified: the same synthetic fixture now resolves the
+overlap point to `TIN-PAD` at `Z=11`, and dumping a full 40-particle burst
+there confirms zero particles land on the lower EG surface instead of
+colliding with PAD; a point outside PAD's footprint but still on EG
+(unaffected region) still correctly resolves to `TIN-EG`, confirming the
+fix only changes behavior where surfaces genuinely overlap. Re-ran the
+complete existing regression battery (FLIP unit tests, dump/decay
+lifecycle, gentle-slope gravity, 3D rendering, DXF/LandXML/pipe-network
+import, elevation query, 3D orbit, snap, aerial map) — all pass unchanged,
+zero new console errors. `index.html`'s inline script still parses clean
+(`node --check`).
 
 Both parsers, the layer visibility/lock toggles, the elevation-query tool
 (including its lock-exclusion behavior), and zoom-to-layer were exercised
