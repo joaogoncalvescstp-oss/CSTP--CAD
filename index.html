@@ -205,7 +205,7 @@ const WATER_DUMP_LIFE=15;                                  // seconds a dumped b
    not the ambient droplets' simpler "each one independently follows steepest-descent"
    model. This is what makes a dump actually SPREAD/SLOSH as one connected body of water
    instead of 40 particles moving past each other with no interaction. See flipStepDumped(). */
-const WATER_DUMP_GRAVITY=16;                               // world units/sec² pulling a dumped particle along the LOCAL terrain's own downhill direction (triFlowDir) — the heightfield equivalent of the tutorial's constant (0,-9.81) box gravity
+const WATER_DUMP_GRAVITY=16;                               // world units/sec² pulling a dumped particle along the LOCAL terrain's own downhill direction (triFlowDir) — the heightfield equivalent of the tutorial's constant (0,-9.81) box gravity, scaled by slope with the SAME floor+amplification as the ambient droplets' own speed formula (a real civil site's typical grade is only a few percent, so a bare, unfloored slope multiplier would give a barely-perceptible acceleration on realistic terrain — see flipStepDumped)
 const WATER_DUMP_FLIP_RATIO=0.9;                           // PIC/FLIP blend for the post-solve velocity — 0=pure grid-smoothed PIC, 1=pure particle-carried FLIP; 0.9 matches the tutorial's own default
 const WATER_DUMP_PRESSURE_ITERS=30;                        // Gauss-Seidel iterations for the incompressibility solve
 const WATER_DUMP_OVERRELAX=1.9;                            // SOR overrelaxation factor, same value the tutorial uses
@@ -1706,7 +1706,7 @@ function flipStepDumped(dumped,dt){
     const cachedOk=p._tri&&!(cachedLy&&!cachedLy.visible)&&pointInTri(p.E,p.N,p._tri[0],p._tri[1],p._tri[2])!=null;
     if(!cachedOk){const hit=findWaterTriangleAt(p.E,p.N);if(hit){p._tri=hit.tri;p._triLayer=hit.layer;}}
     const dir=p._tri?triFlowDir(p._tri):null;
-    if(dir){const g=WATER_DUMP_GRAVITY*Math.min(1.5,dir.slope);p.vE+=dir.dirE*g*dt;p.vN+=dir.dirN*g*dt;}
+    if(dir){const g=WATER_DUMP_GRAVITY*Math.max(0.3,Math.min(1.5,dir.slope*3));p.vE+=dir.dirE*g*dt;p.vN+=dir.dirN*g*dt;}   // same floor+amplification as the ambient droplets' own speed formula below — a real civil site's typical slope (a few %) has a tiny raw `slope` value, and with no floor the old formula gave a near-zero acceleration that just sat there spreading in place ("floating") instead of visibly flowing
     p.E+=p.vE*dt;p.N+=p.vN*dt;
   });
   // 2) push overlapping particles apart so a burst spreads into a puddle instead of stacking
@@ -2238,7 +2238,7 @@ window.addEventListener('resize',resize);
 resize();
 
 /* ---------- version badge — bumped on every push, mirroring FBK-Checker's own fruit badge ---------- */
-const VERSION={animal:'🦭',name:'SEAL',build:12};
+const VERSION={animal:'🐧',name:'PENGUIN',build:13};
 function rotateAnimal(){const b=$('animalBadge');b.style.transform='rotate(360deg)';setTimeout(()=>{b.style.transform='rotate(0deg)';},200);}
 function showVersion(){const b=$('animalBadge');b.textContent=`${VERSION.animal} ${VERSION.name}`;
   b.title=`Build ${VERSION.build} · ${VERSION.name} — if this matches what Claude pushed, you're on the latest (no cache)`;}

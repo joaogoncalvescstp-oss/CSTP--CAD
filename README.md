@@ -61,6 +61,17 @@ dependencies, and nothing to install.
     connected body, with real momentum (it has inertia — releasing on a
     slope keeps it accelerating, unlike the ambient droplets' instant
     constant speed), instead of 40 particles passing through each other.
+    **The per-slope gravity scaling has the same floor + amplification as
+    the ambient droplets' own speed formula** (`Math.max(0.3, Math.min(1.5,
+    slope*3))`) — a real civil site's typical grade is only a percent or
+    two, and the FIRST version of this shipped with no such floor, so on
+    any realistically gentle real-world slope the resulting acceleration
+    was nearly zero: the burst would spread from the pressure solve but
+    barely translate, reading as "floating in place" rather than flowing.
+    The floor guarantees a clearly visible minimum acceleration on any
+    real slope (a truly flat facet still correctly gets zero gravity and
+    rests as a puddle, unaffected — the floor only applies once there IS a
+    defined downhill direction at all).
   - What still makes a dumped particle behave like a one-time pour rather
     than a permanent fixture: each one carries its own **decay closure** —
     `makeDumpParticle(E,N,tri,layer)` captures the exact timestamp the
@@ -536,6 +547,30 @@ unaffected by any of this (still exactly 50, untouched, after the FLIP
 burst ran its 40 steps), and the pre-existing 15-second decay-closure
 behavior was re-verified unchanged on top of the new physics. Re-ran the
 complete existing regression battery (DXF/LandXML/pipe-network import,
+elevation query, 3D orbit, snap, aerial map) — all pass unchanged.
+`index.html`'s inline script still parses clean (`node --check`).
+
+A twelfth pass fixed a real reported bug in that same FLIP gravity: the
+owner tried it and reported the dump "floating," not flowing. Root cause,
+confirmed numerically before touching any code: the gravity magnitude was
+`WATER_DUMP_GRAVITY * Math.min(1.5, dir.slope)` — no floor — so on a
+realistic civil-site grade (a synthetic 2% slope, `dir.slope≈0.02`, built
+specifically to reproduce a real site rather than the earlier test's much
+steeper 25% ramp), the resulting acceleration was `16*0.02=0.32` units/s²;
+after 1 simulated second (about what someone actually watches before
+judging "is this flowing"), that's a mean speed of only ~0.32 units/sec and
+~0.16 units of displacement — genuinely imperceptible, exactly matching
+"floating." Fixed by giving the gravity scaling the SAME floor +
+amplification the ambient droplets' own (already-tuned, already-visible)
+speed formula uses, `Math.max(0.3, Math.min(1.5, slope*3))`. Re-ran the
+exact same 2%-slope scenario after the fix: mean speed after 1 simulated
+second came back at ~4.86 units/sec (15× higher) and displacement at ~2.80
+units along the real, independently-queried downhill direction — clearly
+visible motion. Re-ran the eleventh pass's own steeper-ramp scenario
+unchanged (it never depended on the floor, since its slope was already
+well above where the floor kicks in) — still passes with the same
+qualitative behavior. Re-ran the complete existing regression battery
+(FLIP unit tests, dump/decay lifecycle, DXF/LandXML/pipe-network import,
 elevation query, 3D orbit, snap, aerial map) — all pass unchanged.
 `index.html`'s inline script still parses clean (`node --check`).
 
