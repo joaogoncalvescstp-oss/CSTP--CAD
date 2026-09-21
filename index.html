@@ -61,8 +61,8 @@ canvas{display:block;width:100%;height:100%;background:var(--bg);cursor:crosshai
     <button class="btn" id="waterDumpBtn" disabled title="Click a point on a visible TIN surface to dump a burst of water droplets there — they flow downhill the same steepest-descent way as 🌊 Water Flow, then fully decay (vanish, not respawn) 15 seconds after being dumped, wherever they've flowed to by then. Stays armed for repeat dumps; Esc cancels. Click-to-dump itself is 2D plan view only (no way to resolve a click to a 3D world position), but an already-dumped burst keeps flowing and renders correctly if you switch to ⟲ 3D">💧 Dump Water</button>
     <button class="btn" id="surfaceDisplayBtn" disabled title="Choose how a TIN surface is drawn — wireframe on/off, contour lines, slope arrows">🗻 Surface Display</button>
     <button class="btn" id="snapBtn" disabled title="CAD object snap — hover to snap onto an endpoint, a genuine crossing of two lines, a midpoint, a circle's center/quadrant, or the nearest point on a line, and read its exact E/N/Z off the hud (Esc cancels) — 2D only">🧲 Snap</button>
-    <button class="btn" id="orbitBtn" disabled title="Toggle 3D orbit view (O) — drag to rotate (re-centers on whatever's under the cursor), shift-drag or middle-drag to pan, wheel to zoom">⟲ 3D</button>
-    <button class="btn" id="profileBtn" disabled title="Toggle profile (station vs. elevation) view (P) of one alignment — shows its design <Profile> grade line and PVC/PVT/PVI/PVCC/PVRC/Hi/Lo, or falls back to its horizontal geometry's own elevation if no <Profile> was imported. Drag to pan, wheel to zoom (both axes together)">📈 Profile</button>
+    <button class="btn" id="orbitBtn" disabled title="Toggle 3D orbit view (O) — drag to rotate (re-centers on whatever's under the cursor), shift-drag or middle-drag to pan, wheel to zoom. On a touchscreen: one finger to orbit, two fingers to pinch-zoom/pan, double-tap to fit">⟲ 3D</button>
+    <button class="btn" id="profileBtn" disabled title="Toggle profile (station vs. elevation) view (P) of one alignment — shows its design <Profile> grade line and PVC/PVT/PVI/PVCC/PVRC/Hi/Lo, or falls back to its horizontal geometry's own elevation if no <Profile> was imported. Drag to pan, wheel to zoom (both axes together); on a touchscreen: one finger to pan, two fingers to pinch-zoom">📈 Profile</button>
     <button class="btn" id="mapBtn" title="Aerial imagery background, tiled from Ramsey County MN's own imagery server (falls back to Esri/USGS NAIP) — only accurate for a job in that county's own survey coordinate system, 2D view only">🗺 Map</button>
     <button class="btn" id="pipeLabelsBtn" title="Choose which manhole/pipe fields show as on-canvas labels">🏷 Pipe Labels</button>
     <button class="btn" id="geomLabelsBtn" disabled title="Label key geometry points — horizontal (PC/PT/PI/MID/CC/PCC/PRC), spiral (TS/SC/CS/ST/SPI/SS), vertical/profile (PVC/PVT/PVI/PVCC/PVRC/Hi/Lo), reference (POB/POE/EQN), and custom stations (POT/POC/POS). Pick a reference alignment for stationing, then one or more alignments/lines to label (needs a LandXML file with an Alignment)">📍 Label Points</button>
@@ -154,7 +154,7 @@ canvas{display:block;width:100%;height:100%;background:var(--bg);cursor:crosshai
       <label style="display:block;margin-bottom:4px;font-size:11px;color:var(--mut)">Alignment</label>
       <select id="profileAlignSel" style="width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--rule);border-radius:5px;padding:5px"></select>
     </div>
-    <div class="hud" id="hud">Import a DXF or LandXML (TIN / pipe network) file to begin. Drag to pan, wheel to zoom.</div>
+    <div class="hud" id="hud">Import a DXF or LandXML (TIN / pipe network) file to begin. Drag to pan, wheel to zoom — on a touchscreen: one finger to pan/orbit, two fingers to pinch-zoom or pan, double-tap to fit.</div>
   </div>
 </div>
 <script>
@@ -178,6 +178,23 @@ let GEOM_LABEL_SHOW={horizontal:true,spiral:true,vertical:true,reference:true,cu
 let elevPick=false;                                        // ⛰ Elevation tool armed, waiting for a canvas click
 let spot=null;                                             // {E,N,z,name} — last elevation-query result, drawn until cleared
 let drag=null;                                             // {sx,sy,x0,y0} while panning
+
+/* ---------- touch/tablet gesture support ----------
+   Pointer Events already unify mouse/touch/pen for a single-finger drag (the existing `drag`
+   object above), so one finger already pans in 2D, orbits in 3D, and scrubs the profile —
+   no change needed there. What's genuinely missing on a touchscreen: a second simultaneous
+   finger (a mouse only ever has one contact point). `activeTouches` tracks every currently-
+   down touch pointer by its own pointerId; the moment a 2nd one lands, any single-finger
+   `drag` in progress is superseded by a combined pinch-zoom + two-finger-pan gesture
+   (`pinchStart`) — the same one gesture, since a real pinch's midpoint almost always drifts a
+   little even when the user "only" meant to zoom. `tapCandidate`/`lastTap` implement a
+   double-tap-to-fit shortcut, since finding the ⊡ Fit button can be fiddlier than a toolbar
+   click while holding a tablet. */
+let activeTouches=new Map();                               // pointerId -> {x,y} in CLIENT coords, for every currently-down touch pointer
+let pinchStart=null;                                        // {d,mx,my} — the 2-finger gesture's distance + midpoint as of the LAST processed frame (re-baselined every move, so each step is a small incremental delta rather than drift-prone math relative to gesture start)
+let tapCandidate=null;                                      // {t,sx,sy} — a single finger just went down; cleared the moment a 2nd finger joins (a pinch is never a tap) or once resolved on pointerup
+let lastTap=null;                                           // {t,sx,sy} of the last completed single-finger tap, for double-tap detection
+const DOUBLE_TAP_MS=400,DOUBLE_TAP_PX=40,TAP_MAX_MS=400,TAP_MAX_MOVE_PX=24;
 
 /* ---------- 🌊 water flow animation ----------
    A stylized visual approximation, not a hydrology/runoff model: each droplet repeatedly
@@ -356,6 +373,30 @@ function zoomOrbit(f,sx,sy){
   const w=cv.width/devicePixelRatio,h=cv.height/devicePixelRatio;
   const dx=sx-w/2-orbit.ox, dy=sy-h/2-orbit.oy;
   orbit.s*=f;orbit.ox=sx-w/2-dx*f;orbit.oy=sy-h/2-dy*f;
+}
+// Generalizes the "zoom about a screen point" idea above to a moving anchor, for a pinch
+// gesture's own combined zoom+pan: `oldSx,oldSy` is where the anchor (a wheel cursor, or a
+// pinch's own midpoint) was as of the LAST processed frame, `oldSy,newSy` is where it is NOW.
+// Whatever world content was under the OLD anchor gets scaled by `f` and placed back under the
+// NEW anchor — reducing to plain zoomOrbit/the 2D wheel-zoom math exactly when old===new (a
+// stationary anchor, i.e. an ordinary non-drifting zoom), and to a pure pan when f===1 (the
+// two fingers stay the same distance apart but slide across the screen together). Used by the
+// two-finger touch gesture below; the mouse wheel handler keeps calling zoomOrbit/its own
+// inline 2D math directly, since a wheel tick's anchor never moves within one event anyway.
+function pinchZoomPan(f,oldSx,oldSy,newSx,newSy){
+  if(profileOn){
+    const[psta,pelev]=S2STA(oldSx,oldSy);
+    pview.sx*=f;pview.sy*=f;
+    pview.x=newSx-psta*pview.sx;pview.y=newSy+pelev*pview.sy;
+  }else if(is3D){
+    const w=cv.width/devicePixelRatio,h=cv.height/devicePixelRatio;
+    const dx=oldSx-w/2-orbit.ox, dy=oldSy-h/2-orbit.oy;
+    orbit.s*=f;orbit.ox=newSx-w/2-dx*f;orbit.oy=newSy-h/2-dy*f;
+  }else{
+    const[wx,wy]=S2W(oldSx,oldSy);
+    view.s*=f;view.x=newSx-wx*view.s;view.y=newSy+wy*view.s;
+    scheduleMapRefresh();
+  }
 }
 // nearest real point under the cursor in the live 3D projection (a CgPoint, a DXF POINT
 // entity, or a pipe network structure), for retargetOrbitPivot — or null if nothing's close.
@@ -2154,7 +2195,7 @@ $('orbitBtn').onclick=()=>{
   $('legend').style.display=is3D?'none':'';
   if(is3D){elevPick=false;$('elevBtn').classList.remove('on');snapOn=false;$('snapBtn').classList.remove('on');waterDumpOn=false;$('waterDumpBtn').classList.remove('on');}   // 🌊 Water Flow / a live 💧 dump keep running and rendering in 3D too — only the CLICK-driven tools (which need a screen->world inverse the oblique 3D projection doesn't have) get disarmed here
   cv.style.cursor=is3D?'grab':'crosshair';
-  fit();hud(is3D?'3D orbit — drag to rotate (re-centers on click), shift-drag or middle-drag to pan, wheel to zoom':'back to 2D plan view');
+  fit();hud(is3D?'3D orbit — drag to rotate (re-centers on click), shift-drag or middle-drag to pan, wheel to zoom · touch: one finger to orbit, two fingers to pinch-zoom/pan':'back to 2D plan view');
 };
 $('mapBtn').onclick=()=>{
   showMap=!showMap;$('mapBtn').classList.toggle('on',showMap);
@@ -2189,21 +2230,35 @@ $('profileAlignSel').onchange=()=>{profileAlignName=$('profileAlignSel').value;f
 /* ---------- canvas interaction: pan, zoom, elevation pick, orbit, snap ---------- */
 cv.addEventListener('pointerdown',e=>{
   const r=cv.getBoundingClientRect(),sx=e.clientX-r.left,sy=e.clientY-r.top;
+  if(e.pointerType==='touch'){
+    try{cv.setPointerCapture(e.pointerId);}catch(_){}       // never let a capture failure stop this finger from being tracked — activeTouches is what the gesture logic actually depends on
+    activeTouches.set(e.pointerId,{x:e.clientX,y:e.clientY});
+    if(activeTouches.size>=2){                             // a 2nd finger just landed — supersede any single-finger drag with the combined pinch-zoom/two-finger-pan gesture
+      drag=null;tapCandidate=null;                          // a pinch is never a tap, however brief
+      const pts=[...activeTouches.values()].slice(0,2);
+      pinchStart={
+        d:Math.hypot(pts[0].x-pts[1].x,pts[0].y-pts[1].y),
+        mx:(pts[0].x+pts[1].x)/2-r.left,my:(pts[0].y+pts[1].y)/2-r.top
+      };
+      return;
+    }
+    tapCandidate={t:performance.now(),sx,sy};                // exactly one finger down so far — remember it for tap/double-tap detection on pointerup, then fall through to the ordinary single-pointer logic below (pan/orbit/elevation-pick/etc — unchanged, since Pointer Events already treat one finger just like a mouse button)
+  }
   if(e.button===1){                                        // middle-mouse pan — works in 2D, 3D, and profile
     e.preventDefault();
     drag=is3D?{pan:true,sx,sy,x0:orbit.ox,y0:orbit.oy}
       :profileOn?{profile:true,sx,sy,x0:pview.x,y0:pview.y}
       :{pan:true,sx,sy,x0:view.x,y0:view.y};
-    cv.setPointerCapture(e.pointerId);return;
+    try{cv.setPointerCapture(e.pointerId);}catch(_){}return;
   }
   if(profileOn){
     drag={profile:true,sx,sy,x0:pview.x,y0:pview.y};
-    cv.setPointerCapture(e.pointerId);return;
+    try{cv.setPointerCapture(e.pointerId);}catch(_){}return;
   }
   if(is3D){
     if(!e.shiftKey)retargetOrbitPivot(sx,sy,pick3D(sx,sy));   // rotate around whatever's under the cursor, not a fixed far-off pivot — same fix FBK-Checker's own orbit view needed for a large, elongated site
     drag={orbit:true,sx,sy,az:orbit.az,el:orbit.el,ox:orbit.ox,oy:orbit.oy,shift:e.shiftKey};
-    cv.setPointerCapture(e.pointerId);return;
+    try{cv.setPointerCapture(e.pointerId);}catch(_){}return;
   }
   if(elevPick){
     elevPick=false;$('elevBtn').classList.remove('on');
@@ -2222,10 +2277,21 @@ cv.addEventListener('pointerdown',e=>{
     return;
   }
   drag={pan:true,sx,sy,x0:view.x,y0:view.y};
-  cv.setPointerCapture(e.pointerId);
+  try{cv.setPointerCapture(e.pointerId);}catch(_){}
 });
 cv.addEventListener('pointermove',e=>{
   const r=cv.getBoundingClientRect(),sx=e.clientX-r.left,sy=e.clientY-r.top;
+  if(e.pointerType==='touch'&&activeTouches.has(e.pointerId)){
+    activeTouches.set(e.pointerId,{x:e.clientX,y:e.clientY});
+    if(activeTouches.size>=2&&pinchStart){
+      const pts=[...activeTouches.values()].slice(0,2);
+      const d=Math.hypot(pts[0].x-pts[1].x,pts[0].y-pts[1].y);
+      const mx=(pts[0].x+pts[1].x)/2-r.left,my=(pts[0].y+pts[1].y)/2-r.top;
+      pinchZoomPan(d/pinchStart.d,pinchStart.mx,pinchStart.my,mx,my);
+      pinchStart={d,mx,my};                                 // re-baseline every frame so each step is a small incremental delta, not drift-prone math relative to gesture start
+      draw();return;
+    }
+  }
   if(snapOn&&!is3D&&!drag){
     liveSnap=snapPoint(sx,sy);
     if(liveSnap)hud(`${liveSnap.label} · E ${liveSnap.E.toFixed(3)} N ${liveSnap.N.toFixed(3)}${isFinite(liveSnap.Z)?' Z '+liveSnap.Z.toFixed(3):''}`);
@@ -2239,18 +2305,40 @@ cv.addEventListener('pointermove',e=>{
     else{view.x=drag.x0+(sx-drag.sx);view.y=drag.y0+(sy-drag.sy);scheduleMapRefresh();}draw();return;}
   if(drag.profile){pview.x=drag.x0+(sx-drag.sx);pview.y=drag.y0+(sy-drag.sy);draw();return;}
 });
-window.addEventListener('pointerup',()=>{drag=null;if(showMap&&!is3D)scheduleMapRefresh();});
+function endTouchPointer(e){                                // shared by pointerup/pointercancel — a cancel (e.g. the OS interrupting mid-gesture) must still clean up activeTouches/pinchStart/tapCandidate the same way, or a "stuck" phantom touch could silently break the next real gesture
+  if(!e||e.pointerType!=='touch')return false;
+  activeTouches.delete(e.pointerId);
+  if(activeTouches.size<2)pinchStart=null;                 // dropping below 2 fingers always ends the pinch/two-finger-pan gesture
+  if(activeTouches.size===1){                                // one finger lifted off a 2-finger gesture — resume a plain single-finger drag with whichever finger is still down, seeded fresh from its own current position so there's no jump
+    const pt=[...activeTouches.values()][0];
+    const r=cv.getBoundingClientRect(),sx=pt.x-r.left,sy=pt.y-r.top;
+    drag=is3D?{orbit:true,sx,sy,az:orbit.az,el:orbit.el,ox:orbit.ox,oy:orbit.oy,shift:false}
+      :profileOn?{profile:true,sx,sy,x0:pview.x,y0:pview.y}
+      :{pan:true,sx,sy,x0:view.x,y0:view.y};
+    return true;
+  }
+  if(activeTouches.size===0){
+    if(tapCandidate&&e.type==='pointerup'){                  // tap/double-tap detection only makes sense on a genuine release, not a cancel — and only when this was never part of a pinch (tapCandidate is cleared the moment a 2nd finger joins)
+      const r=cv.getBoundingClientRect(),sx=e.clientX-r.left,sy=e.clientY-r.top;
+      const dt=performance.now()-tapCandidate.t,moved=Math.hypot(sx-tapCandidate.sx,sy-tapCandidate.sy);
+      if(dt<TAP_MAX_MS&&moved<TAP_MAX_MOVE_PX){
+        if(lastTap&&performance.now()-lastTap.t<DOUBLE_TAP_MS&&Math.hypot(sx-lastTap.sx,sy-lastTap.sy)<DOUBLE_TAP_PX){
+          if(!$('fitBtn').disabled){fit();hud('double-tap — fit to view');}
+          lastTap=null;
+        }else lastTap={t:performance.now(),sx,sy};
+      }
+    }
+    tapCandidate=null;
+  }
+  return false;
+}
+window.addEventListener('pointerup',e=>{if(endTouchPointer(e))return;drag=null;if(showMap&&!is3D)scheduleMapRefresh();});
+window.addEventListener('pointercancel',e=>{if(endTouchPointer(e))return;drag=null;});
 cv.addEventListener('wheel',e=>{
   e.preventDefault();
   const r=cv.getBoundingClientRect(),sx=e.clientX-r.left,sy=e.clientY-r.top;
   const f=e.deltaY<0?1.12:1/1.12;
-  if(profileOn){
-    const[psta,pelev]=S2STA(sx,sy);
-    pview.sx*=f;pview.sy*=f;                                 // scale both axes together — zooming never changes the chosen vertical exaggeration
-    pview.x=sx-psta*pview.sx;pview.y=sy+pelev*pview.sy;
-  }
-  else if(is3D){zoomOrbit(f,sx,sy);}
-  else{const[wx,wy]=S2W(sx,sy);view.s*=f;view.x=sx-wx*view.s;view.y=sy+wy*view.s;scheduleMapRefresh();}
+  pinchZoomPan(f,sx,sy,sx,sy);                               // a stationary anchor — the wheel-zoom special case of the same combined zoom+pan math the touch pinch gesture uses
   draw();
 },{passive:false});
 window.addEventListener('keydown',e=>{
@@ -2267,7 +2355,7 @@ window.addEventListener('resize',resize);
 resize();
 
 /* ---------- version badge — bumped on every push, mirroring FBK-Checker's own fruit badge ---------- */
-const VERSION={animal:'🐢',name:'TURTLE',build:15};
+const VERSION={animal:'🐨',name:'KOALA',build:16};
 function rotateAnimal(){const b=$('animalBadge');b.style.transform='rotate(360deg)';setTimeout(()=>{b.style.transform='rotate(0deg)';},200);}
 function showVersion(){const b=$('animalBadge');b.textContent=`${VERSION.animal} ${VERSION.name}`;
   b.title=`Build ${VERSION.build} · ${VERSION.name} — if this matches what Claude pushed, you're on the latest (no cache)`;}

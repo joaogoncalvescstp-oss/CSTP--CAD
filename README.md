@@ -315,6 +315,75 @@ same standing limitation FBK-Checker's own MAP section documents). The
 pre-existing DXF/LandXML/pipe-network/elevation-query/layer-manager
 regression suite was re-run afterward and passes unchanged.
 
+## Touch / tablet navigation
+
+The canvas already used Pointer Events (not separate mouse/touch handlers),
+so a single finger dragging on a tablet always panned in 2D, orbited in 3D,
+and scrubbed the profile view exactly like a mouse — that part needed no
+new code. What a mouse genuinely can't do — put down two contact points at
+once — is what was missing, since a real tablet workflow leans on
+two-finger gestures for the things a mouse uses a wheel or a modifier key
+for.
+
+- **Pinch to zoom** — spread two fingers apart to zoom in, pinch them
+  together to zoom out, in **2D plan, 3D orbit, and profile view alike**.
+  The zoom is centered on the pinch's own midpoint, the same "whatever's
+  under your fingers stays under your fingers" feel as a wheel zoom under
+  the cursor.
+- **Two-finger drag to pan** — sliding two fingers together (without
+  changing how far apart they are) pans the view. This is the one gesture
+  that's genuinely new capability, not just a touch equivalent of something
+  a mouse could already do: **3D orbit previously had no way to pan on a
+  touchscreen at all** — panning there needs a Shift key or a middle mouse
+  button, neither of which exists on a tablet, so before this a finger could
+  only ever rotate the 3D view, never move the pivot sideways. A real pinch
+  almost always drifts a little even when the user "only" meant to zoom, so
+  both gestures are computed together as one combined transform every
+  frame, re-baselined each frame from the immediately preceding one rather
+  than the gesture's start — the same increment-per-frame approach the
+  mouse wheel handler already used, generalized (`pinchZoomPan`) to a
+  moving anchor instead of a stationary cursor, so the wheel handler now
+  calls the very same function with old-anchor=new-anchor as its own
+  zoom-in-place special case.
+- **Double-tap to fit** — a quick double-tap anywhere on the canvas resets
+  the view to ⊡ Fit (whichever view mode is active), the same shortcut the
+  `F` key already provides — a fast way back if a pinch/pan/orbit gesture
+  leaves the view somewhere confusing while getting used to the controls. A
+  single tap alone does nothing; only two taps close together in both time
+  and position count.
+- A third or later finger is tracked (so lifting it later doesn't confuse
+  the gesture) but otherwise ignored — only the first two fingers drive
+  anything. Lifting one finger out of an active two-finger gesture resumes
+  a plain single-finger drag with whichever finger is still down, seeded
+  from its own current position so there's no jump.
+
+Verified end-to-end in a real headless browser using synthetic touch
+`PointerEvent`s (`pointerType:'touch'`) dispatched directly at the canvas,
+the same event shape a real touchscreen delivers: a lone finger still pans
+in 2D and orbits in 3D exactly like a mouse; landing a 2nd finger correctly
+starts a pinch and cancels any single-finger drag in progress; spreading
+two fingers apart zooms in (`view.s`/`orbit.s` both confirmed increasing by
+more than 50% for a 2× spread) while pinching together zooms out; a
+two-finger drag at a **constant** distance apart pans without changing
+scale at all (`view.s`/`orbit.s` unchanged to float precision) while
+clearly moving `view.x/y` or `orbit.ox/oy`; lifting one finger out of a
+pinch resumes an ordinary single-finger pan with the remaining finger, no
+jump; a 3rd finger joining or moving does nothing to the gesture; a genuine
+double-tap resets a deliberately-mangled view back to a proper fit, while a
+single tap alone (checked after the double-tap window expires) does
+nothing; and — since the wheel handler was refactored to share
+`pinchZoomPan` with the new touch code — a real mouse wheel zoom still
+produces the exact same `view.s` (to 1e-6) as before the refactor. Also
+fixed a related edge case surfaced by this same testing: `setPointerCapture`
+can throw if the browser doesn't consider a given pointer ID currently
+active (confirmed harmless and expected for synthetic test events, but
+cheap to guard defensively regardless of cause) — every `setPointerCapture`
+call in the pointerdown handler is now wrapped in a try/catch so a capture
+failure can never stop a finger from being tracked. Re-ran the complete
+existing regression battery (FLIP/water-flow, surface-collision, DXF/
+LandXML/pipe-network import, elevation query, snap, aerial map) — all pass
+unchanged. `index.html`'s inline script still parses clean (`node --check`).
+
 ## DWG — why it isn't supported directly
 
 DWG is Autodesk's proprietary binary format. Reading it in a browser with no
