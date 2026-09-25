@@ -287,6 +287,19 @@ dependencies, and nothing to install.
   the gesture dead. `touch-action:none` on the canvas hands all of this to
   the app instead of the browser's own native pinch-zoom/scroll.
 
+## Slope between two points
+
+- **📏 Slope 2-Pt** measures the slope between two picked points on a
+  chosen **target surface** (or "Auto", the topmost visible surface at each
+  point, so a pad over existing ground reads the pad). Click A, then B, in
+  2D plan. Both points snap to TIN vertices/edges, CAD lines and points. A
+  dashed rubber band shows the live grade before you click B. Each result
+  lists A/B northing, easting and elevation, ΔZ, horizontal and slope
+  distance, signed grade % (A → B, negative = downhill), H:V ratio and
+  bearing. It's drawn in 2D and 3D with a downhill arrow, and the table
+  exports to CSV. A point off the target surface is rejected. It only falls
+  back to a snapped CAD point/line's own Z, never another TIN's elevation.
+
 ## 3D orbit view, aerial MAP background, and CAD object snap
 
 Three subsystems ported over from this project's sibling app, FBK-Checker,
