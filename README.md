@@ -280,6 +280,22 @@ adapted to this viewer's DXF/TIN/pipe-network data model:
   there's no world-space inverse for this oblique projection to resolve a
   screen click back through, the same limitation the source app's own
   object-snap-driven tools have in its 3D view.
+  - **🎯 Pivot snap** — when a drag starts, the orbit pivot snaps to the
+    nearest CgPoint / DXF POINT / manhole, else the nearest DXF or TIN
+    vertex within 12px, else the front-most TIN surface point under the
+    cursor. Hovering previews the snap target (green square = vertex,
+    circle = surface) and a pink crosshair marks the live pivot while
+    dragging. Toggle it off in the 3D view box.
+  - **Vertical exaggeration slider** (0.5×–25×, 1× button for true scale)
+    in the 3D view box, top-right. Rescales Z about the pivot, so the pivot
+    stays put on screen.
+  - **🎨 Surface shaders** (3D view box or 🗻 Surface Display, drawn in both
+    2D and 3D): Solid (layer color), Hillshade, Elevation (hypsometric tint),
+    Slope ramp, Aspect (hue by facing direction), and Normal map. Lit shaders
+    use a ☀ sun with adjustable azimuth/altitude, with optional **cast
+    shadows** ray-marched over a height grid of the visible TINs. Lighting
+    and shadows use the current vertical exaggeration. Triangles are
+    flat-shaded and painter-sorted back to front in 3D.
 - **🗺 Map** overlays aerial imagery, tiled from Ramsey County MN's own
   ArcGIS ImageServer (falls back to Esri World Imagery, then USGS NAIP) over
   a calibrated Lambert-Conformal-Conic ↔ lat/lon ↔ Web Mercator transform.

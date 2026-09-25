@@ -43,6 +43,15 @@ canvas{display:block;width:100%;height:100%;background:var(--bg);cursor:crosshai
 .snapbox.show{display:flex}
 .snapbox label{display:flex;align-items:center;gap:5px;cursor:pointer;pointer-events:auto}
 .snapbox label.active{color:#35c184;font-weight:700}
+.view3d{position:absolute;right:12px;top:12px;width:230px;background:rgba(7,11,22,.9);border:1px solid var(--rule);border-radius:8px;padding:8px 10px;font-size:11px;color:var(--mut);display:none;flex-direction:column;gap:5px}
+.view3d.show{display:flex}
+.view3d .row{display:flex;align-items:center;justify-content:space-between;gap:6px}
+.view3d b{color:var(--gold)}
+.view3d input[type=range]{width:100%;margin:0}
+.view3d select{width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--rule);border-radius:5px;padding:4px}
+.view3d label{display:flex;align-items:center;gap:5px;cursor:pointer}
+.view3d button{background:var(--panel2);border:1px solid var(--rule);color:var(--text);border-radius:4px;font:600 10px ui-monospace,monospace;padding:2px 6px;cursor:pointer}
+@media (max-width:600px){.view3d{width:190px;top:auto;bottom:44px}}
 </style>
 </head>
 <body>
@@ -86,6 +95,26 @@ canvas{display:block;width:100%;height:100%;background:var(--bg);cursor:crosshai
       <div><i style="background:#a8b6e0"></i>alignment reference pt (POB/POE/EQN)</div>
       <div><i style="background:#ff9f6b"></i>custom station pt (POT/POC/POS)</div>
     </div>
+    <div class="view3d" id="view3dBox">
+      <div class="row"><span>Vertical exaggeration <b id="veVal">3.0×</b></span><button id="veResetBtn" title="True scale (1×)">1×</button></div>
+      <input type="range" id="veSlider" min="0.5" max="25" step="0.5" value="3" title="Z multiplier for the 3D view — also used for lighting/shadows">
+      <label title="When you start an orbit drag, the pivot snaps to the nearest CgPoint / manhole / DXF vertex / TIN vertex within reach, else to the surface point under the cursor"><input type="checkbox" id="pivotSnapChk" checked> 🎯 Snap orbit pivot to point / vertex</label>
+      <span>Surface shader</span>
+      <select id="shaderSel3d">
+        <option value="off">Off (lines only)</option>
+        <option value="solid">Solid — layer color, lit</option>
+        <option value="hillshade">Hillshade — grey light/shadow</option>
+        <option value="elevation">Elevation — hypsometric tint, lit</option>
+        <option value="slope">Slope — gentle→steep ramp, lit</option>
+        <option value="aspect">Aspect — facing direction (hue)</option>
+        <option value="normal">Normal map — RGB = surface normal</option>
+      </select>
+      <div class="row"><span>☀ Sun azimuth <b id="sunAzVal3d">315°</b></span></div>
+      <input type="range" id="sunAz3d" min="0" max="360" step="5" value="315">
+      <div class="row"><span>☀ Sun altitude <b id="sunAltVal3d">45°</b></span></div>
+      <input type="range" id="sunAlt3d" min="5" max="90" step="1" value="45">
+      <label><input type="checkbox" id="shadowChk3d"> Cast shadows</label>
+    </div>
     <div class="snapbox" id="snapBox">
       <label><input type="checkbox" id="snEndpoint" checked>▢ endpoint</label>
       <label><input type="checkbox" id="snIntersection" checked>○ intersection</label>
@@ -108,6 +137,21 @@ canvas{display:block;width:100%;height:100%;background:var(--bg);cursor:crosshai
     <div class="panel" id="surfaceDisplayPanel">
       <h4><span>Surface Display</span><button id="surfaceDisplayCloseBtn" title="Close">✕</button></h4>
       <p class="note" style="margin-bottom:8px">Alternate ways to read a TIN surface, on top of (or instead of) its wireframe — all draw in both 2D plan and 3D orbit, on every visible surface layer.</p>
+      <label style="display:block;margin-bottom:4px;font-size:11px;color:var(--mut)">🎨 Surface shader (filled triangles — 2D plan and 3D orbit)</label>
+      <select id="sdShader" style="width:100%;margin-bottom:8px;background:var(--panel2);color:var(--text);border:1px solid var(--rule);border-radius:5px;padding:5px">
+        <option value="off">Off (lines only)</option>
+        <option value="solid">Solid — layer color, lit</option>
+        <option value="hillshade">Hillshade — grey light/shadow</option>
+        <option value="elevation">Elevation — hypsometric tint, lit</option>
+        <option value="slope">Slope — gentle→steep ramp, lit</option>
+        <option value="aspect">Aspect — facing direction (hue)</option>
+        <option value="normal">Normal map — RGB = surface normal</option>
+      </select>
+      <label style="display:block;margin:0 0 4px 0;font-size:11px;color:var(--mut)">☀ Sun azimuth (° from north, clockwise): <span id="sdSunAzVal">315</span></label>
+      <input type="range" id="sdSunAz" min="0" max="360" step="5" value="315" style="width:100%;margin-bottom:6px">
+      <label style="display:block;margin:0 0 4px 0;font-size:11px;color:var(--mut)">☀ Sun altitude (° above horizon): <span id="sdSunAltVal">45</span></label>
+      <input type="range" id="sdSunAlt" min="5" max="90" step="1" value="45" style="width:100%;margin-bottom:6px">
+      <label style="display:flex;align-items:center;gap:6px;margin-bottom:10px;cursor:pointer"><input type="checkbox" id="sdShadows"> Cast shadows (terrain blocks the sun — uses the 3D vertical exaggeration)</label>
       <label style="display:flex;align-items:center;gap:6px;margin-bottom:6px;cursor:pointer"><input type="checkbox" id="sdWireframe" checked> Wireframe (triangle edges)</label>
       <label style="display:flex;align-items:center;gap:6px;margin-bottom:6px;cursor:pointer"><input type="checkbox" id="sdContours"> Contour lines</label>
       <label style="display:block;margin:0 0 4px 24px;font-size:11px;color:var(--mut)">Contour interval (blank = auto)</label>
@@ -409,6 +453,170 @@ function pick3D(sx,sy){
     net.structs.forEach(st=>{if(st.dummy)return;const s=P3(st.E,st.N,st.rim||0),d=Math.hypot(s[0]-sx,s[1]-sy);if(d<bd){bd=d;best={E:st.E,N:st.N,Z:st.rim||0};}});});
   return best;
 }
+/* ---------- 🎯 orbit pivot snap (3D) ----------
+   Extends pick3D: when an orbit drag starts, the pivot snaps (in priority order) to a
+   CgPoint/DXF POINT/manhole, else the nearest vertex of any visible DXF linework or TIN
+   triangle within PIVOT_SNAP_PX, else the front-most TIN surface point under the cursor —
+   so rotating always swings around real geometry instead of an empty ground plane.
+   Every candidate goes through the same orthographic projection as P3, so a screen-space
+   barycentric hit maps straight back to a world E/N/Z (an affine map preserves barycentrics). */
+let pivotSnapOn=true;
+let orbitHover=null;                                       // {E,N,Z,kind} pivot candidate under the cursor while hovering in 3D
+let orbitDragging=false;                                   // true during an orbit drag — draws the live pivot marker
+const PIVOT_SNAP_PX=12;
+let lastHoverPick=0;
+// P3 with the trig hoisted out, for the per-vertex loops below (picking, shading) that can
+// project hundreds of thousands of vertices per call. Returns [sx,sy,toward] — `toward` grows
+// toward the viewer (camera looks along -(0,-cosEl,sinEl) in the azimuth-rotated frame).
+function projector(){
+  const w=cv.width/devicePixelRatio,h=cv.height/devicePixelRatio;
+  const cA=Math.cos(orbit.az),sA=Math.sin(orbit.az),cE=Math.cos(orbit.el),sE=Math.sin(orbit.el);
+  const {cx,cy,cz,ve,s,ox,oy}=orbit;
+  return (E,N,Z)=>{const e=E-cx,n=N-cy,u=(Z-cz)*ve;
+    const x1=e*cA+n*sA,y1=-e*sA+n*cA;
+    return [x1*s+w/2+ox,-(y1*sE+u*cE)*s+h/2+oy,-y1*cE+u*sE];};
+}
+function surfaceHit3D(sx,sy,pr){
+  let best=null,bt=-Infinity;
+  SURFACES.forEach(s=>{const ly=LAYERS[s.layer];if(ly&&!ly.visible)return;
+    s.tris.forEach(tri=>{
+      const a=pr(tri[0].E,tri[0].N,tri[0].Z),b=pr(tri[1].E,tri[1].N,tri[1].Z),c=pr(tri[2].E,tri[2].N,tri[2].Z);
+      if(sx<Math.min(a[0],b[0],c[0])||sx>Math.max(a[0],b[0],c[0])||sy<Math.min(a[1],b[1],c[1])||sy>Math.max(a[1],b[1],c[1]))return;
+      const d=(b[1]-c[1])*(a[0]-c[0])+(c[0]-b[0])*(a[1]-c[1]);if(Math.abs(d)<1e-9)return;
+      const l1=((b[1]-c[1])*(sx-c[0])+(c[0]-b[0])*(sy-c[1]))/d,l2=((c[1]-a[1])*(sx-c[0])+(a[0]-c[0])*(sy-c[1]))/d,l3=1-l1-l2;
+      if(l1<-1e-6||l2<-1e-6||l3<-1e-6)return;
+      const t=l1*a[2]+l2*b[2]+l3*c[2];
+      if(t>bt){bt=t;best={E:l1*tri[0].E+l2*tri[1].E+l3*tri[2].E,N:l1*tri[0].N+l2*tri[1].N+l3*tri[2].N,Z:l1*tri[0].Z+l2*tri[1].Z+l3*tri[2].Z,kind:'surface',name:s.name};}
+    });});
+  return best;
+}
+function pickOrbitPivot(sx,sy){
+  const pt=pick3D(sx,sy);if(pt)return{...pt,kind:'point'};
+  if(!pivotSnapOn)return null;
+  const pr=projector();
+  let best=null,bd=PIVOT_SNAP_PX;
+  const tryV=(p,kind)=>{if(!isFinite(p.E)||!isFinite(p.N))return;const z=isFinite(p.Z)?p.Z:0,q=pr(p.E,p.N,z),d=Math.hypot(q[0]-sx,q[1]-sy);
+    if(d<bd){bd=d;best={E:p.E,N:p.N,Z:z,kind};}};
+  ENTITIES.forEach(e=>{if(e.type==='point')return;const ly=LAYERS[e.layer];if(ly&&!ly.visible)return;e.pts.forEach(p=>tryV(p,e.type==='circle'?'circle center':'DXF vertex'));});
+  SURFACES.forEach(s=>{const ly=LAYERS[s.layer];if(ly&&!ly.visible)return;s.tris.forEach(tri=>tri.forEach(p=>tryV(p,'TIN vertex')));});
+  return best||surfaceHit3D(sx,sy,pr);
+}
+function describePivot(p){return `${p.kind} · E ${p.E.toFixed(3)} N ${p.N.toFixed(3)} Z ${p.Z.toFixed(3)}`;}
+function drawPivotMarkers(){
+  if(orbitDragging){const q=P3(orbit.cx,orbit.cy,orbit.cz);
+    ctx.strokeStyle='#ff5ea8';ctx.lineWidth=1.6;ctx.beginPath();ctx.arc(q[0],q[1],7,0,Math.PI*2);
+    ctx.moveTo(q[0]-12,q[1]);ctx.lineTo(q[0]+12,q[1]);ctx.moveTo(q[0],q[1]-12);ctx.lineTo(q[0],q[1]+12);ctx.stroke();}
+  else if(orbitHover){const q=P3(orbitHover.E,orbitHover.N,orbitHover.Z);
+    ctx.strokeStyle='#35c184';ctx.lineWidth=1.6;ctx.beginPath();
+    if(orbitHover.kind==='surface')ctx.arc(q[0],q[1],5,0,Math.PI*2);else ctx.rect(q[0]-5,q[1]-5,10,10);ctx.stroke();}
+}
+
+/* ---------- 🎨 surface shaders + ☀ light/shadow ----------
+   Fills every visible TIN triangle with a flat-shaded color: Lambert diffuse from a sun at
+   SHADE.sunAz/sunAlt (plus a fixed ambient term), with normals built from Z×orbit.ve so the
+   lighting matches the exaggerated relief you're looking at. Cast shadows march from each
+   triangle's centroid toward the sun over a max-height grid rasterized from the visible TINs.
+   Per-triangle colors are cached on the surface and rebuilt only when a setting changes;
+   in 3D the triangles are painter-sorted back-to-front every frame. */
+const SHADE={mode:'off',sunAz:315,sunAlt:45,shadows:false};
+const SHADE_AMBIENT=0.32,SHADOW_GRID=256;
+const HYPSO=[[46,125,50],[139,195,74],[255,241,118],[200,161,101],[141,110,99],[245,245,245]];
+const SLOPE_RAMP=[[46,204,113],[163,217,119],[241,196,15],[230,126,34],[231,76,60]];
+function rampColor(stops,t){t=Math.max(0,Math.min(1,t))*(stops.length-1);const i=Math.min(stops.length-2,Math.floor(t)),f=t-i,a=stops[i],b=stops[i+1];
+  return[a[0]+(b[0]-a[0])*f,a[1]+(b[1]-a[1])*f,a[2]+(b[2]-a[2])*f];}
+function hexRGB(h){const m=/^#?([0-9a-f]{6})$/i.exec(h||'');if(!m)return[255,184,107];const v=parseInt(m[1],16);return[v>>16&255,v>>8&255,v&255];}
+function hsvRGB(hh,sat,val){const i=Math.floor(hh*6),f=hh*6-i,p=val*(1-sat),q=val*(1-f*sat),t=val*(1-(1-f)*sat);
+  const r=[[val,t,p],[q,val,p],[p,val,t],[p,q,val],[t,p,val],[val,p,q]][((i%6)+6)%6];return[r[0]*255,r[1]*255,r[2]*255];}
+function sunVector(){const az=SHADE.sunAz*Math.PI/180,alt=SHADE.sunAlt*Math.PI/180;
+  return[Math.sin(az)*Math.cos(alt),Math.cos(az)*Math.cos(alt),Math.sin(alt)];}   // E,N,Z — azimuth clockwise from north
+function triUnitNormal(tri,ve){
+  const a=tri[0],b=tri[1],c=tri[2];
+  const ux=b.E-a.E,uy=b.N-a.N,uz=(b.Z-a.Z)*ve,vx=c.E-a.E,vy=c.N-a.N,vz=(c.Z-a.Z)*ve;
+  let nx=uy*vz-uz*vy,ny=uz*vx-ux*vz,nz=ux*vy-uy*vx;const L=Math.hypot(nx,ny,nz);if(!L)return null;
+  if(nz<0){nx=-nx;ny=-ny;nz=-nz;}return[nx/L,ny/L,nz/L];
+}
+// max-height grid over every visible TIN (exaggerated Z), for shadow ray-marching
+let shadowGridCache=null;
+function visibleSurfaceKey(){return SURFACES.map(s=>{const ly=LAYERS[s.layer];return s.name+(ly&&!ly.visible?'-':'+');}).join('|');}
+function shadowGrid(){
+  const key=visibleSurfaceKey();if(shadowGridCache&&shadowGridCache.key===key)return shadowGridCache;
+  let minE=Infinity,maxE=-Infinity,minN=Infinity,maxN=-Infinity;
+  const vis=SURFACES.filter(s=>{const ly=LAYERS[s.layer];return!(ly&&!ly.visible);});
+  vis.forEach(s=>s.tris.forEach(t=>t.forEach(p=>{minE=Math.min(minE,p.E);maxE=Math.max(maxE,p.E);minN=Math.min(minN,p.N);maxN=Math.max(maxN,p.N);})));
+  const G=SHADOW_GRID,span=Math.max(maxE-minE,maxN-minN)||1,cell=span/(G-1);
+  const H=new Float32Array(G*G).fill(-Infinity);
+  vis.forEach(s=>s.tris.forEach(tri=>{
+    const i0=Math.max(0,Math.floor((Math.min(tri[0].E,tri[1].E,tri[2].E)-minE)/cell)),i1=Math.min(G-1,Math.ceil((Math.max(tri[0].E,tri[1].E,tri[2].E)-minE)/cell));
+    const j0=Math.max(0,Math.floor((Math.min(tri[0].N,tri[1].N,tri[2].N)-minN)/cell)),j1=Math.min(G-1,Math.ceil((Math.max(tri[0].N,tri[1].N,tri[2].N)-minN)/cell));
+    for(let j=j0;j<=j1;j++)for(let i=i0;i<=i1;i++){const z=pointInTri(minE+i*cell,minN+j*cell,tri[0],tri[1],tri[2]);
+      if(z!=null&&z>H[j*G+i])H[j*G+i]=z;}
+    tri.forEach(p=>{const i=Math.round((p.E-minE)/cell),j=Math.round((p.N-minN)/cell);if(p.Z>H[j*G+i])H[j*G+i]=p.Z;});   // tiny slivers that miss every cell center still register
+  }));
+  return shadowGridCache={key,H,G,cell,minE,minN};
+}
+function inShadow(E,N,Z,sun,grid,ve,eps){
+  const{H,G,cell,minE,minN}=grid,hl=Math.hypot(sun[0],sun[1]);
+  if(hl<1e-6)return false;                                  // sun straight overhead — nothing casts
+  const dx=sun[0]/hl,dy=sun[1]/hl,rise=sun[2]/hl;          // Z gained per unit of horizontal travel
+  for(let d=cell*1.5;;d+=cell*0.75){
+    const i=Math.round((E+dx*d-minE)/cell),j=Math.round((N+dy*d-minN)/cell);
+    if(i<0||j<0||i>=G||j>=G)return false;
+    const hz=H[j*G+i];if(hz>-Infinity&&hz*ve>Z*ve+d*rise+eps)return true;
+  }
+}
+// per-triangle CSS colors for one surface under the current SHADE settings (cached)
+function surfaceShadeColors(s){
+  const key=[SHADE.mode,SHADE.sunAz,SHADE.sunAlt,SHADE.shadows,orbit.ve,SHADE.shadows?visibleSurfaceKey():'',LAYERS[s.layer]?.color].join(',');
+  if(s._shadeKey===key)return s._shadeCols;
+  const ve=orbit.ve,sun=sunVector(),{lo,hi}=surfaceZRange(s),zr=(hi-lo)||1;
+  let slo=Infinity,shi=-Infinity;
+  if(SHADE.mode==='slope')s.tris.forEach(t=>{const n=triUnitNormal(t,1);if(n){const g=Math.hypot(n[0],n[1])/n[2];slo=Math.min(slo,g);shi=Math.max(shi,g);}});
+  const grid=SHADE.shadows&&SHADE.mode!=='normal'&&SHADE.mode!=='aspect'?shadowGrid():null,eps=zr*ve*1e-3+1e-6;
+  const base=hexRGB(LAYERS[s.layer]?.color);
+  const cols=s.tris.map(tri=>{
+    const n=triUnitNormal(tri,ve);if(!n)return null;
+    if(SHADE.mode==='normal')return `rgb(${(n[0]*.5+.5)*255|0},${(n[1]*.5+.5)*255|0},${n[2]*255|0})`;
+    let rgb;
+    const zc=(tri[0].Z+tri[1].Z+tri[2].Z)/3;
+    if(SHADE.mode==='solid')rgb=base;
+    else if(SHADE.mode==='hillshade')rgb=[235,235,228];
+    else if(SHADE.mode==='elevation')rgb=rampColor(HYPSO,(zc-lo)/zr);
+    else if(SHADE.mode==='slope'){const n1=triUnitNormal(tri,1),g=n1?Math.hypot(n1[0],n1[1])/n1[2]:0;rgb=rampColor(SLOPE_RAMP,(g-slo)/((shi-slo)||1));}
+    else if(SHADE.mode==='aspect'){const flat=Math.hypot(n[0],n[1])<1e-4;
+      rgb=flat?[150,150,150]:hsvRGB(((Math.atan2(n[0],n[1])/(2*Math.PI))+1)%1,0.75,0.95);}   // downhill-facing direction, 0=north
+    let lit=Math.max(0,n[0]*sun[0]+n[1]*sun[1]+n[2]*sun[2]);
+    if(SHADE.mode==='aspect')lit=1-(1-lit)*0.35;           // keep the hue legible — just a hint of relief
+    else if(lit>0&&grid){const cE=(tri[0].E+tri[1].E+tri[2].E)/3,cN=(tri[0].N+tri[1].N+tri[2].N)/3;if(inShadow(cE,cN,zc,sun,grid,ve,eps))lit=0;}
+    const k=SHADE_AMBIENT+(1-SHADE_AMBIENT)*lit;
+    return `rgb(${rgb[0]*k|0},${rgb[1]*k|0},${rgb[2]*k|0})`;
+  });
+  s._shadeKey=key;s._shadeCols=cols;return cols;
+}
+function drawShadedSurfaces(proj,sort3D){
+  if(SHADE.mode==='off')return;
+  const items=[];
+  SURFACES.forEach(s=>{const ly=LAYERS[s.layer];if(ly&&!ly.visible)return;
+    const cols=surfaceShadeColors(s),alpha=ly&&ly.locked?0.5:1;
+    s.tris.forEach((tri,i)=>{if(cols[i])items.push({tri,col:cols[i],alpha});});});
+  if(!items.length)return;
+  const pr=sort3D?projector():null;
+  const pts=items.map(it=>it.tri.map(p=>pr?pr(p.E,p.N,p.Z):proj(p.E,p.N,p.Z)));
+  let order=items.map((_,i)=>i);
+  if(pr){const dep=pts.map(q=>q[0][2]+q[1][2]+q[2][2]);order.sort((a,b)=>dep[a]-dep[b]);}   // far → near
+  ctx.lineWidth=0.6;ctx.lineJoin='round';
+  order.forEach(i=>{const it=items[i],q=pts[i];
+    ctx.globalAlpha=it.alpha;ctx.fillStyle=ctx.strokeStyle=it.col;
+    ctx.beginPath();ctx.moveTo(q[0][0],q[0][1]);ctx.lineTo(q[1][0],q[1][1]);ctx.lineTo(q[2][0],q[2][1]);ctx.closePath();
+    ctx.fill();ctx.stroke();});                              // the matching stroke hides the anti-aliasing seams between neighbouring fills
+  ctx.globalAlpha=1;
+}
+function syncShadeUI(){
+  $('shaderSel3d').value=$('sdShader').value=SHADE.mode;
+  $('sunAz3d').value=$('sdSunAz').value=SHADE.sunAz;$('sunAzVal3d').textContent=SHADE.sunAz+'°';$('sdSunAzVal').textContent=SHADE.sunAz;
+  $('sunAlt3d').value=$('sdSunAlt').value=SHADE.sunAlt;$('sunAltVal3d').textContent=SHADE.sunAlt+'°';$('sdSunAltVal').textContent=SHADE.sunAlt;
+  $('shadowChk3d').checked=$('sdShadows').checked=SHADE.shadows;
+  $('veSlider').value=orbit.ve;$('veVal').textContent=(+orbit.ve).toFixed(1)+'×';
+}
 // A dark halo behind every label keeps it readable where two layers' geometry (or two
 // networks' manholes sitting at the same physical intersection) overlap — plain fillText
 // alone goes illegible the instant a label lands on top of another color/line.
@@ -517,6 +725,7 @@ function draw2D(){
   for(let E=Math.ceil(tl[0]/step)*step;E<br[0];E+=step){const[x]=W2S(E,0);ctx.moveTo(x,0);ctx.lineTo(x,h);}
   for(let N=Math.ceil(br[1]/step)*step;N<tl[1];N+=step){const[,y]=W2S(0,N);ctx.moveTo(0,y);ctx.lineTo(w,y);}
   ctx.stroke();
+  drawShadedSurfaces((E,N,Z)=>W2S(E,N),false);
   drawSlopeShading((E,N)=>W2S(E,N));
   // TIN surfaces — drawn as a wireframe of every triangle edge, per-layer visible/locked
   if(SURFACE_DISPLAY.wireframe)SURFACES.forEach(s=>{
@@ -568,6 +777,7 @@ function draw3D(){
   const w=cv.width/devicePixelRatio,h=cv.height/devicePixelRatio;
   ctx.clearRect(0,0,w,h);
   labelOccupied=[];
+  drawShadedSurfaces((E,N,Z)=>P3(E,N,Z),true);
   drawSlopeShading((E,N,Z)=>P3(E,N,Z));
   if(SURFACE_DISPLAY.wireframe)SURFACES.forEach(s=>{
     const ly=LAYERS[s.layer];if(ly&&!ly.visible)return;
@@ -603,6 +813,7 @@ function draw3D(){
     ctx.moveTo(s3[0]-8,s3[1]);ctx.lineTo(s3[0]+8,s3[1]);ctx.moveTo(s3[0],s3[1]-8);ctx.lineTo(s3[0],s3[1]+8);ctx.stroke();
     ctx.font='700 12px ui-monospace,monospace';
     drawLabel(`${spot.name}  Z=${spot.z.toFixed(3)}`,s3[0]+11,s3[1]-11,'#ffd24a');}
+  drawPivotMarkers();
 }
 
 /* ---------- Civil3D pipe networks (manholes/CBs + pipes) ---------- */
@@ -2151,6 +2362,18 @@ $('waterDumpBtn').onclick=()=>{
 };
 $('surfaceDisplayBtn').onclick=()=>{if($('surfaceDisplayBtn').disabled)return;$('surfaceDisplayPanel').classList.toggle('show');};
 $('surfaceDisplayCloseBtn').onclick=()=>$('surfaceDisplayPanel').classList.remove('show');
+const setShade=(k,v)=>{SHADE[k]=v;syncShadeUI();draw();};
+$('sdShader').onchange=()=>setShade('mode',$('sdShader').value);
+$('shaderSel3d').onchange=()=>setShade('mode',$('shaderSel3d').value);
+$('sdSunAz').oninput=()=>setShade('sunAz',+$('sdSunAz').value);
+$('sunAz3d').oninput=()=>setShade('sunAz',+$('sunAz3d').value);
+$('sdSunAlt').oninput=()=>setShade('sunAlt',+$('sdSunAlt').value);
+$('sunAlt3d').oninput=()=>setShade('sunAlt',+$('sunAlt3d').value);
+$('sdShadows').onchange=()=>setShade('shadows',$('sdShadows').checked);
+$('shadowChk3d').onchange=()=>setShade('shadows',$('shadowChk3d').checked);
+$('veSlider').oninput=()=>{orbit.ve=+$('veSlider').value;syncShadeUI();draw();};   // the pivot sits at Z=orbit.cz, so rescaling Z about it never moves it on screen
+$('veResetBtn').onclick=()=>{orbit.ve=1;syncShadeUI();draw();hud('vertical exaggeration reset to true scale (1×)');};
+$('pivotSnapChk').onchange=()=>{pivotSnapOn=$('pivotSnapChk').checked;orbitHover=null;draw();};
 $('sdWireframe').onchange=()=>{SURFACE_DISPLAY.wireframe=$('sdWireframe').checked;draw();};
 $('sdContours').onchange=()=>{SURFACE_DISPLAY.contours=$('sdContours').checked;draw();};
 $('sdContourInterval').onchange=()=>{
@@ -2193,6 +2416,7 @@ $('orbitBtn').onclick=()=>{
   is3D=!is3D;$('orbitBtn').classList.toggle('on',is3D);
   if(is3D&&profileOn){profileOn=false;$('profileBtn').classList.remove('on');$('profilePanel').classList.remove('show');}
   $('legend').style.display=is3D?'none':'';
+  $('view3dBox').classList.toggle('show',is3D);orbitHover=null;
   if(is3D){elevPick=false;$('elevBtn').classList.remove('on');snapOn=false;$('snapBtn').classList.remove('on');waterDumpOn=false;$('waterDumpBtn').classList.remove('on');}   // 🌊 Water Flow / a live 💧 dump keep running and rendering in 3D too — only the CLICK-driven tools (which need a screen->world inverse the oblique 3D projection doesn't have) get disarmed here
   cv.style.cursor=is3D?'grab':'crosshair';
   fit();hud(is3D?'3D orbit — drag to rotate (re-centers on click), shift-drag or middle-drag to pan, wheel to zoom · touch: one finger to orbit, two fingers to pinch-zoom/pan':'back to 2D plan view');
@@ -2208,7 +2432,7 @@ $('profileBtn').onclick=()=>{
   if($('profileBtn').disabled)return;
   profileOn=!profileOn;$('profileBtn').classList.toggle('on',profileOn);
   if(profileOn){
-    if(is3D){is3D=false;$('orbitBtn').classList.remove('on');}
+    if(is3D){is3D=false;$('orbitBtn').classList.remove('on');$('view3dBox').classList.remove('show');}
     elevPick=false;$('elevBtn').classList.remove('on');
     snapOn=false;$('snapBtn').classList.remove('on');
     waterDumpOn=false;$('waterDumpBtn').classList.remove('on');
@@ -2256,7 +2480,10 @@ cv.addEventListener('pointerdown',e=>{
     try{cv.setPointerCapture(e.pointerId);}catch(_){}return;
   }
   if(is3D){
-    if(!e.shiftKey)retargetOrbitPivot(sx,sy,pick3D(sx,sy));   // rotate around whatever's under the cursor, not a fixed far-off pivot — same fix FBK-Checker's own orbit view needed for a large, elongated site
+    if(!e.shiftKey){                                       // rotate around whatever's under the cursor, not a fixed far-off pivot — same fix FBK-Checker's own orbit view needed for a large, elongated site
+      const pv=pickOrbitPivot(sx,sy);retargetOrbitPivot(sx,sy,pv);
+      orbitDragging=true;orbitHover=null;hud(pv?`🎯 orbit pivot snapped to ${describePivot(pv)}`:'orbit pivot on the ground plane (nothing to snap to under the cursor)');
+    }
     drag={orbit:true,sx,sy,az:orbit.az,el:orbit.el,ox:orbit.ox,oy:orbit.oy,shift:e.shiftKey};
     try{cv.setPointerCapture(e.pointerId);}catch(_){}return;
   }
@@ -2298,6 +2525,12 @@ cv.addEventListener('pointermove',e=>{
     else{const[E,N]=S2W(sx,sy);hud(`free · E ${E.toFixed(3)} N ${N.toFixed(3)} · Esc to cancel`);}
     draw();return;
   }
+  if(is3D&&!drag&&e.pointerType!=='touch'&&pivotSnapOn){   // preview where an orbit drag started here would pivot
+    const now=performance.now();if(now-lastHoverPick<30)return;lastHoverPick=now;   // a dense TIN is a full vertex sweep per pick — cap it at ~30/s
+    const pv=pickOrbitPivot(sx,sy);
+    if(pv||orbitHover){orbitHover=pv;if(pv)hud(`🎯 pivot: ${describePivot(pv)}`);draw();}
+    return;
+  }
   if(!drag)return;
   if(drag.orbit){if(drag.shift){orbit.ox=drag.ox+(sx-drag.sx);orbit.oy=drag.oy+(sy-drag.sy);}
     else{orbit.az=drag.az+(sx-drag.sx)*0.008;orbit.el=Math.max(0.12,Math.min(1.55,drag.el-(sy-drag.sy)*0.006));}draw();return;}
@@ -2332,8 +2565,8 @@ function endTouchPointer(e){                                // shared by pointer
   }
   return false;
 }
-window.addEventListener('pointerup',e=>{if(endTouchPointer(e))return;drag=null;if(showMap&&!is3D)scheduleMapRefresh();});
-window.addEventListener('pointercancel',e=>{if(endTouchPointer(e))return;drag=null;});
+window.addEventListener('pointerup',e=>{if(orbitDragging){orbitDragging=false;if(is3D)draw();}if(endTouchPointer(e))return;drag=null;if(showMap&&!is3D)scheduleMapRefresh();});
+window.addEventListener('pointercancel',e=>{orbitDragging=false;if(endTouchPointer(e))return;drag=null;});
 cv.addEventListener('wheel',e=>{
   e.preventDefault();
   const r=cv.getBoundingClientRect(),sx=e.clientX-r.left,sy=e.clientY-r.top;
@@ -2355,7 +2588,7 @@ window.addEventListener('resize',resize);
 resize();
 
 /* ---------- version badge — bumped on every push, mirroring FBK-Checker's own fruit badge ---------- */
-const VERSION={animal:'🐨',name:'KOALA',build:16};
+const VERSION={animal:'🐨',name:'KOALA',build:17};
 function rotateAnimal(){const b=$('animalBadge');b.style.transform='rotate(360deg)';setTimeout(()=>{b.style.transform='rotate(0deg)';},200);}
 function showVersion(){const b=$('animalBadge');b.textContent=`${VERSION.animal} ${VERSION.name}`;
   b.title=`Build ${VERSION.build} · ${VERSION.name} — if this matches what Claude pushed, you're on the latest (no cache)`;}
