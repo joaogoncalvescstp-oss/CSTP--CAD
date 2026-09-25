@@ -65,7 +65,8 @@ canvas{display:block;width:100%;height:100%;background:var(--bg);cursor:crosshai
     <label class="btn file" title="Import LandXML — a TIN surface (Pnts/Faces), CgPoints (COGO/survey points), Civil3D pipe networks (Structs/Pipes: manholes, catch basins, storm/sanitary pipes), and horizontal Alignments (CoordGeom Line/Curve/Spiral) are all read from the same file, each landing on its own toggleable layer. Use ⛰ Elevation to read a TIN's Z, or 📍 Label Points to label an alignment's PC/PT/MID.">↥ Import LandXML (TIN / Pipes / Alignments)<input type="file" id="landxmlInput" accept=".xml,.landxml"></label>
     <label class="btn file" title="DWG is Autodesk's proprietary binary format — this viewer has no bundled DWG parser and can't read it directly. Selecting a .dwg here just explains that and tells you how to get the same data in another way.">↥ Import DWG<input type="file" id="dwgInput" accept=".dwg"></label>
     <button class="btn" id="fitBtn" disabled title="Frame everything currently loaded (F)">⊡ Fit</button>
-    <button class="btn" id="elevBtn" disabled title="Click a visible, unlocked TIN surface to read its interpolated elevation at that point (Esc cancels) — 2D only">⛰ Elevation</button>
+    <button class="btn" id="elevBtn" disabled title="Click a visible, unlocked TIN surface to save its interpolated elevation there — snaps to a nearby TIN vertex/wireframe edge, CAD line, or point first, when one's in range. Stays armed so you can save several spots in a row (Esc or click again to stop) — 2D only. View saved spots in 📐 Elevation Spots">⛰ Elevation</button>
+    <button class="btn" id="elevSpotsBtn" disabled title="View every saved ⛰ Elevation spot as a table (northing/easting/elevation, and what it snapped to) — with CSV export">📐 Elevation Spots</button>
     <button class="btn" id="waterBtn" disabled title="Animate droplets following each triangle's own steepest-descent direction across the visible TIN surface(s) — a stylized visual approximation, not a hydrology/runoff model. Renders on the real 3D terrain in ⟲ 3D orbit too, not just 2D plan">🌊 Water Flow</button>
     <button class="btn" id="waterDumpBtn" disabled title="Click a point on a visible TIN surface to dump a burst of water droplets there — they flow downhill the same steepest-descent way as 🌊 Water Flow, then fully decay (vanish, not respawn) 15 seconds after being dumped, wherever they've flowed to by then. Stays armed for repeat dumps; Esc cancels. Click-to-dump itself is 2D plan view only (no way to resolve a click to a 3D world position), but an already-dumped burst keeps flowing and renders correctly if you switch to ⟲ 3D">💧 Dump Water</button>
     <button class="btn" id="surfaceDisplayBtn" disabled title="Choose how a TIN surface is drawn — wireframe on/off, contour lines, slope arrows">🗻 Surface Display</button>
@@ -192,6 +193,17 @@ canvas{display:block;width:100%;height:100%;background:var(--bg);cursor:crosshai
         <table id="geomTable" style="width:100%;border-collapse:collapse;font-size:11px;white-space:nowrap"></table>
       </div>
     </div>
+    <div class="panel" id="elevSpotsPanel" style="width:480px">
+      <h4><span>Elevation Spots</span><button id="elevSpotsCloseBtn" title="Close">✕</button></h4>
+      <p class="note" style="margin-bottom:8px">Every ⛰ Elevation spot saved this session, in pick order. A spot picked near a TIN vertex, wireframe edge, CAD line, or point shows what it snapped to.</p>
+      <div style="display:flex;gap:8px;margin-bottom:8px">
+        <button class="btn gold" id="elevSpotsExportBtn" style="flex:1">⬇ Export CSV</button>
+        <button class="btn" id="elevSpotsClearBtn" style="flex:1">Clear all</button>
+      </div>
+      <div style="overflow:auto;max-height:min(55vh,420px)">
+        <table id="elevSpotsTable" style="width:100%;border-collapse:collapse;font-size:11px;white-space:nowrap"></table>
+      </div>
+    </div>
     <div class="panel" id="profilePanel">
       <h4><span>Profile View</span><button id="profileCloseBtn" title="Exit profile view">✕</button></h4>
       <p class="note" style="margin-bottom:8px">Station vs. elevation for one alignment. An alignment with an imported <code>&lt;Profile&gt;</code> shows its real design grade line and PVC/PVT/PVI/PVCC/PVRC/Hi/Lo; one without shows its horizontal geometry's own elevation instead, dashed, so it's never mistaken for an actual design profile.</p>
@@ -219,8 +231,8 @@ let PIPE_LABEL_SHOW={rim:true,depth:true,slope:true,diameter:true,invert:true}; 
 let ALIGNMENTS=[];                                          // imported LandXML horizontal alignments: {name,layer,elements:[{type:'line'|'curve'|'spiral',start,end,staStart,length,center?,radius?,rot?,a0?,a1?}]} — the only import source with real PC/PT/station data (a plain DXF line has no curve/chainage info at all)
 let GEOM_POINTS=[];                                          // last "📍 Label Points" result: [{type:'PC'|'PT'|'MID',E,N,Z,sta}], sta = station along the chosen reference alignment (null if it couldn't be projected)
 let GEOM_LABEL_SHOW={horizontal:true,spiral:true,vertical:true,reference:true,custom:true};   // which point-type categories currently draw (independent of what was computed)
-let elevPick=false;                                        // ⛰ Elevation tool armed, waiting for a canvas click
-let spot=null;                                             // {E,N,z,name} — last elevation-query result, drawn until cleared
+let elevPick=false;                                        // ⛰ Elevation tool armed — stays armed across multiple picks now, so several spots can be saved in a row
+let ELEV_SPOTS=[];                                         // every saved ⛰ Elevation pick: {E,N,z,name,snapLabel}, capped at 500 so a long session can't grow this unbounded
 let drag=null;                                             // {sx,sy,x0,y0} while panning
 
 /* ---------- touch/tablet gesture support ----------
@@ -761,12 +773,16 @@ function draw2D(){
   drawPipeNetworks((E,N)=>W2S(E,N),view.s);
   // 📍 labeled PC/PT/MID key geometry points
   drawGeomLabels((E,N)=>W2S(E,N));
-  // last elevation-query marker
-  if(spot){const[x,y]=W2S(spot.E,spot.N);
-    ctx.strokeStyle='#ffd24a';ctx.lineWidth=1.6;ctx.beginPath();
+  // every saved ⛰ Elevation spot — the most recent one drawn full-strength, older ones dimmed
+  ELEV_SPOTS.forEach((sp,i)=>{
+    const isLast=i===ELEV_SPOTS.length-1,[x,y]=W2S(sp.E,sp.N);
+    ctx.globalAlpha=isLast?1:0.55;
+    ctx.strokeStyle='#ffd24a';ctx.lineWidth=isLast?1.6:1.2;ctx.beginPath();
     ctx.moveTo(x-8,y);ctx.lineTo(x+8,y);ctx.moveTo(x,y-8);ctx.lineTo(x,y+8);ctx.stroke();
-    ctx.font='700 12px ui-monospace,monospace';
-    drawLabel(`${spot.name}  Z=${spot.z.toFixed(3)}`,x+11,y-11,'#ffd24a');}
+    ctx.font=(isLast?'700 12px':'600 10px')+' ui-monospace,monospace';
+    drawLabel(`${sp.name}  Z=${sp.z.toFixed(3)}`,x+11,y-11,'#ffd24a');
+  });
+  ctx.globalAlpha=1;
   drawMapError();
   drawSnapMarker();
 }
@@ -808,11 +824,15 @@ function draw3D(){
   drawPipeNetworks((E,N,Z)=>P3(E,N,Z),orbit.s);
   drawGeomLabels((E,N,Z)=>P3(E,N,Z));
   drawWaterParticles((E,N,Z)=>P3(E,N,Z),true);
-  if(spot){const s3=P3(spot.E,spot.N,spot.z);
-    ctx.strokeStyle='#ffd24a';ctx.lineWidth=1.6;ctx.beginPath();
+  ELEV_SPOTS.forEach((sp,i)=>{
+    const isLast=i===ELEV_SPOTS.length-1,s3=P3(sp.E,sp.N,sp.z);
+    ctx.globalAlpha=isLast?1:0.55;
+    ctx.strokeStyle='#ffd24a';ctx.lineWidth=isLast?1.6:1.2;ctx.beginPath();
     ctx.moveTo(s3[0]-8,s3[1]);ctx.lineTo(s3[0]+8,s3[1]);ctx.moveTo(s3[0],s3[1]-8);ctx.lineTo(s3[0],s3[1]+8);ctx.stroke();
-    ctx.font='700 12px ui-monospace,monospace';
-    drawLabel(`${spot.name}  Z=${spot.z.toFixed(3)}`,s3[0]+11,s3[1]-11,'#ffd24a');}
+    ctx.font=(isLast?'700 12px':'600 10px')+' ui-monospace,monospace';
+    drawLabel(`${sp.name}  Z=${sp.z.toFixed(3)}`,s3[0]+11,s3[1]-11,'#ffd24a');
+  });
+  ctx.globalAlpha=1;
   drawPivotMarkers();
 }
 
@@ -1397,6 +1417,24 @@ function geomTableCSV(){
   });
   return lines.join('\r\n');
 }
+/* ---------- 📐 saved ⛰ Elevation spots ---------- */
+function renderElevSpotsTable(){
+  const tbl=$('elevSpotsTable');
+  if(!ELEV_SPOTS.length){tbl.innerHTML='<tr><td class="note" style="padding:6px">no elevation spots saved yet — use ⛰ Elevation to pick some</td></tr>';return;}
+  const heads=['#','Northing','Easting','Elevation','Surface','Snapped to'];
+  let html='<thead><tr>'+heads.map(h=>`<th style="text-align:left;padding:3px 8px;border-bottom:1px solid var(--rule);position:sticky;top:0;background:var(--panel)">${h}</th>`).join('')+'</tr></thead><tbody>';
+  ELEV_SPOTS.forEach((sp,i)=>{
+    const cells=[i+1,sp.N.toFixed(3),sp.E.toFixed(3),sp.z.toFixed(3),sp.name,sp.snapLabel||'—'];
+    html+='<tr>'+cells.map(v=>`<td style="padding:3px 8px;border-bottom:1px solid var(--rule)">${v}</td>`).join('')+'</tr>';
+  });
+  tbl.innerHTML=html+'</tbody>';
+}
+function elevSpotsCSV(){
+  const heads=['#','Northing','Easting','Elevation','Surface','Snapped to'];
+  const lines=[heads.join(',')];
+  ELEV_SPOTS.forEach((sp,i)=>lines.push([i+1,sp.N.toFixed(3),sp.E.toFixed(3),sp.z.toFixed(3),sp.name,sp.snapLabel||''].map(geomCSVField).join(',')));
+  return lines.join('\r\n');
+}
 
 /* ---------- aerial MAP background (ported from FBK-Checker) ---------- */
 function viewportBounds(){const w=cv.width/devicePixelRatio,h=cv.height/devicePixelRatio;
@@ -1469,6 +1507,13 @@ function drawMapBackground(){if(!showMap||is3D||!mapTiles.length)return;ctx.save
 
 /* ---------- CAD object snap (ported from FBK-Checker) ---------- */
 function collectSegments(){const segs=[];
+  SURFACES.forEach(s=>{
+    const ly=LAYERS[s.layer];if(ly&&!ly.visible)return;
+    s.tris.forEach((tri,ti)=>{for(let k=0;k<3;k++){
+      const A=tri[k],B=tri[(k+1)%3],sa=W2S(A.E,A.N),sb=W2S(B.E,B.N);
+      segs.push({ax:sa[0],ay:sa[1],bx:sb[0],by:sb[1],aE:A.E,aN:A.N,aZ:A.Z,bE:B.E,bN:B.N,bZ:B.Z,label:s.layer,src:'tin|'+s.layer+'|'+ti});
+    }});
+  });
   ENTITIES.forEach(e=>{
     const ly=LAYERS[e.layer];if(ly&&!ly.visible)return;
     if(e.type!=='line'&&e.type!=='poly')return;
@@ -1506,6 +1551,9 @@ function snapPoint(sx,sy){
   let best=null;
   if(snapEnabled.endpoint){
     let bd=TOL_PT;
+    SURFACES.forEach(s=>{const ly=LAYERS[s.layer];if(ly&&!ly.visible)return;
+      s.tris.forEach(tri=>tri.forEach(p=>{const[x,y]=W2S(p.E,p.N);const d=Math.hypot(x-sx,y-sy);
+        if(d<bd){bd=d;best={E:p.E,N:p.N,Z:p.Z,sx:x,sy:y,type:'endpoint',label:'TIN vertex · '+s.layer};}}));});
     ENTITIES.forEach(e=>{const ly=LAYERS[e.layer];if(ly&&!ly.visible||e.type==='circle')return;   // a circle's own center is handled below (type:'center'), not as a plain endpoint
       e.pts.forEach(p=>{const[x,y]=W2S(p.E,p.N);const d=Math.hypot(x-sx,y-sy);
         if(d<bd){bd=d;best={E:p.E,N:p.N,Z:p.Z,sx:x,sy:y,type:'endpoint',label:'endpoint · '+e.layer};}});});
@@ -1550,7 +1598,7 @@ function snapPoint(sx,sy){
     if(d<bnd){bnd=d;const[E,N]=S2W(x,y);best={E,N,Z:s.aZ+t*(s.bZ-s.aZ),sx:x,sy:y,type:'nearest',label:'nearest'};}});
   return best;}
 function drawSnapMarker(){
-  const s=snapOn?liveSnap:null;if(!s)return;const x=s.sx,y=s.sy,r=7;ctx.save();
+  const s=(snapOn||elevPick)?liveSnap:null;if(!s)return;const x=s.sx,y=s.sy,r=7;ctx.save();
   ctx.lineWidth=2;ctx.strokeStyle='#35c184';ctx.fillStyle='rgba(53,193,132,.18)';
   if(s.type==='endpoint'){ctx.fillRect(x-r,y-r,2*r,2*r);ctx.strokeRect(x-r,y-r,2*r,2*r);}
   else if(s.type==='intersection'){ctx.beginPath();ctx.arc(x,y,r,0,7);ctx.fill();ctx.stroke();}
@@ -1562,7 +1610,7 @@ function drawSnapMarker(){
   ctx.restore();}
 function syncSnapBox(){
   const box=$('snapBox');if(!box)return;
-  box.classList.toggle('show',snapOn&&!is3D);
+  box.classList.toggle('show',(snapOn||elevPick)&&!is3D);
   const active=liveSnap&&(liveSnap.type==='center'||liveSnap.type==='quadrant'?'endpoint':liveSnap.type);
   ['snEndpoint','snIntersection','snMidpoint','snNearest'].forEach(id=>{
     const key=id.slice(2).toLowerCase();
@@ -2141,7 +2189,7 @@ function importDXF(text){
   }
   if(!nEnt){hud('no recognized entities found (LINE / LWPOLYLINE / POLYLINE / POINT / CIRCLE / 3DFACE)');return;}
   renderLayerPanel();updateJobPill();
-  $('fitBtn').disabled=false;$('elevBtn').disabled=SURFACES.length===0;$('waterBtn').disabled=SURFACES.length===0;$('waterDumpBtn').disabled=SURFACES.length===0;$('surfaceDisplayBtn').disabled=SURFACES.length===0;
+  $('fitBtn').disabled=false;$('elevBtn').disabled=SURFACES.length===0;$('waterBtn').disabled=SURFACES.length===0;$('waterDumpBtn').disabled=SURFACES.length===0;$('surfaceDisplayBtn').disabled=SURFACES.length===0;$('elevSpotsBtn').disabled=SURFACES.length===0;
   $('orbitBtn').disabled=false;$('snapBtn').disabled=false;
   if(hadNothing)fit();else draw();
   hud(`imported ${nEnt} DXF entit${nEnt===1?'y':'ies'} across ${Object.keys(LAYERS).length} layer(s)`);
@@ -2234,7 +2282,7 @@ function importLandXML(text){
   const{nAlign,nCurve,nProfile}=importAlignments(doc);
   if(!nSurf&&!nPts&&!nNet&&!nAlign){hud('no <Surface> (TIN), <CgPoint>, <PipeNetwork>, or <Alignment> data found in this file');return;}
   renderLayerPanel();updateJobPill();
-  $('fitBtn').disabled=false;$('elevBtn').disabled=SURFACES.length===0;$('waterBtn').disabled=SURFACES.length===0;$('waterDumpBtn').disabled=SURFACES.length===0;$('surfaceDisplayBtn').disabled=SURFACES.length===0;
+  $('fitBtn').disabled=false;$('elevBtn').disabled=SURFACES.length===0;$('waterBtn').disabled=SURFACES.length===0;$('waterDumpBtn').disabled=SURFACES.length===0;$('surfaceDisplayBtn').disabled=SURFACES.length===0;$('elevSpotsBtn').disabled=SURFACES.length===0;
   $('orbitBtn').disabled=false;$('snapBtn').disabled=false;
   $('geomLabelsBtn').disabled=ALIGNMENTS.length===0;
   $('profileBtn').disabled=ALIGNMENTS.length===0;
@@ -2314,6 +2362,16 @@ $('geomTableExportBtn').onclick=()=>{
   const a=document.createElement('a');a.href=url;a.download='geometry-points.csv';a.click();
   setTimeout(()=>URL.revokeObjectURL(url),1000);
 };
+$('elevSpotsBtn').onclick=()=>{if($('elevSpotsBtn').disabled)return;renderElevSpotsTable();$('elevSpotsPanel').classList.toggle('show');};
+$('elevSpotsCloseBtn').onclick=()=>$('elevSpotsPanel').classList.remove('show');
+$('elevSpotsClearBtn').onclick=()=>{ELEV_SPOTS=[];renderElevSpotsTable();draw();};
+$('elevSpotsExportBtn').onclick=()=>{
+  if(!ELEV_SPOTS.length)return;
+  const blob=new Blob([elevSpotsCSV()],{type:'text/csv'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');a.href=url;a.download='elevation-spots.csv';a.click();
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+};
 const GEOM_CATEGORY_IDS=['glHoriz','glSpiral','glVert','glRef','glCustom'];
 function syncGeomAll(){$('glAll').checked=GEOM_CATEGORY_IDS.every(id=>$(id).checked);}
 [['glHoriz','horizontal'],['glSpiral','spiral'],['glVert','vertical'],['glRef','reference'],['glCustom','custom']].forEach(([id,key])=>{
@@ -2342,7 +2400,7 @@ $('elevBtn').onclick=()=>{
   if(is3D){hud('Elevation query is 2D only — press O or ⟲ 3D to switch back first');return;}
   if(profileOn){hud('Elevation query is plan-view only — press P or 📈 Profile to switch back first');return;}
   elevPick=!elevPick;$('elevBtn').classList.toggle('on',elevPick);
-  hud(elevPick?'click a visible, unlocked TIN surface to read its elevation there · Esc to cancel':'elevation query cancelled');
+  hud(elevPick?'click a visible, unlocked TIN surface to save its elevation there (snaps to nearby TIN vertices/wireframe, CAD lines/points first) — click again to save more spots, Esc or ⛰ Elevation to stop':'elevation picking stopped');
 };
 $('waterBtn').onclick=()=>{
   if($('waterBtn').disabled)return;
@@ -2488,10 +2546,23 @@ cv.addEventListener('pointerdown',e=>{
     try{cv.setPointerCapture(e.pointerId);}catch(_){}return;
   }
   if(elevPick){
-    elevPick=false;$('elevBtn').classList.remove('on');
-    const[E,N]=S2W(sx,sy);const hit=tinElevationAt(E,N);
-    if(hit){spot={E,N,z:hit.z,name:hit.name};hud(`${hit.name}: elevation ${hit.z.toFixed(3)}`);}
-    else{spot=null;hud('no visible, unlocked TIN surface under that click');}
+    // stays armed after the click, so several spots can be saved in a row without re-toggling
+    // the tool each time — Esc or clicking ⛰ Elevation again is what actually stops it.
+    // Snaps to nearby TIN wireframe/vertices, DXF lines/points, and pipe geometry first (via
+    // the same engine 🧲 Snap uses), falling back to the raw click position when nothing's
+    // in range — so a saved spot can be pinned to an exact break-line vertex, not just an
+    // interpolated nearby guess.
+    const snapped=snapPoint(sx,sy);
+    const[E,N]=snapped?[snapped.E,snapped.N]:S2W(sx,sy);
+    const hit=tinElevationAt(E,N);
+    if(hit){
+      ELEV_SPOTS.push({E,N,z:hit.z,name:hit.name,snapLabel:snapped?snapped.label:null});
+      if(ELEV_SPOTS.length>500)ELEV_SPOTS.shift();   // cap so a long session can't grow this unbounded
+      if($('elevSpotsPanel').classList.contains('show'))renderElevSpotsTable();
+      hud(`saved ${ELEV_SPOTS.length} spot(s) — ${hit.name}: elevation ${hit.z.toFixed(3)}${snapped?' (snapped to '+snapped.label+')':''} · click to save another, Esc to stop`);
+    }else{
+      hud('no visible, unlocked TIN surface under that click — click elsewhere, or Esc to stop');
+    }
     draw();return;
   }
   if(waterDumpOn){                                         // stays armed — click again to dump another burst elsewhere
@@ -2519,10 +2590,11 @@ cv.addEventListener('pointermove',e=>{
       draw();return;
     }
   }
-  if(snapOn&&!is3D&&!drag){
+  if((snapOn||elevPick)&&!is3D&&!drag){
     liveSnap=snapPoint(sx,sy);
-    if(liveSnap)hud(`${liveSnap.label} · E ${liveSnap.E.toFixed(3)} N ${liveSnap.N.toFixed(3)}${isFinite(liveSnap.Z)?' Z '+liveSnap.Z.toFixed(3):''}`);
-    else{const[E,N]=S2W(sx,sy);hud(`free · E ${E.toFixed(3)} N ${N.toFixed(3)} · Esc to cancel`);}
+    const suffix=elevPick?' · click to save an elevation spot there':' · Esc to cancel';
+    if(liveSnap)hud(`${liveSnap.label} · E ${liveSnap.E.toFixed(3)} N ${liveSnap.N.toFixed(3)}${isFinite(liveSnap.Z)?' Z '+liveSnap.Z.toFixed(3):''}${suffix}`);
+    else{const[E,N]=S2W(sx,sy);hud(`free · E ${E.toFixed(3)} N ${N.toFixed(3)}${suffix}`);}
     draw();return;
   }
   if(is3D&&!drag&&e.pointerType!=='touch'&&pivotSnapOn){   // preview where an orbit drag started here would pivot
@@ -2576,7 +2648,7 @@ cv.addEventListener('wheel',e=>{
 },{passive:false});
 window.addEventListener('keydown',e=>{
   if(e.key==='Escape'){
-    if(elevPick){elevPick=false;$('elevBtn').classList.remove('on');hud('elevation query cancelled');draw();}
+    if(elevPick){elevPick=false;$('elevBtn').classList.remove('on');hud('elevation picking stopped');draw();}
     else if(waterDumpOn){waterDumpOn=false;$('waterDumpBtn').classList.remove('on');hud('dump water cancelled');draw();}
     else if(snapOn){snapOn=false;$('snapBtn').classList.remove('on');liveSnap=null;hud('snap cancelled');draw();}
   }
@@ -2588,7 +2660,7 @@ window.addEventListener('resize',resize);
 resize();
 
 /* ---------- version badge — bumped on every push, mirroring FBK-Checker's own fruit badge ---------- */
-const VERSION={animal:'🐨',name:'KOALA',build:17};
+const VERSION={animal:'🐨',name:'KOALA',build:18};
 function rotateAnimal(){const b=$('animalBadge');b.style.transform='rotate(360deg)';setTimeout(()=>{b.style.transform='rotate(0deg)';},200);}
 function showVersion(){const b=$('animalBadge');b.textContent=`${VERSION.animal} ${VERSION.name}`;
   b.title=`Build ${VERSION.build} · ${VERSION.name} — if this matches what Claude pushed, you're on the latest (no cache)`;}

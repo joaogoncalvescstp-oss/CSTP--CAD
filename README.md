@@ -13,10 +13,22 @@ dependencies, and nothing to install.
   `Faces`) as a triangulated surface layer, and any `<CgPoint>` records as
   plotted survey/COGO points. Multiple imports layer onto whatever's already
   loaded — you can bring in a DXF and a TIN together.
-- **⛰ Elevation** — click a visible, unlocked TIN surface to read its
+- **⛰ Elevation** — click a visible, unlocked TIN surface to save its
   interpolated elevation at that exact point (barycentric interpolation
-  across whichever triangle you clicked). This is the actual payoff of
-  importing a surface model: getting a spot elevation off it without CAD.
+  across whichever triangle you clicked) — the actual payoff of importing a
+  surface model: getting a spot elevation off it without CAD. The tool
+  stays armed after each click, so a whole series of spots can be picked
+  in one go instead of re-toggling the button every time; **📐 Elevation
+  Spots** lists every spot saved this session (with CSV export), the most
+  recently-picked one drawn full-strength on the canvas and earlier ones
+  dimmed so the running history stays visible without crowding out the
+  current pick. Picking now also **snaps first** — to the nearest TIN
+  wireframe vertex or edge, DXF line/point, or pipe network structure, via
+  the same engine 🧲 Snap already uses — so a spot lands exactly on a real
+  break-line vertex instead of an approximate nearby guess, falling back to
+  the raw click position when nothing snappable is in range. (🧲 Snap
+  itself also gained TIN vertices/wireframe edges as snap targets from this
+  same change, so it isn't only an elevation-picking benefit.)
 - **🌊 Water Flow** animates droplets across every visible TIN surface,
   following real plane geometry rather than a stylistic guess: each droplet
   repeatedly looks up which triangle it's currently inside and moves along
@@ -263,6 +275,17 @@ dependencies, and nothing to install.
   exaggeration) — 2D plan-view-only tools (⛰ Elevation, 🧲 Snap, 🗺 Map) are
   unavailable while in profile view, same as in 3D orbit.
 - Pan by dragging, zoom with the mouse wheel (zooms toward the cursor).
+- **Touch gestures** (phone/tablet) — the common navigation set works the
+  same way in 2D plan, 3D orbit, and profile view: pinch with two fingers to
+  zoom (about the pinch midpoint, matching the mouse wheel's zoom-toward-cursor
+  behavior), drag with two fingers to pan without zooming, and double-tap to
+  ⊡ Fit (zoom to extents). In 3D orbit specifically, a single finger rotates
+  (same as a mouse drag) while two fingers pan, mirroring the desktop's
+  drag-to-rotate / shift-drag-to-pan split without needing a modifier key.
+  Lifting one finger mid-pinch smoothly hands off to single-finger
+  panning/rotating with the finger that's still down, rather than stopping
+  the gesture dead. `touch-action:none` on the canvas hands all of this to
+  the app instead of the browser's own native pinch-zoom/scroll.
 
 ## 3D orbit view, aerial MAP background, and CAD object snap
 
@@ -759,6 +782,33 @@ lifecycle, gentle-slope gravity, 3D rendering, DXF/LandXML/pipe-network
 import, elevation query, 3D orbit, snap, aerial map) — all pass unchanged,
 zero new console errors. `index.html`'s inline script still parses clean
 (`node --check`).
+
+A fifteenth pass (merged in from a parallel branch) verified saved elevation spots and TIN-aware snapping end-to-end
+against the known ramp surface. `collectSegments()` was confirmed to emit
+exactly 6 TIN wireframe edge segments (2 triangles × 3 edges each), and
+`snapPoint()` correctly resolved a click a few pixels off a true TIN vertex
+to its exact coordinates `(E0, N0, Z10)`, and a click near an edge's midpoint
+to the exact midpoint `(E5, N0)`. Arming ⛰ Elevation and clicking twice
+confirmed the tool now stays armed — the spot count grew from 0 to 1 to 2
+rather than overwriting a single slot — with the first, snapped pick landing
+exactly on the true vertex `(0, 0, 10)` and recording `"TIN vertex"` as what
+it snapped to; the snap-options box was also confirmed visible while
+elevation picking is armed even though 🧲 Snap itself is off, since both
+tools now share the same underlying snap engine. Toggling the tool off
+correctly stopped picking. **📐 Elevation Spots** opened to a 2-row table
+matching the 2 saved picks, and its CSV export produced a header plus
+exactly 2 data rows, with a "Snapped to" column present; Clear all correctly
+emptied the saved list back to 0. The 500-spot cap was exercised directly by
+pushing 501 entries and confirming exactly 500 remained, with the oldest
+entry dropped and the newest kept. Finally, the general 🧲 Snap tool (with
+elevation picking off) was confirmed to independently find the same TIN
+vertex, proving the wireframe-snap addition benefits both tools rather than
+being elevation-specific. A companion screenshot test drove 4 sequential
+real picks at deliberately offset click positions and confirmed each landed
+exactly on its intended target — `(E0,N0,Z10)`, `(E10,N0,Z0)`, the edge
+midpoint `(E5,N5,Z5)`, and `(E10,N10,Z0)` — with the table listing all 4 in
+order, each with the correct snap label, and the canvas showing the most
+recent pick at full strength with earlier ones dimmed.
 
 Both parsers, the layer visibility/lock toggles, the elevation-query tool
 (including its lock-exclusion behavior), and zoom-to-layer were exercised
