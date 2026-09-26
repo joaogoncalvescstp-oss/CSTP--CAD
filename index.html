@@ -1389,10 +1389,13 @@ function importAlignments(doc){
 function renderGeomLabelSelects(){
   const refSel=$('geomRefSel');
   const prevRef=refSel.value;
+  // "none" = don't re-station anything: every alignment point keeps the station its own
+  // LandXML defines (a plain line/layer has none, so its MIDs show no station)
   refSel.innerHTML=ALIGNMENTS.length
-    ?ALIGNMENTS.map(a=>`<option value="align:${a.name}">${a.name}</option>`).join('')
+    ?'<option value="none">None — each alignment\'s own XML stationing</option>'+ALIGNMENTS.map(a=>`<option value="align:${a.name}">${a.name}</option>`).join('')
     :'<option value="">— import a LandXML file with an Alignment first —</option>';
   if(prevRef&&[...refSel.options].some(o=>o.value===prevRef))refSel.value=prevRef;
+  else if(ALIGNMENTS.length)refSel.value='align:'+ALIGNMENTS[0].name;
 
   // target is a checklist (not a single <select>) so several alignments/lines can be
   // labeled together in one pass — e.g. a mainline plus every side street off it.
@@ -2580,9 +2583,10 @@ $('pipeLabelCloseBtn').onclick=()=>$('pipeLabelPanel').classList.remove('show');
 $('geomLabelsBtn').onclick=()=>{if($('geomLabelsBtn').disabled)return;renderGeomLabelSelects();$('geomLabelPanel').classList.toggle('show');};
 $('geomLabelCloseBtn').onclick=()=>$('geomLabelPanel').classList.remove('show');
 $('geomApplyBtn').onclick=()=>{
-  const ref=ALIGNMENTS.find(a=>a.name===($('geomRefSel').value||'').slice(6));
+  const refVal=$('geomRefSel').value||'',noRef=refVal==='none';
+  const ref=noRef?null:ALIGNMENTS.find(a=>a.name===refVal.slice(6));
   const targets=Array.from(document.querySelectorAll('#geomTargetList input.geomTgt:checked')).map(c=>resolveTargetRef(c.value)).filter(Boolean);
-  if(!ref||!targets.length){$('geomLabelStatus').textContent='pick a reference alignment and at least one target first.';return;}
+  if((!ref&&!noRef)||!targets.length){$('geomLabelStatus').textContent='pick a reference alignment (or None) and at least one target first.';return;}
   const extraStations=parseStationList($('geomStationInput').value);
   let raw=[];
   targets.forEach(target=>{
@@ -2591,12 +2595,12 @@ $('geomApplyBtn').onclick=()=>{
     pts.forEach(p=>p.target=targetName);
     raw=raw.concat(pts);
   });
-  GEOM_POINTS=raw.map(p=>GEOM_REPROJECT.has(p.type)?{...p,sta:projectStation(ref,p.E,p.N)}:p);
+  GEOM_POINTS=noRef?raw:raw.map(p=>GEOM_REPROJECT.has(p.type)?{...p,sta:projectStation(ref,p.E,p.N)}:p);
   const targetNames=targets.map(t=>t.kind==='alignment'?t.obj.name:t.name).join(', ');
   const counts={};GEOM_POINTS.forEach(p=>{counts[p.type]=(counts[p.type]||0)+1;});
   const summary=Object.keys(counts).sort().map(t=>`${counts[t]} ${t}`).join(', ')||'none';
-  let msg=`labeled ${GEOM_POINTS.length} point(s) on ${targets.length} target(s) [${targetNames}] — ${summary} — stationed along "${ref.name}"`;
-  if(targets.some(t=>t.kind==='layer'))msg+=' (plain line/layer target(s) have no curve/profile data — only MID computed there)';
+  let msg=`labeled ${GEOM_POINTS.length} point(s) on ${targets.length} target(s) [${targetNames}] — ${summary} — ${noRef?'original stationing from each alignment\'s own XML (no reference)':`stationed along "${ref.name}"`}`;
+  if(targets.some(t=>t.kind==='layer'))msg+=noRef?' (plain line/layer target(s) have no stationing of their own — their MIDs show no station without a reference)':' (plain line/layer target(s) have no curve/profile data — only MID computed there)';
   $('geomLabelStatus').textContent=msg;hud(msg);
   $('geomTableBtn').disabled=GEOM_POINTS.length===0;
   renderGeomTable();
@@ -2954,7 +2958,7 @@ window.addEventListener('resize',resize);
 resize();
 
 /* ---------- version badge — CHANGED ON EVERY PUSH (new animal + name + build+1; see CLAUDE.md), mirroring FBK-Checker's own fruit badge ---------- */
-const VERSION={animal:'🐢',name:'TURTLE',build:22};
+const VERSION={animal:'🐙',name:'OCTOPUS',build:23};
 function rotateAnimal(){const b=$('animalBadge');b.style.transform='rotate(360deg)';setTimeout(()=>{b.style.transform='rotate(0deg)';},200);}
 function showVersion(){const b=$('animalBadge');b.textContent=`${VERSION.animal} ${VERSION.name} · b${VERSION.build}`;
   b.title=`Build ${VERSION.build} · ${VERSION.name} — if this matches what Claude pushed, you're on the latest (no cache)`;}
