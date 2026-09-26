@@ -138,6 +138,8 @@ canvas{display:block;width:100%;height:100%;background:var(--bg);cursor:crosshai
       <div class="row"><label title="Drops that reach a catch basin disappear (captured)"><input type="checkbox" id="cbOnChk"> 🕳 Catch basins</label><span id="cbInfo" style="font-size:10px">off</span></div>
       <div class="row" style="gap:4px"><button id="cbPlaceBtn" style="flex:2" title="Click on the drawing to place a catch basin; click one to remove it">📍 Place basins</button><button id="cbClearBtn" style="flex:1">Clear</button></div>
       <label title="Treat every imported Civil3D manhole / catch basin structure as an inlet too"><input type="checkbox" id="cbStructChk"> Use imported manholes / CBs as inlets</label>
+      <label title="Water caught by an imported structure travels down its outgoing pipes, structure to structure, until it reaches the outfall"><input type="checkbox" id="pipeFlowChk"> 🚰 Route captured water through pipes</label>
+      <span id="pipeFlowInfo" style="font-size:10px;display:none"></span>
       <div class="row"><span>Capture radius <b id="cbRadiusVal">3</b> units</span></div>
       <input type="range" id="cbRadius" min="0.5" max="50" step="0.5" value="3">
     </div>
@@ -796,6 +798,7 @@ function draw2D(){
   drawSlopeArrows((E,N)=>W2S(E,N));
   drawRainArea((E,N)=>W2S(E,N),false);
   drawWaterParticles((E,N)=>W2S(E,N),false);
+  drawPipeDrops((E,N)=>W2S(E,N),false);
   drawCatchBasins((E,N)=>W2S(E,N),false,view.s);
   // DXF entities
   ENTITIES.forEach(e=>{
@@ -873,6 +876,7 @@ function draw3D(){
   drawGeomLabels((E,N,Z)=>P3(E,N,Z));
   drawRainArea((E,N,Z)=>P3(E,N,Z),true);
   drawWaterParticles((E,N,Z)=>P3(E,N,Z),true);
+  drawPipeDrops((E,N,Z)=>P3(E,N,Z),true);
   drawCatchBasins((E,N,Z)=>P3(E,N,Z),true,orbit.s);
   ELEV_SPOTS.forEach((sp,i)=>{
     const isLast=i===ELEV_SPOTS.length-1,s3=P3(sp.E,sp.N,sp.z);
@@ -2143,7 +2147,7 @@ function waterBasins(){
   const out=WATER_CB.list.slice();
   if(WATER_CB.useStructs)PIPE_NETWORKS.forEach(net=>{const ly=LAYERS[net.layer];if(ly&&!ly.visible)return;
     net.structs.forEach(st=>{if(st.dummy)return;
-      if(!st._cb)st._cb={E:st.E,N:st.N,Z:st.rim,name:st.name.replace(/\s*\([^)]*\)\s*$/,''),count:0,struct:true};
+      if(!st._cb)st._cb={E:st.E,N:st.N,Z:st.rim,name:st.name.replace(/\s*\([^)]*\)\s*$/,''),count:0,struct:st};
       out.push(st._cb);});});
   return out;
 }
@@ -2176,6 +2180,8 @@ function updateBasinUI(){
   $('cbInfo').textContent=WATER_CB.on?`${basins.length} inlet(s) · ${WATER_CB.captured} drops caught`:'off';
   $('cbPlaceBtn').classList.toggle('on',basinPlaceOn);$('cbRadiusVal').textContent=WATER_CB.radius;
   $('speedLegend').style.display=WATER_CB.speedColors?'flex':'none';
+  $('pipeFlowInfo').style.display=PIPE_FLOW.on?'':'none';
+  $('pipeFlowInfo').textContent=`in pipes now: ${PIPE_FLOW.drops.length} · reached outfall: ${PIPE_FLOW.outfall}`;
 }
 function setBasinPlace(on){
   basinPlaceOn=on;liveSnap=null;
@@ -2199,6 +2205,84 @@ function basinClick(sx,sy){
     hud(`placed CB${n} at E ${E.toFixed(3)} N ${N.toFixed(3)}${s?' (snapped to '+s.label+')':''} — drops within ${WATER_CB.radius} units disappear there`);
   }
   updateBasinUI();draw();
+}
+/* ---------- 🚰 pipe flow: captured water travels through the pipe network ----------
+   A drop caught by an imported structure (🕳 with "use imported manholes / CBs") becomes a
+   pipe drop: it runs along that structure's outgoing pipe to the next structure, and on down
+   the network until it reaches one with no outgoing pipe (the outfall), where it leaves the
+   system and is counted. Each pipe's flow direction comes from its inverts (higher → lower);
+   a pipe with no invert data falls back to rim elevations, then to its own start → end.
+   Speed grows with the pipe's grade. In 3D a pipe drop rides the pipe's invert line, so it
+   visibly travels underground. */
+const PIPE_FLOW={on:false,drops:[],outfall:0,maxDrops:4000};
+let pipeGraphCache=null;                                    // Map struct -> [{pipe,net,from,to,z0,z1,len,grade}]
+function pipeGraph(){
+  if(pipeGraphCache&&pipeGraphCache.n===PIPE_NETWORKS.length)return pipeGraphCache.map;
+  const map=new Map();
+  PIPE_NETWORKS.forEach(net=>net.pipes.forEach(pipe=>{
+    const a=net.structByName[pipe.startName],b=net.structByName[pipe.endName];if(!a||!b)return;
+    // each end's invert for THIS pipe, whatever its flowDir label says — the elevations decide direction
+    const invAt=st=>{const iv=st.inverts.filter(v=>v.pipe===pipe.name);return iv.length?Math.min(...iv.map(v=>v.elev)):null;};
+    const ia=invAt(a),ib=invAt(b);
+    let from=a,to=b,z0=ia,z1=ib;
+    const flip=(ia!=null&&ib!=null)?ib>ia:(a.rim!=null&&b.rim!=null&&b.rim>a.rim);
+    if(flip){from=b;to=a;z0=ib;z1=ia;}
+    const len=Math.hypot(to.E-from.E,to.N-from.N)||1;
+    // no invert on one end → estimate it a little below that structure's rim, so 3D still draws the pipe underground
+    const zf=z0!=null?z0:(from.rim!=null?from.rim-4:0),zt=z1!=null?z1:(to.rim!=null?to.rim-4:zf);
+    const grade=Math.abs(zf-zt)/len;
+    if(!map.has(from))map.set(from,[]);
+    map.get(from).push({pipe,net,from,to,z0:zf,z1:zt,len,grade});
+  }));
+  pipeGraphCache={n:PIPE_NETWORKS.length,map};
+  return map;
+}
+function pipeDropSpeed(edge){return Math.max(12,Math.min(70,15+edge.grade*600));}   // world units/s — steeper pipe, faster water
+function sendIntoPipe(drop,struct){
+  const outs=pipeGraph().get(struct)||[];
+  if(!outs.length){                                          // outfall — leaves the system here
+    PIPE_FLOW.outfall++;struct._outfall=(struct._outfall||0)+1;return false;
+  }
+  const edge=outs[Math.floor(Math.random()*outs.length)];
+  drop.edge=edge;drop.t=0;drop.hops=(drop.hops||0)+1;
+  edge.pipe._flow=(edge.pipe._flow||0)+1;
+  return drop.hops<300;                                      // loop guard for a network that feeds back on itself
+}
+function capturedIntoStructure(b){
+  if(!PIPE_FLOW.on||!b.struct||PIPE_FLOW.drops.length>=PIPE_FLOW.maxDrops)return;
+  const d={};if(sendIntoPipe(d,b.struct))PIPE_FLOW.drops.push(d);
+}
+function stepPipeDrops(dt){
+  const ds=PIPE_FLOW.drops;
+  for(let i=ds.length-1;i>=0;i--){
+    const d=ds[i];
+    d.t+=pipeDropSpeed(d.edge)*dt/d.edge.len;
+    if(d.t>=1){if(!sendIntoPipe(d,d.edge.to)){ds.splice(i,1);continue;}}
+  }
+}
+function pipeDropPos(d){const e=d.edge,t=d.t;return{E:e.from.E+(e.to.E-e.from.E)*t,N:e.from.N+(e.to.N-e.from.N)*t,Z:e.z0+(e.z1-e.z0)*t};}
+function drawPipeDrops(proj,is3d){
+  if(!PIPE_FLOW.on)return;
+  const g=pipeGraph();
+  ctx.save();                                                // pipes carrying flow glow, brighter the more has passed through
+  g.forEach(edges=>edges.forEach(e=>{
+    const f=e.pipe._flow||0;if(!f)return;
+    const a=proj(e.from.E,e.from.N,is3d?e.z0:0),b=proj(e.to.E,e.to.N,is3d?e.z1:0);
+    ctx.strokeStyle='rgba(77,163,255,'+Math.min(0.6,0.25+f/200)+')';ctx.lineWidth=6;ctx.lineCap='round';
+    ctx.beginPath();ctx.moveTo(a[0],a[1]);ctx.lineTo(b[0],b[1]);ctx.stroke();
+    ctx.font='600 9px ui-monospace,monospace';drawLabel(`▶ ${f}`,(a[0]+b[0])/2+5,(a[1]+b[1])/2+12,'#8fc6ff');
+  }));
+  PIPE_FLOW.drops.forEach(d=>{
+    const p=pipeDropPos(d),[x,y]=proj(p.E,p.N,is3d?p.Z:0);
+    ctx.fillStyle=WATER_CB.speedColors?waterSpeedColor(d.edge.grade):'#7fe0ff';ctx.strokeStyle='#06223a';ctx.lineWidth=1;
+    ctx.beginPath();ctx.arc(x,y,3,0,Math.PI*2);ctx.fill();ctx.stroke();
+  });
+  // outfalls
+  PIPE_NETWORKS.forEach(net=>net.structs.forEach(st=>{
+    if(!st._outfall)return;const[x,y]=proj(st.E,st.N,is3d?(st.sump??st.rim??0):0);
+    ctx.font='700 10px ui-monospace,monospace';drawLabel(`⤓ outfall ${st._outfall}`,x+9,y-22,'#5dd0ff');
+  }));
+  ctx.restore();
 }
 function waterRandomTriangle(){
   const cands=[];
@@ -2270,7 +2354,7 @@ function stepWaterParticles(dt,now){
     const p=waterParticles[i];
     if(p.dumped){
       if(p.decayed(now)){waterParticles.splice(i,1);continue;}   // 15s is up — vanish outright, never respawn
-      if(basins.length){const b=basinCapture(p.E,p.N,basins);if(b){b.count++;WATER_CB.captured++;waterParticles.splice(i,1);continue;}}   // 🕳 fell into a catch basin
+      if(basins.length){const b=basinCapture(p.E,p.N,basins);if(b){b.count++;WATER_CB.captured++;capturedIntoStructure(b);waterParticles.splice(i,1);continue;}}   // 🕳 fell into a catch basin
       dumped.push(p);continue;                                   // stepped as a group below, not one at a time here
     }
     if(!isFinite(p.E)){respawnWaterParticle(p);continue;}
@@ -2288,12 +2372,13 @@ function stepWaterParticles(dt,now){
     p._tri=tri;p._triLayer=layer;
     const speed=WATER_BASE_SPEED*Math.max(0.3,Math.min(1.5,dir.slope*3));   // faster on steeper ground, floored so gentle slopes still visibly creep
     p.E+=dir.dirE*speed*dt;p.N+=dir.dirN*speed*dt;p.age+=dt;p.grade=dir.slope;
-    if(basins.length){const b=basinCapture(p.E,p.N,basins);if(b){b.count++;WATER_CB.captured++;respawnWaterParticle(p);continue;}}   // 🕳 captured — re-falls as new rain
+    if(basins.length){const b=basinCapture(p.E,p.N,basins);if(b){b.count++;WATER_CB.captured++;capturedIntoStructure(b);respawnWaterParticle(p);continue;}}   // 🕳 captured — re-falls as new rain
     p.trail.push({E:p.E,N:p.N});if(p.trail.length>WATER_TRAIL_LEN)p.trail.shift();
     if(p.age>(p.life||WATER_MAX_AGE))respawnWaterParticle(p);
   }
   if(dumped.length)flipStepDumped(dumped,dt);
-  if(WATER_CB.captured!==caught0)updateBasinUI();
+  if(PIPE_FLOW.drops.length)stepPipeDrops(dt);
+  if(WATER_CB.captured!==caught0||PIPE_FLOW.drops.length)updateBasinUI();
 }
 
 /* ---------- 💧 dumped-burst FLIP fluid (grid PIC/FLIP transfer + incompressibility solve) ----------
@@ -2465,7 +2550,7 @@ function drawWaterParticles(proj,need3DZ){
 function stopWaterAnimation(){
   waterOn=false;$('waterBtn').classList.remove('on');
   if(waterAnimHandle){cancelAnimationFrame(waterAnimHandle);waterAnimHandle=null;}
-  waterParticles=[];
+  waterParticles=[];PIPE_FLOW.drops=[];
   updateRainUI();
 }
 function waterTick(ts){
@@ -2554,7 +2639,7 @@ function importDXF(text){
   }
   if(!nEnt){hud('no recognized entities found (LINE / LWPOLYLINE / POLYLINE / POINT / CIRCLE / 3DFACE)');return;}
   renderLayerPanel();updateJobPill();
-  $('fitBtn').disabled=false;$('elevBtn').disabled=SURFACES.length===0;$('waterBtn').disabled=SURFACES.length===0;$('waterDumpBtn').disabled=SURFACES.length===0;$('surfaceDisplayBtn').disabled=SURFACES.length===0;$('elevSpotsBtn').disabled=SURFACES.length===0;$('slopeBtn').disabled=SURFACES.length===0;$('rainPaintToolBtn').disabled=SURFACES.length===0;rainTriCache=null;renderSlopeSurfSel();
+  $('fitBtn').disabled=false;$('elevBtn').disabled=SURFACES.length===0;$('waterBtn').disabled=SURFACES.length===0;$('waterDumpBtn').disabled=SURFACES.length===0;$('surfaceDisplayBtn').disabled=SURFACES.length===0;$('elevSpotsBtn').disabled=SURFACES.length===0;$('slopeBtn').disabled=SURFACES.length===0;$('rainPaintToolBtn').disabled=SURFACES.length===0;rainTriCache=null;pipeGraphCache=null;renderSlopeSurfSel();
   $('orbitBtn').disabled=false;$('snapBtn').disabled=false;
   if(hadNothing)fit();else draw();
   hud(`imported ${nEnt} DXF entit${nEnt===1?'y':'ies'} across ${Object.keys(LAYERS).length} layer(s)`);
@@ -2647,7 +2732,7 @@ function importLandXML(text){
   const{nAlign,nCurve,nProfile}=importAlignments(doc);
   if(!nSurf&&!nPts&&!nNet&&!nAlign){hud('no <Surface> (TIN), <CgPoint>, <PipeNetwork>, or <Alignment> data found in this file');return;}
   renderLayerPanel();updateJobPill();
-  $('fitBtn').disabled=false;$('elevBtn').disabled=SURFACES.length===0;$('waterBtn').disabled=SURFACES.length===0;$('waterDumpBtn').disabled=SURFACES.length===0;$('surfaceDisplayBtn').disabled=SURFACES.length===0;$('elevSpotsBtn').disabled=SURFACES.length===0;$('slopeBtn').disabled=SURFACES.length===0;$('rainPaintToolBtn').disabled=SURFACES.length===0;rainTriCache=null;renderSlopeSurfSel();
+  $('fitBtn').disabled=false;$('elevBtn').disabled=SURFACES.length===0;$('waterBtn').disabled=SURFACES.length===0;$('waterDumpBtn').disabled=SURFACES.length===0;$('surfaceDisplayBtn').disabled=SURFACES.length===0;$('elevSpotsBtn').disabled=SURFACES.length===0;$('slopeBtn').disabled=SURFACES.length===0;$('rainPaintToolBtn').disabled=SURFACES.length===0;rainTriCache=null;pipeGraphCache=null;renderSlopeSurfSel();
   $('orbitBtn').disabled=false;$('snapBtn').disabled=false;
   $('geomLabelsBtn').disabled=ALIGNMENTS.length===0;
   $('profileBtn').disabled=ALIGNMENTS.length===0;
@@ -2798,8 +2883,17 @@ $('waterBtn').onclick=()=>{
 $('speedColorChk').onchange=()=>{WATER_CB.speedColors=$('speedColorChk').checked;updateBasinUI();draw();};
 $('cbOnChk').onchange=()=>{WATER_CB.on=$('cbOnChk').checked;if(!WATER_CB.on&&basinPlaceOn)setBasinPlace(false);updateBasinUI();updateRainUI();draw();};
 $('cbStructChk').onchange=()=>{WATER_CB.useStructs=$('cbStructChk').checked;if(WATER_CB.useStructs&&!PIPE_NETWORKS.length)hud('no pipe network imported — import a LandXML with Civil3D structures to use them as inlets');updateBasinUI();draw();};
+$('pipeFlowChk').onchange=()=>{
+  PIPE_FLOW.on=$('pipeFlowChk').checked;
+  if(PIPE_FLOW.on){
+    if(!PIPE_NETWORKS.some(n=>n.pipes.length)){hud('no pipes imported — import a LandXML with a Civil3D pipe network first');}
+    else{if(!WATER_CB.on){WATER_CB.on=true;$('cbOnChk').checked=true;}if(!WATER_CB.useStructs){WATER_CB.useStructs=true;$('cbStructChk').checked=true;}   // pipe flow starts at structure inlets, so turn those on
+      hud('🚰 water caught by manholes / CBs now runs down the pipes to the outfall');}
+  }else PIPE_FLOW.drops=[];
+  updateBasinUI();updateRainUI();draw();
+};
 $('cbPlaceBtn').onclick=()=>setBasinPlace(!basinPlaceOn);
-$('cbClearBtn').onclick=()=>{WATER_CB.list=[];WATER_CB.captured=0;PIPE_NETWORKS.forEach(n=>n.structs.forEach(st=>{if(st._cb)st._cb.count=0;}));updateBasinUI();draw();hud('catch basins cleared');};
+$('cbClearBtn').onclick=()=>{WATER_CB.list=[];WATER_CB.captured=0;PIPE_FLOW.drops=[];PIPE_FLOW.outfall=0;PIPE_NETWORKS.forEach(n=>{n.pipes.forEach(pp=>{pp._flow=0;});n.structs.forEach(st=>{st._outfall=0;});});PIPE_NETWORKS.forEach(n=>n.structs.forEach(st=>{if(st._cb)st._cb.count=0;}));updateBasinUI();draw();hud('catch basins cleared');};
 $('cbRadius').oninput=()=>{WATER_CB.radius=+$('cbRadius').value;updateBasinUI();draw();};
 $('rainPaintToolBtn').onclick=()=>{if($('rainPaintToolBtn').disabled)return;setRainPaint(!rainPaintOn,false);};
 $('rainPaintBtn').onclick=()=>setRainPaint(!(rainPaintOn&&!RAIN.erase),false);
@@ -3081,7 +3175,7 @@ window.addEventListener('resize',resize);
 resize();
 
 /* ---------- version badge — CHANGED ON EVERY PUSH (new animal + name + build+1; see CLAUDE.md), mirroring FBK-Checker's own fruit badge ---------- */
-const VERSION={animal:'🦦',name:'OTTER',build:25};
+const VERSION={animal:'🦫',name:'BEAVER',build:26};
 function rotateAnimal(){const b=$('animalBadge');b.style.transform='rotate(360deg)';setTimeout(()=>{b.style.transform='rotate(0deg)';},200);}
 function showVersion(){const b=$('animalBadge');b.textContent=`${VERSION.animal} ${VERSION.name} · b${VERSION.build}`;
   b.title=`Build ${VERSION.build} · ${VERSION.name} — if this matches what Claude pushed, you're on the latest (no cache)`;}

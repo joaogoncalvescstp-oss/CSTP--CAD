@@ -319,6 +319,17 @@ dependencies, and nothing to install.
   the box shows the total caught. **Use imported manholes / CBs as inlets**
   makes every Civil3D structure in a visible pipe network an inlet too.
 
+- **🚰 Route captured water through pipes** (checkbox; also turns on catch
+  basins and structure inlets): a drop caught by an imported manhole/CB runs
+  along that structure's outgoing pipe to the next structure, and on down the
+  network to the structure with no outgoing pipe, the outfall, where it
+  leaves and is counted. Each pipe's direction comes from its two inverts
+  (higher → lower), read regardless of flowDir labels or which end the file
+  lists first. A pipe with no inverts falls back to rim elevations. Speed
+  rises with pipe grade. Pipes carrying water glow with a running ▶ count,
+  and in 3D the water visibly travels underground along the invert line.
+  Placed 🕳 basins (not tied to a structure) still just remove water.
+
 ## Slope between two points
 
 - **📏 Slope 2-Pt** measures the slope between two picked points on a

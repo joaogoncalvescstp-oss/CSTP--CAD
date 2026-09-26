@@ -27,6 +27,7 @@ The badge renders as `<emoji> <NAME> · b<build>`.
 | 23 | 🐙 OCTOPUS | 📍 Label Points: reference alignment "None" keeps each alignment's own XML stationing |
 | 24 | 🦩 FLAMINGO | 📍 Label Points: thin dashed tangent lines PI→PC/PT and radius lines CC→PC/PT |
 | 25 | 🦦 OTTER | 🌊 water: color drops by speed (red/yellow/blue/purple) + 🕳 catch basins that capture drops |
+| 26 | 🦫 BEAVER | 🚰 pipe flow: water caught by structures travels down the pipes to the outfall |
 
 ## Workflow
 
