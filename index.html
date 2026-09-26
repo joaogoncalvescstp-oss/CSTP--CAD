@@ -185,7 +185,7 @@ canvas{display:block;width:100%;height:100%;background:var(--bg);cursor:crosshai
       <label style="display:block;margin-bottom:4px;font-size:11px;color:var(--mut)">Reference alignment (stationing)</label>
       <select id="geomRefSel" style="width:100%;margin-bottom:8px;background:var(--panel2);color:var(--text);border:1px solid var(--rule);border-radius:5px;padding:5px"></select>
       <label style="display:block;margin-bottom:4px;font-size:11px;color:var(--mut)">Target alignment(s)/line(s) to label — check one or more</label>
-      <div id="geomTargetList" style="max-height:130px;overflow:auto;background:var(--panel2);border:1px solid var(--rule);border-radius:5px;padding:6px;margin-bottom:8px"></div>
+      <div id="geomTargetList" style="max-height:220px;overflow:auto;background:var(--panel2);border:1px solid var(--rule);border-radius:5px;padding:6px;margin-bottom:8px"></div>
       <label style="display:block;margin-bottom:4px;font-size:11px;color:var(--mut)">Also label station(s) on target alignment(s) (POT/POC/POS)</label>
       <input type="text" id="geomStationInput" placeholder="e.g. 12+50, 18+00" style="width:100%;margin-bottom:10px;background:var(--panel2);color:var(--text);border:1px solid var(--rule);border-radius:5px;padding:5px">
       <button class="btn gold" id="geomApplyBtn" style="width:100%;margin-bottom:10px">Label points</button>
@@ -1401,17 +1401,33 @@ function renderGeomLabelSelects(){
   const layerOpts=Object.keys(LAYERS).filter(n=>!n.startsWith('ALIGN-')&&!n.startsWith('TIN-')&&!n.startsWith('PIPE-')
     &&ENTITIES.some(e=>e.layer===n&&(e.type==='line'||e.type==='poly')));
   const row=(val,label)=>`<label style="display:flex;align-items:center;gap:6px;cursor:pointer;padding:1px 0"><input type="checkbox" class="geomTgt" value="${val}"${prevChecked.has(val)?' checked':''}> ${label}</label>`;
+  // "check all" boxes — one master for everything, one per group; each reflects its group's
+  // state (checked / partly checked / clear) and ticking it (un)checks the whole group
+  const allBox=(grp,label,top)=>`<label style="display:flex;align-items:center;gap:6px;cursor:pointer;padding:1px 0;margin:${top}px 0 1px;font-size:11px;color:var(--gold);font-weight:700"><input type="checkbox" class="geomTgtAll" data-grp="${grp}"> ${label}</label>`;
   const rows=[];
+  if(ALIGNMENTS.length&&layerOpts.length)rows.push(allBox('all','☑ All alignments + lines / polylines',0)+'<div style="border-top:1px solid var(--rule);margin:3px 0"></div>');
   if(ALIGNMENTS.length){
-    rows.push('<div style="font-size:10px;color:var(--mut);margin:1px 0">Alignments</div>');
+    rows.push(allBox('align',`All alignments (${ALIGNMENTS.length})`,1));
     ALIGNMENTS.forEach(a=>rows.push(row(`align:${a.name}`,a.name)));
   }
   if(layerOpts.length){
-    rows.push('<div style="font-size:10px;color:var(--mut);margin:5px 0 1px">Lines / layers</div>');
+    rows.push(allBox('layer',`All lines / polylines (${layerOpts.length})`,5));
     layerOpts.forEach(n=>rows.push(row(`layer:${n}`,n)));
   }
   list.innerHTML=rows.join('')||'<p class="note">nothing to label — import a LandXML Alignment or a DXF line first</p>';
+  syncGeomTargetAll();
 }
+const geomTgtBoxes=grp=>Array.from($('geomTargetList').querySelectorAll('input.geomTgt')).filter(c=>grp==='all'||c.value.startsWith(grp+':'));
+function syncGeomTargetAll(){
+  $('geomTargetList').querySelectorAll('input.geomTgtAll').forEach(b=>{
+    const boxes=geomTgtBoxes(b.dataset.grp),n=boxes.filter(c=>c.checked).length;
+    b.checked=n>0&&n===boxes.length;b.indeterminate=n>0&&n<boxes.length;});
+}
+$('geomTargetList').addEventListener('change',e=>{
+  const t=e.target;
+  if(t.classList.contains('geomTgtAll'))geomTgtBoxes(t.dataset.grp).forEach(c=>{c.checked=t.checked;});
+  syncGeomTargetAll();
+});
 function resolveTargetRef(val){
   if(!val)return null;
   if(val.startsWith('align:')){const a=ALIGNMENTS.find(x=>x.name===val.slice(6));return a?{kind:'alignment',obj:a}:null;}
@@ -2938,7 +2954,7 @@ window.addEventListener('resize',resize);
 resize();
 
 /* ---------- version badge — CHANGED ON EVERY PUSH (new animal + name + build+1; see CLAUDE.md), mirroring FBK-Checker's own fruit badge ---------- */
-const VERSION={animal:'🦉',name:'OWL',build:21};
+const VERSION={animal:'🐢',name:'TURTLE',build:22};
 function rotateAnimal(){const b=$('animalBadge');b.style.transform='rotate(360deg)';setTimeout(()=>{b.style.transform='rotate(0deg)';},200);}
 function showVersion(){const b=$('animalBadge');b.textContent=`${VERSION.animal} ${VERSION.name} · b${VERSION.build}`;
   b.title=`Build ${VERSION.build} · ${VERSION.name} — if this matches what Claude pushed, you're on the latest (no cache)`;}

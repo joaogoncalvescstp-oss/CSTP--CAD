@@ -23,6 +23,7 @@ The badge renders as `<emoji> <NAME> · b<build>`.
 | 1 | 🦊 FOX | first badge, 3D orbit / map / OSNAP ported |
 | 2–20 | 🐨 KOALA | (badge animal was not changed on these pushes; only `build` moved) |
 | 21 | 🦉 OWL | badge now changes every push and shows the build number |
+| 22 | 🐢 TURTLE | 📍 Label Points: check-all boxes for all alignments / lines / polylines |
 
 ## Workflow
 
