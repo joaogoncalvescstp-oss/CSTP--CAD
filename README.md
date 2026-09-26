@@ -287,6 +287,22 @@ dependencies, and nothing to install.
   the gesture dead. `touch-action:none` on the canvas hands all of this to
   the app instead of the browser's own native pinch-zoom/scroll.
 
+## 🌧 Rain (Water Flow) and 🖌 painted rain areas
+
+- **🌊 Water Flow** now rains. Each drop lands at a random spot spread
+  evenly by area over the visible surface(s), so large triangles get
+  proportionally more drops. Drops land after random delays and live for
+  random lengths of time, so the rain is continuous rather than arriving
+  in synchronized waves. A landing drop shows a falling streak in 3D or a
+  splash ring in 2D, then flows downhill by steepest descent as before.
+- **🖌 Rain Area** paints where the rain falls: drag on the drawing in 2D
+  plan (Esc stops). Painting switches the rain to *Painted areas only*.
+  The 🌧 Rain box (bottom-left, shown while Water Flow or painting is on)
+  has Whole site / Painted areas only, 🖌 Paint, ⌫ Erase, Clear, brush
+  size, rain intensity (drop count), and the painted area. Painted cells
+  sit on a ~250-across grid over the site and show as a blue tint in 2D
+  and draped on the surface in 3D.
+
 ## Slope between two points
 
 - **📏 Slope 2-Pt** measures the slope between two picked points on a

@@ -69,6 +69,7 @@ canvas{display:block;width:100%;height:100%;background:var(--bg);cursor:crosshai
     <button class="btn" id="elevSpotsBtn" disabled title="View every saved ⛰ Elevation spot as a table (northing/easting/elevation, and what it snapped to) — with CSV export">📐 Elevation Spots</button>
     <button class="btn" id="slopeBtn" disabled title="Slope between two points — pick a target surface, then click point A and point B (snaps to vertices/edges/CAD points). Reports each point's elevation on that surface, rise, horizontal & slope distance, grade %, and H:V ratio. Stays armed for more; Esc stops — 2D only">📏 Slope 2-Pt</button>
     <button class="btn" id="waterBtn" disabled title="Animate droplets following each triangle's own steepest-descent direction across the visible TIN surface(s) — a stylized visual approximation, not a hydrology/runoff model. Renders on the real 3D terrain in ⟲ 3D orbit too, not just 2D plan">🌊 Water Flow</button>
+    <button class="btn" id="rainPaintToolBtn" disabled title="🖌 Paint the area where 🌊 Water Flow rain falls — drag on the drawing in 2D plan (Esc stops). Switches the rain to Painted areas only; set it back to Whole site from the 🌧 Rain box">🖌 Rain Area</button>
     <button class="btn" id="waterDumpBtn" disabled title="Click a point on a visible TIN surface to dump a burst of water droplets there — they flow downhill the same steepest-descent way as 🌊 Water Flow, then fully decay (vanish, not respawn) 15 seconds after being dumped, wherever they've flowed to by then. Stays armed for repeat dumps; Esc cancels. Click-to-dump itself is 2D plan view only (no way to resolve a click to a 3D world position), but an already-dumped burst keeps flowing and renders correctly if you switch to ⟲ 3D">💧 Dump Water</button>
     <button class="btn" id="surfaceDisplayBtn" disabled title="Choose how a TIN surface is drawn — wireframe on/off, contour lines, slope arrows">🗻 Surface Display</button>
     <button class="btn" id="snapBtn" disabled title="CAD object snap — hover to snap onto an endpoint, a genuine crossing of two lines, a midpoint, a circle's center/quadrant, or the nearest point on a line, and read its exact E/N/Z off the hud (Esc cancels) — 2D only">🧲 Snap</button>
@@ -116,6 +117,16 @@ canvas{display:block;width:100%;height:100%;background:var(--bg);cursor:crosshai
       <div class="row"><span>☀ Sun altitude <b id="sunAltVal3d">45°</b></span></div>
       <input type="range" id="sunAlt3d" min="5" max="90" step="1" value="45">
       <label><input type="checkbox" id="shadowChk3d"> Cast shadows</label>
+    </div>
+    <div class="view3d" id="rainBox" style="left:12px;right:auto;top:auto;bottom:44px;width:250px">
+      <div class="row"><b>🌧 Rain</b><span id="rainPaintedInfo" style="font-size:10px;text-align:right"></span></div>
+      <span>Rain falls on</span>
+      <select id="rainModeSel"><option value="site">Whole site — random drops everywhere</option><option value="painted">Painted areas only</option></select>
+      <div class="row" style="gap:4px"><button id="rainPaintBtn" style="flex:1" title="Drag on the drawing to paint rain area">🖌 Paint</button><button id="rainEraseBtn" style="flex:1" title="Drag to erase painted area">⌫ Erase</button><button id="rainClearBtn" style="flex:1">Clear</button></div>
+      <div class="row"><span>Brush size <b id="rainBrushVal">30</b> px</span></div>
+      <input type="range" id="rainBrush" min="5" max="150" step="5" value="30">
+      <span>Rain intensity (drops) <b id="rainCountVal">50</b></span>
+      <input type="range" id="rainCount" min="5" max="5000" step="5" value="50">
     </div>
     <div class="snapbox" id="snapBox">
       <label><input type="checkbox" id="snEndpoint" checked>▢ endpoint</label>
@@ -770,6 +781,7 @@ function draw2D(){
   ctx.globalAlpha=1;
   drawContours((E,N)=>W2S(E,N));
   drawSlopeArrows((E,N)=>W2S(E,N));
+  drawRainArea((E,N)=>W2S(E,N),false);
   drawWaterParticles((E,N)=>W2S(E,N),false);
   // DXF entities
   ENTITIES.forEach(e=>{
@@ -806,6 +818,7 @@ function draw2D(){
   drawSlopeMeasurements((E,N)=>W2S(E,N));
   drawMapError();
   drawSnapMarker();
+  drawRainBrush();
 }
 // 3D orbit view (ported from FBK-Checker) — the same layer set, projected obliquely via P3
 // instead of the flat W2S. MAP/grid are 2D-only (the canvas would just be an empty/irrelevant
@@ -844,6 +857,7 @@ function draw3D(){
     if(orbit.s>2){ctx.font='600 10px ui-monospace,monospace';drawLabel(p.id,s3[0]+6,s3[1]-5,'#cfe0ff');}});
   drawPipeNetworks((E,N,Z)=>P3(E,N,Z),orbit.s);
   drawGeomLabels((E,N,Z)=>P3(E,N,Z));
+  drawRainArea((E,N,Z)=>P3(E,N,Z),true);
   drawWaterParticles((E,N,Z)=>P3(E,N,Z),true);
   ELEV_SPOTS.forEach((sp,i)=>{
     const isLast=i===ELEV_SPOTS.length-1,s3=P3(sp.E,sp.N,sp.z);
@@ -1957,29 +1971,130 @@ function drawSlopeArrows(proj){
   });
   ctx.globalAlpha=1;
 }
+/* ---------- 🌧 rain: area-uniform random drops + 🖌 painted rain areas ----------
+   Ambient droplets now fall like rain: each one lands at a uniformly random spot by AREA over
+   the visible TIN(s) (big triangles get proportionally more drops, not one-per-triangle), after
+   a random delay so the site keeps raining continuously instead of pulsing in sync. A landing
+   drop shows a short falling streak (3D) / splash ring (2D), then flows downhill as before.
+   RAIN.mode='painted' limits landings to cells brushed on with 🖌 Paint Rain Area — a world-
+   space grid (RAIN.cell units per cell) stored as a Set of "i,j" keys. */
+const RAIN={mode:'site',cells:new Set(),cell:null,brushPx:30,erase:false};
+const RAIN_FALL_TIME=0.35;                                  // seconds a drop spends falling/splashing before it starts to flow
+let rainPaintOn=false;                                     // 🖌 brush armed
+let rainBrushHover=null;                                   // {sx,sy} cursor, for the brush outline
+let rainTriCache=null;                                     // {key,list:[{tri,layer}],cum:Float64Array,total}
+function rainTriangles(){
+  const key=visibleSurfaceKey();if(rainTriCache&&rainTriCache.key===key)return rainTriCache;
+  const list=[],areas=[];let total=0;
+  SURFACES.forEach(s=>{const ly=LAYERS[s.layer];if(ly&&!ly.visible)return;
+    s.tris.forEach(tri=>{const a=Math.abs((tri[1].E-tri[0].E)*(tri[2].N-tri[0].N)-(tri[2].E-tri[0].E)*(tri[1].N-tri[0].N))/2;
+      if(a>0){total+=a;list.push({tri,layer:s.layer});areas.push(total);}});});
+  return rainTriCache={key,list,cum:Float64Array.from(areas),total};
+}
+function ensureRainCell(){
+  if(RAIN.cell)return RAIN.cell;
+  const b=bounds();const span=Math.max(b.maxE-b.minE,b.maxN-b.minN)||100;
+  return RAIN.cell=span/250;                                 // ~250 cells across the site — fine enough to trace a drainage area
+}
+const rainKey=(E,N)=>Math.floor(E/RAIN.cell)+','+Math.floor(N/RAIN.cell);
+// one random landing spot {E,N,tri,layer}, or null if there's nowhere to rain
+function rainLandingSpot(){
+  if(RAIN.mode==='painted'){
+    if(!RAIN.cells.size||!RAIN.cell)return null;
+    const keys=rainLandingSpot._keys&&rainLandingSpot._n===RAIN.cells.size?rainLandingSpot._keys:(rainLandingSpot._keys=[...RAIN.cells]);
+    rainLandingSpot._n=RAIN.cells.size;
+    for(let t=0;t<25;t++){                                   // a painted cell can hang off the surface edge — retry a few
+      const[i,j]=keys[Math.floor(Math.random()*keys.length)].split(',').map(Number);
+      const E=(i+Math.random())*RAIN.cell,N=(j+Math.random())*RAIN.cell,hit=findWaterTriangleAt(E,N);
+      if(hit)return{E,N,tri:hit.tri,layer:hit.layer};
+    }
+    return null;
+  }
+  const c=rainTriangles();if(!c.list.length)return null;
+  const r=Math.random()*c.total;let lo=0,hi=c.cum.length-1;
+  while(lo<hi){const m=(lo+hi)>>1;if(c.cum[m]<r)lo=m+1;else hi=m;}
+  const{tri,layer}=c.list[lo];
+  let r1=Math.random(),r2=Math.random();if(r1+r2>1){r1=1-r1;r2=1-r2;}
+  const a=tri[0],b=tri[1],cc=tri[2];
+  return{E:a.E+r1*(b.E-a.E)+r2*(cc.E-a.E),N:a.N+r1*(b.N-a.N)+r2*(cc.N-a.N),tri,layer};
+}
+function paintRainAt(sx,sy){
+  ensureRainCell();
+  const[E,N]=S2W(sx,sy),R=RAIN.brushPx/view.s,c=RAIN.cell;
+  const i0=Math.floor((E-R)/c),i1=Math.floor((E+R)/c),j0=Math.floor((N-R)/c),j1=Math.floor((N+R)/c);
+  for(let i=i0;i<=i1;i++)for(let j=j0;j<=j1;j++){
+    if(Math.hypot((i+.5)*c-E,(j+.5)*c-N)>R)continue;
+    const k=i+','+j;RAIN.erase?RAIN.cells.delete(k):RAIN.cells.add(k);
+  }
+  rainLandingSpot._keys=null;
+  updateRainUI();
+}
+// painted cells as translucent squares (2D) or quads draped on the surface (3D)
+function drawRainArea(proj,is3d){
+  if(!RAIN.cells.size||!RAIN.cell)return;
+  if(RAIN.mode!=='painted'&&!rainPaintOn)return;
+  const c=RAIN.cell;ctx.fillStyle='rgba(93,160,255,.28)';ctx.beginPath();
+  RAIN.cells.forEach(k=>{const[i,j]=k.split(',').map(Number);const E0=i*c,N0=j*c;
+    const corners=[[E0,N0],[E0+c,N0],[E0+c,N0+c],[E0,N0+c]];
+    let ok=true;const q=corners.map(([E,N],n)=>{let z=0;if(is3d){z=rainCornerZ(i+(n===1||n===2?1:0),j+(n>=2?1:0));if(z==null){ok=false;return null;}}return proj(E,N,z);});
+    if(!ok)return;
+    ctx.moveTo(q[0][0],q[0][1]);for(let n=1;n<4;n++)ctx.lineTo(q[n][0],q[n][1]);ctx.closePath();});
+  ctx.fill();
+}
+// top-surface Z at grid corner (i,j), cached — a full surface scan per corner per frame would stall 3D orbiting
+let rainZCache={key:'',map:new Map()};
+function rainCornerZ(i,j){
+  const vk=visibleSurfaceKey()+'@'+RAIN.cell;if(rainZCache.key!==vk)rainZCache={key:vk,map:new Map()};
+  const k=i+','+j;if(rainZCache.map.has(k))return rainZCache.map.get(k);
+  const h=findWaterTriangleAt(i*RAIN.cell,j*RAIN.cell),z=h?pointInTri(i*RAIN.cell,j*RAIN.cell,h.tri[0],h.tri[1],h.tri[2]):null;
+  rainZCache.map.set(k,z);return z;
+}
+function drawRainBrush(){
+  if(!rainPaintOn||!rainBrushHover||is3D)return;
+  ctx.save();ctx.strokeStyle=RAIN.erase?'#ff7a7a':'#7fb8ff';ctx.lineWidth=1.5;ctx.setLineDash([4,3]);
+  ctx.beginPath();ctx.arc(rainBrushHover.sx,rainBrushHover.sy,RAIN.brushPx,0,Math.PI*2);ctx.stroke();ctx.restore();
+}
+function updateRainUI(){
+  const n=RAIN.cells.size,area=RAIN.cell?n*RAIN.cell*RAIN.cell:0;
+  $('rainPaintedInfo').textContent=n?`${n} cells painted ≈ ${area>=1e4?(area/43560).toFixed(2)+' ac / ':''}${Math.round(area).toLocaleString()} sq units`:'nothing painted yet';
+  $('rainModeSel').value=RAIN.mode;$('rainBrushVal').textContent=RAIN.brushPx;
+  $('rainPaintBtn').classList.toggle('on',rainPaintOn&&!RAIN.erase);$('rainEraseBtn').classList.toggle('on',rainPaintOn&&RAIN.erase);
+  $('rainPaintToolBtn').classList.toggle('on',rainPaintOn);
+  $('rainBox').classList.toggle('show',(waterOn||rainPaintOn)&&!profileOn);
+}
+function setRainPaint(on,erase){
+  rainPaintOn=on;RAIN.erase=!!erase;rainBrushHover=null;
+  if(on){
+    if(is3D){rainPaintOn=false;hud('Painting rain areas is 2D plan only — press O or ⟲ 3D to switch back first');updateRainUI();return;}
+    elevPick=false;$('elevBtn').classList.remove('on');snapOn=false;$('snapBtn').classList.remove('on');liveSnap=null;
+    waterDumpOn=false;$('waterDumpBtn').classList.remove('on');if(typeof slopePick!=='undefined'&&slopePick)setSlopePick(false);
+    if(!RAIN.erase&&RAIN.mode!=='painted'){RAIN.mode='painted';if(waterOn)initWaterParticles();}
+    cv.style.cursor='none';
+    hud(RAIN.erase?'⌫ drag to erase painted rain area · Esc to stop':'🖌 drag to paint where it rains · brush size in the 🌧 Rain box · Esc to stop');
+  }else{cv.style.cursor=is3D?'grab':'crosshair';}
+  updateRainUI();draw();
+}
 function waterRandomTriangle(){
   const cands=[];
   SURFACES.forEach(s=>{const ly=LAYERS[s.layer];if(ly&&!ly.visible)return;s.tris.forEach(tri=>cands.push({tri,layer:s.layer}));});
   return cands.length?cands[Math.floor(Math.random()*cands.length)]:null;
 }
 function respawnWaterParticle(p){
-  const pick=waterRandomTriangle();
-  if(!pick){p.E=NaN;p.N=NaN;p.trail=[];p.age=0;p._tri=null;p._triLayer=null;return;}
-  const tri=pick.tri;
-  let r1=Math.random(),r2=Math.random();if(r1+r2>1){r1=1-r1;r2=1-r2;}   // uniform random point inside the triangle via barycentric sampling
-  const a=tri[0],b=tri[1],c=tri[2];
-  p.E=a.E+r1*(b.E-a.E)+r2*(c.E-a.E);
-  p.N=a.N+r1*(b.N-a.N)+r2*(c.N-a.N);
-  p.age=0;p.trail=[{E:p.E,N:p.N}];p._tri=tri;p._triLayer=pick.layer;   // cache — see stepWaterParticles
+  const pick=rainLandingSpot();                              // 🌧 a random raindrop landing — see rainLandingSpot
+  if(!pick){p.E=NaN;p.N=NaN;p.trail=[];p.age=0;p._tri=null;p._triLayer=null;p.fall=0;return;}
+  p.E=pick.E;p.N=pick.N;
+  p.age=0;p.life=WATER_MAX_AGE*(0.45+Math.random()*0.8);    // staggered lifetimes, so drops don't all respawn on the same frame
+  p.fall=RAIN_FALL_TIME;p.trail=[{E:p.E,N:p.N}];p._tri=pick.tri;p._triLayer=pick.layer;   // cache — see stepWaterParticles
 }
 function initWaterParticles(){
   waterParticles=waterParticles.filter(p=>p.dumped);         // preserve any still-decaying 💧 dump burst across a re-seed (e.g. dragging the ambient droplet-count slider)
   for(let i=0;i<WATER_PARTICLE_COUNT;i++){
     const p={E:NaN,N:NaN,age:0,trail:[],_tri:null,_triLayer:null};
     respawnWaterParticle(p);
+    if(isFinite(p.E)){p.age=Math.random()*p.life;p.fall=Math.random()<0.25?RAIN_FALL_TIME:0;}   // start mid-storm, not all landing at once
     waterParticles.push(p);
   }
-  if(!waterParticles.some(p=>isFinite(p.E)))hud('no visible TIN surface to animate — show a surface layer from 📑 Layers first');
+  if(!waterParticles.some(p=>isFinite(p.E)))hud(RAIN.mode==='painted'?'🌧 no painted rain area on a visible surface — 🖌 paint one, or set Rain area to Whole site':'no visible TIN surface to animate — show a surface layer from 📑 Layers first');
 }
 // 💧 Dump Water — a one-shot burst at a clicked point, distinct from the ambient droplets
 // initWaterParticles() seeds forever: each dumped particle carries its OWN `decayed` closure,
@@ -2032,6 +2147,7 @@ function stepWaterParticles(dt,now){
       dumped.push(p);continue;                                   // stepped as a group below, not one at a time here
     }
     if(!isFinite(p.E)){respawnWaterParticle(p);continue;}
+    if(p.fall>0){p.fall-=dt;continue;}                          // still falling / splashing — starts flowing once it lands
     const cachedLy=p._tri?LAYERS[p._triLayer]:null;
     const cachedOk=p._tri&&!(cachedLy&&!cachedLy.visible)&&pointInTri(p.E,p.N,p._tri[0],p._tri[1],p._tri[2])!=null;
     let tri=p._tri,layer=p._triLayer;
@@ -2046,7 +2162,7 @@ function stepWaterParticles(dt,now){
     const speed=WATER_BASE_SPEED*Math.max(0.3,Math.min(1.5,dir.slope*3));   // faster on steeper ground, floored so gentle slopes still visibly creep
     p.E+=dir.dirE*speed*dt;p.N+=dir.dirN*speed*dt;p.age+=dt;
     p.trail.push({E:p.E,N:p.N});if(p.trail.length>WATER_TRAIL_LEN)p.trail.shift();
-    if(p.age>WATER_MAX_AGE)respawnWaterParticle(p);
+    if(p.age>(p.life||WATER_MAX_AGE))respawnWaterParticle(p);
   }
   if(dumped.length)flipStepDumped(dumped,dt);
 }
@@ -2198,6 +2314,13 @@ function drawWaterParticles(proj,need3DZ){
       z=p._tri?pointInTri(p.E,p.N,p._tri[0],p._tri[1],p._tri[2]):null;
       if(z==null)return;                                    // can't place it on the 3D surface without a real Z this instant — skip the frame rather than guess one
     }
+    if(p.fall>0){                                           // 🌧 landing: a falling streak in 3D, an expanding splash ring in 2D
+      const k=p.fall/RAIN_FALL_TIME,[x,y]=proj(p.E,p.N,z);
+      ctx.strokeStyle='rgba(191,239,255,.8)';ctx.lineWidth=1.2;ctx.beginPath();
+      if(need3DZ){const top=y-60*k;ctx.moveTo(x,top-14);ctx.lineTo(x,top);}
+      else ctx.arc(x,y,1+(1-k)*6,0,Math.PI*2);
+      ctx.stroke();return;
+    }
     if(p.trail.length>=2){
       ctx.strokeStyle='rgba(93,208,255,.55)';ctx.lineWidth=1.4;ctx.beginPath();
       p.trail.forEach((pt,i)=>{const[x,y]=proj(pt.E,pt.N,z);i?ctx.lineTo(x,y):ctx.moveTo(x,y);});   // the trail's own older E/N points reuse the CURRENT z as a close approximation (a short, recent tail) rather than tracking a separate Z per trail point
@@ -2211,6 +2334,7 @@ function stopWaterAnimation(){
   waterOn=false;$('waterBtn').classList.remove('on');
   if(waterAnimHandle){cancelAnimationFrame(waterAnimHandle);waterAnimHandle=null;}
   waterParticles=[];
+  updateRainUI();
 }
 function waterTick(ts){
   if(!waterOn){waterAnimHandle=null;return;}
@@ -2298,7 +2422,7 @@ function importDXF(text){
   }
   if(!nEnt){hud('no recognized entities found (LINE / LWPOLYLINE / POLYLINE / POINT / CIRCLE / 3DFACE)');return;}
   renderLayerPanel();updateJobPill();
-  $('fitBtn').disabled=false;$('elevBtn').disabled=SURFACES.length===0;$('waterBtn').disabled=SURFACES.length===0;$('waterDumpBtn').disabled=SURFACES.length===0;$('surfaceDisplayBtn').disabled=SURFACES.length===0;$('elevSpotsBtn').disabled=SURFACES.length===0;$('slopeBtn').disabled=SURFACES.length===0;renderSlopeSurfSel();
+  $('fitBtn').disabled=false;$('elevBtn').disabled=SURFACES.length===0;$('waterBtn').disabled=SURFACES.length===0;$('waterDumpBtn').disabled=SURFACES.length===0;$('surfaceDisplayBtn').disabled=SURFACES.length===0;$('elevSpotsBtn').disabled=SURFACES.length===0;$('slopeBtn').disabled=SURFACES.length===0;$('rainPaintToolBtn').disabled=SURFACES.length===0;rainTriCache=null;renderSlopeSurfSel();
   $('orbitBtn').disabled=false;$('snapBtn').disabled=false;
   if(hadNothing)fit();else draw();
   hud(`imported ${nEnt} DXF entit${nEnt===1?'y':'ies'} across ${Object.keys(LAYERS).length} layer(s)`);
@@ -2391,7 +2515,7 @@ function importLandXML(text){
   const{nAlign,nCurve,nProfile}=importAlignments(doc);
   if(!nSurf&&!nPts&&!nNet&&!nAlign){hud('no <Surface> (TIN), <CgPoint>, <PipeNetwork>, or <Alignment> data found in this file');return;}
   renderLayerPanel();updateJobPill();
-  $('fitBtn').disabled=false;$('elevBtn').disabled=SURFACES.length===0;$('waterBtn').disabled=SURFACES.length===0;$('waterDumpBtn').disabled=SURFACES.length===0;$('surfaceDisplayBtn').disabled=SURFACES.length===0;$('elevSpotsBtn').disabled=SURFACES.length===0;$('slopeBtn').disabled=SURFACES.length===0;renderSlopeSurfSel();
+  $('fitBtn').disabled=false;$('elevBtn').disabled=SURFACES.length===0;$('waterBtn').disabled=SURFACES.length===0;$('waterDumpBtn').disabled=SURFACES.length===0;$('surfaceDisplayBtn').disabled=SURFACES.length===0;$('elevSpotsBtn').disabled=SURFACES.length===0;$('slopeBtn').disabled=SURFACES.length===0;$('rainPaintToolBtn').disabled=SURFACES.length===0;rainTriCache=null;renderSlopeSurfSel();
   $('orbitBtn').disabled=false;$('snapBtn').disabled=false;
   $('geomLabelsBtn').disabled=ALIGNMENTS.length===0;
   $('profileBtn').disabled=ALIGNMENTS.length===0;
@@ -2534,10 +2658,17 @@ $('waterBtn').onclick=()=>{
   if(profileOn){hud('Water flow is plan-view only — press P or 📈 Profile to switch back first');return;}
   if(waterOn){stopWaterAnimation();draw();hud('water flow animation off');return;}
   waterOn=true;$('waterBtn').classList.add('on');
-  initWaterParticles();waterLastTime=null;
+  initWaterParticles();waterLastTime=null;updateRainUI();
   waterAnimHandle=requestAnimationFrame(waterTick);
-  hud('🌊 water flow — droplets follow steepest-descent across the visible TIN surface(s)');
+  hud(RAIN.mode==='painted'?'🌧 rain on the painted area — drops land at random and flow downhill':'🌧 rain over the whole site — drops land at random and flow downhill (🖌 Rain Area to limit it)');
 };
+$('rainPaintToolBtn').onclick=()=>{if($('rainPaintToolBtn').disabled)return;setRainPaint(!rainPaintOn,false);};
+$('rainPaintBtn').onclick=()=>setRainPaint(!(rainPaintOn&&!RAIN.erase),false);
+$('rainEraseBtn').onclick=()=>setRainPaint(!(rainPaintOn&&RAIN.erase),true);
+$('rainClearBtn').onclick=()=>{RAIN.cells.clear();if(RAIN.mode==='painted'&&waterOn)initWaterParticles();updateRainUI();draw();hud('painted rain area cleared');};
+$('rainModeSel').onchange=()=>{RAIN.mode=$('rainModeSel').value;if(waterOn)initWaterParticles();updateRainUI();draw();};
+$('rainBrush').oninput=()=>{RAIN.brushPx=+$('rainBrush').value;updateRainUI();draw();};
+$('rainCount').oninput=()=>{$('sdWaterCount').value=$('rainCount').value;$('sdWaterCount').oninput();};
 $('waterDumpBtn').onclick=()=>{
   if($('waterDumpBtn').disabled)return;
   if(is3D){hud('Dump Water is 2D only — press O or ⟲ 3D to switch back first');return;}
@@ -2581,7 +2712,7 @@ $('sdArrowDensity').oninput=()=>{
 };
 $('sdWaterCount').oninput=()=>{
   const v=parseInt($('sdWaterCount').value,10);
-  $('sdWaterCountVal').textContent=v;
+  $('sdWaterCountVal').textContent=v;$('rainCountVal').textContent=v;$('rainCount').value=v;
   WATER_PARTICLE_COUNT=v;
   if(waterOn)initWaterParticles();   // re-seed live so the change is visible immediately, not just on the next toggle
 };
@@ -2602,7 +2733,7 @@ $('orbitBtn').onclick=()=>{
   if(is3D&&profileOn){profileOn=false;$('profileBtn').classList.remove('on');$('profilePanel').classList.remove('show');}
   $('legend').style.display=is3D?'none':'';
   $('view3dBox').classList.toggle('show',is3D);orbitHover=null;
-  if(is3D){if(slopePick)setSlopePick(false);$('slopePanel').classList.remove('show');elevPick=false;$('elevBtn').classList.remove('on');snapOn=false;$('snapBtn').classList.remove('on');waterDumpOn=false;$('waterDumpBtn').classList.remove('on');}   // 🌊 Water Flow / a live 💧 dump keep running and rendering in 3D too — only the CLICK-driven tools (which need a screen->world inverse the oblique 3D projection doesn't have) get disarmed here
+  if(is3D){if(rainPaintOn)setRainPaint(false);if(slopePick)setSlopePick(false);$('slopePanel').classList.remove('show');elevPick=false;$('elevBtn').classList.remove('on');snapOn=false;$('snapBtn').classList.remove('on');waterDumpOn=false;$('waterDumpBtn').classList.remove('on');}   // 🌊 Water Flow / a live 💧 dump keep running and rendering in 3D too — only the CLICK-driven tools (which need a screen->world inverse the oblique 3D projection doesn't have) get disarmed here
   cv.style.cursor=is3D?'grab':'crosshair';
   fit();hud(is3D?'3D orbit — drag to rotate (re-centers on click), shift-drag or middle-drag to pan, wheel to zoom · touch: one finger to orbit, two fingers to pinch-zoom/pan':'back to 2D plan view');
 };
@@ -2620,6 +2751,7 @@ $('profileBtn').onclick=()=>{
     if(is3D){is3D=false;$('orbitBtn').classList.remove('on');$('view3dBox').classList.remove('show');}
     elevPick=false;$('elevBtn').classList.remove('on');
     if(slopePick)setSlopePick(false);
+    if(rainPaintOn)setRainPaint(false);
     snapOn=false;$('snapBtn').classList.remove('on');
     waterDumpOn=false;$('waterDumpBtn').classList.remove('on');
     if(showMap){showMap=false;$('mapBtn').classList.remove('on');}
@@ -2673,6 +2805,7 @@ cv.addEventListener('pointerdown',e=>{
     drag={orbit:true,sx,sy,az:orbit.az,el:orbit.el,ox:orbit.ox,oy:orbit.oy,shift:e.shiftKey};
     try{cv.setPointerCapture(e.pointerId);}catch(_){}return;
   }
+  if(rainPaintOn){paintRainAt(sx,sy);drag={rainPaint:true};try{cv.setPointerCapture(e.pointerId);}catch(_){}draw();return;}
   if(slopePick){slopeClick(sx,sy);return;}
   if(elevPick){
     // stays armed after the click, so several spots can be saved in a row without re-toggling
@@ -2718,6 +2851,11 @@ cv.addEventListener('pointermove',e=>{
       pinchStart={d,mx,my};                                 // re-baseline every frame so each step is a small incremental delta, not drift-prone math relative to gesture start
       draw();return;
     }
+  }
+  if(rainPaintOn&&!is3D&&(!drag||drag.rainPaint)){
+    rainBrushHover={sx,sy};
+    if(drag&&drag.rainPaint){paintRainAt(sx,sy);if(RAIN.mode==='painted'&&waterOn&&!waterParticles.some(p=>!p.dumped&&isFinite(p.E)))initWaterParticles();}
+    draw();return;
   }
   if(slopePick&&!is3D&&!drag){
     liveSnap=snapPoint(sx,sy);
@@ -2786,7 +2924,8 @@ cv.addEventListener('wheel',e=>{
 },{passive:false});
 window.addEventListener('keydown',e=>{
   if(e.key==='Escape'){
-    if(slopePick){if(slopeA){slopeA=null;hud('point A cleared — click a new point A, Esc again to stop');}else{setSlopePick(false);hud('slope picking stopped');}draw();}
+    if(rainPaintOn){setRainPaint(false);hud('rain area painting stopped');}
+    else if(slopePick){if(slopeA){slopeA=null;hud('point A cleared — click a new point A, Esc again to stop');}else{setSlopePick(false);hud('slope picking stopped');}draw();}
     else if(elevPick){elevPick=false;$('elevBtn').classList.remove('on');hud('elevation picking stopped');draw();}
     else if(waterDumpOn){waterDumpOn=false;$('waterDumpBtn').classList.remove('on');hud('dump water cancelled');draw();}
     else if(snapOn){snapOn=false;$('snapBtn').classList.remove('on');liveSnap=null;hud('snap cancelled');draw();}
@@ -2799,7 +2938,7 @@ window.addEventListener('resize',resize);
 resize();
 
 /* ---------- version badge — bumped on every push, mirroring FBK-Checker's own fruit badge ---------- */
-const VERSION={animal:'🐨',name:'KOALA',build:19};
+const VERSION={animal:'🐨',name:'KOALA',build:20};
 function rotateAnimal(){const b=$('animalBadge');b.style.transform='rotate(360deg)';setTimeout(()=>{b.style.transform='rotate(0deg)';},200);}
 function showVersion(){const b=$('animalBadge');b.textContent=`${VERSION.animal} ${VERSION.name}`;
   b.title=`Build ${VERSION.build} · ${VERSION.name} — if this matches what Claude pushed, you're on the latest (no cache)`;}
