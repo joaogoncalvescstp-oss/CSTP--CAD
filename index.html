@@ -127,6 +127,19 @@ canvas{display:block;width:100%;height:100%;background:var(--bg);cursor:crosshai
       <input type="range" id="rainBrush" min="5" max="150" step="5" value="30">
       <span>Rain intensity (drops) <b id="rainCountVal">50</b></span>
       <input type="range" id="rainCount" min="5" max="5000" step="5" value="50">
+      <div style="border-top:1px solid var(--rule);margin:3px 0"></div>
+      <label title="Color every drop by how fast it's moving"><input type="checkbox" id="speedColorChk"> 🎨 Color drops by speed</label>
+      <div id="speedLegend" style="display:none;gap:6px;flex-wrap:wrap;font-size:10px">
+        <span><i style="display:inline-block;width:9px;height:9px;border-radius:50%;background:#ff4d4d"></i> slow &lt;2%</span>
+        <span><i style="display:inline-block;width:9px;height:9px;border-radius:50%;background:#ffd24a"></i> mid 2–5%</span>
+        <span><i style="display:inline-block;width:9px;height:9px;border-radius:50%;background:#4da3ff"></i> fast 5–10%</span>
+        <span><i style="display:inline-block;width:9px;height:9px;border-radius:50%;background:#c07bff"></i> super fast ≥10%</span>
+      </div>
+      <div class="row"><label title="Drops that reach a catch basin disappear (captured)"><input type="checkbox" id="cbOnChk"> 🕳 Catch basins</label><span id="cbInfo" style="font-size:10px">off</span></div>
+      <div class="row" style="gap:4px"><button id="cbPlaceBtn" style="flex:2" title="Click on the drawing to place a catch basin; click one to remove it">📍 Place basins</button><button id="cbClearBtn" style="flex:1">Clear</button></div>
+      <label title="Treat every imported Civil3D manhole / catch basin structure as an inlet too"><input type="checkbox" id="cbStructChk"> Use imported manholes / CBs as inlets</label>
+      <div class="row"><span>Capture radius <b id="cbRadiusVal">3</b> units</span></div>
+      <input type="range" id="cbRadius" min="0.5" max="50" step="0.5" value="3">
     </div>
     <div class="snapbox" id="snapBox">
       <label><input type="checkbox" id="snEndpoint" checked>▢ endpoint</label>
@@ -783,6 +796,7 @@ function draw2D(){
   drawSlopeArrows((E,N)=>W2S(E,N));
   drawRainArea((E,N)=>W2S(E,N),false);
   drawWaterParticles((E,N)=>W2S(E,N),false);
+  drawCatchBasins((E,N)=>W2S(E,N),false,view.s);
   // DXF entities
   ENTITIES.forEach(e=>{
     const ly=LAYERS[e.layer];if(ly&&!ly.visible)return;
@@ -859,6 +873,7 @@ function draw3D(){
   drawGeomLabels((E,N,Z)=>P3(E,N,Z));
   drawRainArea((E,N,Z)=>P3(E,N,Z),true);
   drawWaterParticles((E,N,Z)=>P3(E,N,Z),true);
+  drawCatchBasins((E,N,Z)=>P3(E,N,Z),true,orbit.s);
   ELEV_SPOTS.forEach((sp,i)=>{
     const isLast=i===ELEV_SPOTS.length-1,s3=P3(sp.E,sp.N,sp.z);
     ctx.globalAlpha=isLast?1:0.55;
@@ -1756,7 +1771,7 @@ function snapPoint(sx,sy){
     if(d<bnd){bnd=d;const[E,N]=S2W(x,y);best={E,N,Z:s.aZ+t*(s.bZ-s.aZ),sx:x,sy:y,type:'nearest',label:'nearest',tin:s.src.startsWith('tin')};}});
   return best;}
 function drawSnapMarker(){
-  const s=(snapOn||elevPick||slopePick)?liveSnap:null;if(!s)return;const x=s.sx,y=s.sy,r=7;ctx.save();
+  const s=(snapOn||elevPick||slopePick||basinPlaceOn)?liveSnap:null;if(!s)return;const x=s.sx,y=s.sy,r=7;ctx.save();
   ctx.lineWidth=2;ctx.strokeStyle='#35c184';ctx.fillStyle='rgba(53,193,132,.18)';
   if(s.type==='endpoint'){ctx.fillRect(x-r,y-r,2*r,2*r);ctx.strokeRect(x-r,y-r,2*r,2*r);}
   else if(s.type==='intersection'){ctx.beginPath();ctx.arc(x,y,r,0,7);ctx.fill();ctx.stroke();}
@@ -1768,7 +1783,7 @@ function drawSnapMarker(){
   ctx.restore();}
 function syncSnapBox(){
   const box=$('snapBox');if(!box)return;
-  box.classList.toggle('show',(snapOn||elevPick||slopePick)&&!is3D&&!profileOn);
+  box.classList.toggle('show',(snapOn||elevPick||slopePick||basinPlaceOn)&&!is3D&&!profileOn);
   const active=liveSnap&&(liveSnap.type==='center'||liveSnap.type==='quadrant'?'endpoint':liveSnap.type);
   ['snEndpoint','snIntersection','snMidpoint','snNearest'].forEach(id=>{
     const key=id.slice(2).toLowerCase();
@@ -2095,7 +2110,7 @@ function updateRainUI(){
   $('rainModeSel').value=RAIN.mode;$('rainBrushVal').textContent=RAIN.brushPx;
   $('rainPaintBtn').classList.toggle('on',rainPaintOn&&!RAIN.erase);$('rainEraseBtn').classList.toggle('on',rainPaintOn&&RAIN.erase);
   $('rainPaintToolBtn').classList.toggle('on',rainPaintOn);
-  $('rainBox').classList.toggle('show',(waterOn||rainPaintOn)&&!profileOn);
+  $('rainBox').classList.toggle('show',(waterOn||rainPaintOn||basinPlaceOn||WATER_CB.on)&&!profileOn);
 }
 function setRainPaint(on,erase){
   rainPaintOn=on;RAIN.erase=!!erase;rainBrushHover=null;
@@ -2103,11 +2118,87 @@ function setRainPaint(on,erase){
     if(is3D){rainPaintOn=false;hud('Painting rain areas is 2D plan only — press O or ⟲ 3D to switch back first');updateRainUI();return;}
     elevPick=false;$('elevBtn').classList.remove('on');snapOn=false;$('snapBtn').classList.remove('on');liveSnap=null;
     waterDumpOn=false;$('waterDumpBtn').classList.remove('on');if(typeof slopePick!=='undefined'&&slopePick)setSlopePick(false);
+    if(basinPlaceOn){basinPlaceOn=false;updateBasinUI();}
     if(!RAIN.erase&&RAIN.mode!=='painted'){RAIN.mode='painted';if(waterOn)initWaterParticles();}
     cv.style.cursor='none';
     hud(RAIN.erase?'⌫ drag to erase painted rain area · Esc to stop':'🖌 drag to paint where it rains · brush size in the 🌧 Rain box · Esc to stop');
   }else{cv.style.cursor=is3D?'grab':'crosshair';}
   updateRainUI();draw();
+}
+/* ---------- 🎨 water speed colors + 🕳 catch basins ----------
+   Speed classes color each drop by the flow speed its local terrain drives — i.e. the
+   steepest-descent GRADE of the triangle it's on. (The drawn motion itself has a minimum
+   speed so gentle sites still visibly move, so the raw on-screen speed would show nearly
+   every drop on a normal civil site as "slow"; the grade doesn't have that floor.)
+   Catch basins are inlet points: any drop that comes within WATER_CB.radius of one is
+   captured (counted, then removed — an ambient drop re-falls as new rain elsewhere). With
+   "use imported structures" on, every Civil3D manhole/CB in a visible pipe network is an inlet too. */
+const WATER_SPEED_CLASSES=[                                 // [upper bound on grade (rise/run), color, label]
+  [0.02,'#ff4d4d','slow'],[0.05,'#ffd24a','mid'],[0.10,'#4da3ff','fast'],[Infinity,'#c07bff','super fast']];
+const waterSpeedColor=v=>WATER_SPEED_CLASSES.find(c=>v<c[0])[1];
+const WATER_CB={speedColors:false,on:false,useStructs:false,radius:3,list:[],captured:0};   // list: [{E,N,name,count}]
+let basinPlaceOn=false;
+function waterBasins(){
+  if(!WATER_CB.on)return[];
+  const out=WATER_CB.list.slice();
+  if(WATER_CB.useStructs)PIPE_NETWORKS.forEach(net=>{const ly=LAYERS[net.layer];if(ly&&!ly.visible)return;
+    net.structs.forEach(st=>{if(st.dummy)return;
+      if(!st._cb)st._cb={E:st.E,N:st.N,Z:st.rim,name:st.name.replace(/\s*\([^)]*\)\s*$/,''),count:0,struct:true};
+      out.push(st._cb);});});
+  return out;
+}
+// the basin a drop at (E,N) falls into, or null
+function basinCapture(E,N,basins){
+  const r2=WATER_CB.radius*WATER_CB.radius;
+  for(const b of basins){const dE=E-b.E,dN=N-b.N;if(dE*dE+dN*dN<=r2)return b;}
+  return null;
+}
+function basinZ(b){
+  const h=findWaterTriangleAt(b.E,b.N);
+  if(h)return pointInTri(b.E,b.N,h.tri[0],h.tri[1],h.tri[2]);
+  return isFinite(b.Z)?b.Z:0;
+}
+function drawCatchBasins(proj,is3d,scale){
+  const basins=waterBasins();if(!basins.length)return;
+  ctx.save();
+  basins.forEach(b=>{
+    const[x,y]=proj(b.E,b.N,is3d?basinZ(b):0),rpx=WATER_CB.radius*scale;
+    if(rpx>5){ctx.setLineDash([3,3]);ctx.strokeStyle='rgba(53,193,132,.7)';ctx.lineWidth=1;ctx.beginPath();ctx.arc(x,y,rpx,0,Math.PI*2);ctx.stroke();ctx.setLineDash([]);}
+    ctx.fillStyle='#10261c';ctx.strokeStyle='#35c184';ctx.lineWidth=1.6;   // a grate: square with bars
+    ctx.fillRect(x-6,y-6,12,12);ctx.strokeRect(x-6,y-6,12,12);
+    ctx.beginPath();for(let k=-3;k<=3;k+=3){ctx.moveTo(x+k,y-6);ctx.lineTo(x+k,y+6);}ctx.stroke();
+    ctx.font='700 10px ui-monospace,monospace';drawLabel(`${b.name} · ${b.count}`,x+9,y-8,'#35c184');
+  });
+  ctx.restore();
+}
+function updateBasinUI(){
+  const basins=WATER_CB.on?waterBasins():[];
+  $('cbInfo').textContent=WATER_CB.on?`${basins.length} inlet(s) · ${WATER_CB.captured} drops caught`:'off';
+  $('cbPlaceBtn').classList.toggle('on',basinPlaceOn);$('cbRadiusVal').textContent=WATER_CB.radius;
+  $('speedLegend').style.display=WATER_CB.speedColors?'flex':'none';
+}
+function setBasinPlace(on){
+  basinPlaceOn=on;liveSnap=null;
+  if(on){
+    if(is3D||profileOn){basinPlaceOn=false;hud('Placing catch basins is 2D plan only — switch back with O / P first');updateBasinUI();return;}
+    if(!WATER_CB.on){WATER_CB.on=true;$('cbOnChk').checked=true;}
+    if(rainPaintOn)setRainPaint(false);
+    if(typeof slopePick!=='undefined'&&slopePick)setSlopePick(false);
+    elevPick=false;$('elevBtn').classList.remove('on');snapOn=false;$('snapBtn').classList.remove('on');waterDumpOn=false;$('waterDumpBtn').classList.remove('on');
+    hud('🕳 click to place a catch basin (snaps to points/vertices) · click an existing one to remove it · Esc to stop');
+  }
+  updateBasinUI();updateRainUI();draw();
+}
+function basinClick(sx,sy){
+  const hitIdx=WATER_CB.list.findIndex(b=>{const[x,y]=W2S(b.E,b.N);return Math.hypot(x-sx,y-sy)<10;});
+  if(hitIdx>=0){const b=WATER_CB.list.splice(hitIdx,1)[0];hud(`removed ${b.name}`);}
+  else{
+    const s=snapPoint(sx,sy),[E,N]=s?[s.E,s.N]:S2W(sx,sy);
+    const n=WATER_CB.list.reduce((m,b)=>Math.max(m,+(b.name.match(/\d+$/)||[0])[0]),0)+1;
+    WATER_CB.list.push({E,N,name:'CB'+n,count:0});
+    hud(`placed CB${n} at E ${E.toFixed(3)} N ${N.toFixed(3)}${s?' (snapped to '+s.label+')':''} — drops within ${WATER_CB.radius} units disappear there`);
+  }
+  updateBasinUI();draw();
 }
 function waterRandomTriangle(){
   const cands=[];
@@ -2174,11 +2265,12 @@ function dumpWaterAt(E,N){
 // (non-dumped) droplets' simple independent motion — a dumped burst is stepped separately,
 // as one interacting fluid, by flipStepDumped() below.
 function stepWaterParticles(dt,now){
-  const dumped=[];
+  const dumped=[],basins=waterBasins(),caught0=WATER_CB.captured;
   for(let i=waterParticles.length-1;i>=0;i--){
     const p=waterParticles[i];
     if(p.dumped){
       if(p.decayed(now)){waterParticles.splice(i,1);continue;}   // 15s is up — vanish outright, never respawn
+      if(basins.length){const b=basinCapture(p.E,p.N,basins);if(b){b.count++;WATER_CB.captured++;waterParticles.splice(i,1);continue;}}   // 🕳 fell into a catch basin
       dumped.push(p);continue;                                   // stepped as a group below, not one at a time here
     }
     if(!isFinite(p.E)){respawnWaterParticle(p);continue;}
@@ -2195,11 +2287,13 @@ function stepWaterParticles(dt,now){
     if(!dir){respawnWaterParticle(p);continue;}                 // pooled on a flat facet — restart elsewhere
     p._tri=tri;p._triLayer=layer;
     const speed=WATER_BASE_SPEED*Math.max(0.3,Math.min(1.5,dir.slope*3));   // faster on steeper ground, floored so gentle slopes still visibly creep
-    p.E+=dir.dirE*speed*dt;p.N+=dir.dirN*speed*dt;p.age+=dt;
+    p.E+=dir.dirE*speed*dt;p.N+=dir.dirN*speed*dt;p.age+=dt;p.grade=dir.slope;
+    if(basins.length){const b=basinCapture(p.E,p.N,basins);if(b){b.count++;WATER_CB.captured++;respawnWaterParticle(p);continue;}}   // 🕳 captured — re-falls as new rain
     p.trail.push({E:p.E,N:p.N});if(p.trail.length>WATER_TRAIL_LEN)p.trail.shift();
     if(p.age>(p.life||WATER_MAX_AGE))respawnWaterParticle(p);
   }
   if(dumped.length)flipStepDumped(dumped,dt);
+  if(WATER_CB.captured!==caught0)updateBasinUI();
 }
 
 /* ---------- 💧 dumped-burst FLIP fluid (grid PIC/FLIP transfer + incompressibility solve) ----------
@@ -2356,13 +2450,16 @@ function drawWaterParticles(proj,need3DZ){
       else ctx.arc(x,y,1+(1-k)*6,0,Math.PI*2);
       ctx.stroke();return;
     }
+    let sc=null;
+    if(WATER_CB.speedColors){let g=p.grade;if(p.dumped||g==null){const d=p._tri?triFlowDir(p._tri):null;g=d?d.slope:0;}sc=waterSpeedColor(g);}
     if(p.trail.length>=2){
-      ctx.strokeStyle='rgba(93,208,255,.55)';ctx.lineWidth=1.4;ctx.beginPath();
+      ctx.strokeStyle=sc||'rgba(93,208,255,.55)';ctx.globalAlpha=sc?0.6:1;ctx.lineWidth=1.4;ctx.beginPath();
       p.trail.forEach((pt,i)=>{const[x,y]=proj(pt.E,pt.N,z);i?ctx.lineTo(x,y):ctx.moveTo(x,y);});   // the trail's own older E/N points reuse the CURRENT z as a close approximation (a short, recent tail) rather than tracking a separate Z per trail point
       ctx.stroke();
     }
+    ctx.globalAlpha=1;
     const[x,y]=proj(p.E,p.N,z);
-    ctx.fillStyle='#bfefff';ctx.beginPath();ctx.arc(x,y,2.2,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle=sc||'#bfefff';ctx.beginPath();ctx.arc(x,y,sc?2.6:2.2,0,Math.PI*2);ctx.fill();
   });
 }
 function stopWaterAnimation(){
@@ -2698,6 +2795,12 @@ $('waterBtn').onclick=()=>{
   waterAnimHandle=requestAnimationFrame(waterTick);
   hud(RAIN.mode==='painted'?'🌧 rain on the painted area — drops land at random and flow downhill':'🌧 rain over the whole site — drops land at random and flow downhill (🖌 Rain Area to limit it)');
 };
+$('speedColorChk').onchange=()=>{WATER_CB.speedColors=$('speedColorChk').checked;updateBasinUI();draw();};
+$('cbOnChk').onchange=()=>{WATER_CB.on=$('cbOnChk').checked;if(!WATER_CB.on&&basinPlaceOn)setBasinPlace(false);updateBasinUI();updateRainUI();draw();};
+$('cbStructChk').onchange=()=>{WATER_CB.useStructs=$('cbStructChk').checked;if(WATER_CB.useStructs&&!PIPE_NETWORKS.length)hud('no pipe network imported — import a LandXML with Civil3D structures to use them as inlets');updateBasinUI();draw();};
+$('cbPlaceBtn').onclick=()=>setBasinPlace(!basinPlaceOn);
+$('cbClearBtn').onclick=()=>{WATER_CB.list=[];WATER_CB.captured=0;PIPE_NETWORKS.forEach(n=>n.structs.forEach(st=>{if(st._cb)st._cb.count=0;}));updateBasinUI();draw();hud('catch basins cleared');};
+$('cbRadius').oninput=()=>{WATER_CB.radius=+$('cbRadius').value;updateBasinUI();draw();};
 $('rainPaintToolBtn').onclick=()=>{if($('rainPaintToolBtn').disabled)return;setRainPaint(!rainPaintOn,false);};
 $('rainPaintBtn').onclick=()=>setRainPaint(!(rainPaintOn&&!RAIN.erase),false);
 $('rainEraseBtn').onclick=()=>setRainPaint(!(rainPaintOn&&RAIN.erase),true);
@@ -2769,7 +2872,7 @@ $('orbitBtn').onclick=()=>{
   if(is3D&&profileOn){profileOn=false;$('profileBtn').classList.remove('on');$('profilePanel').classList.remove('show');}
   $('legend').style.display=is3D?'none':'';
   $('view3dBox').classList.toggle('show',is3D);orbitHover=null;
-  if(is3D){if(rainPaintOn)setRainPaint(false);if(slopePick)setSlopePick(false);$('slopePanel').classList.remove('show');elevPick=false;$('elevBtn').classList.remove('on');snapOn=false;$('snapBtn').classList.remove('on');waterDumpOn=false;$('waterDumpBtn').classList.remove('on');}   // 🌊 Water Flow / a live 💧 dump keep running and rendering in 3D too — only the CLICK-driven tools (which need a screen->world inverse the oblique 3D projection doesn't have) get disarmed here
+  if(is3D){if(basinPlaceOn)setBasinPlace(false);if(rainPaintOn)setRainPaint(false);if(slopePick)setSlopePick(false);$('slopePanel').classList.remove('show');elevPick=false;$('elevBtn').classList.remove('on');snapOn=false;$('snapBtn').classList.remove('on');waterDumpOn=false;$('waterDumpBtn').classList.remove('on');}   // 🌊 Water Flow / a live 💧 dump keep running and rendering in 3D too — only the CLICK-driven tools (which need a screen->world inverse the oblique 3D projection doesn't have) get disarmed here
   cv.style.cursor=is3D?'grab':'crosshair';
   fit();hud(is3D?'3D orbit — drag to rotate (re-centers on click), shift-drag or middle-drag to pan, wheel to zoom · touch: one finger to orbit, two fingers to pinch-zoom/pan':'back to 2D plan view');
 };
@@ -2788,6 +2891,7 @@ $('profileBtn').onclick=()=>{
     elevPick=false;$('elevBtn').classList.remove('on');
     if(slopePick)setSlopePick(false);
     if(rainPaintOn)setRainPaint(false);
+    if(basinPlaceOn)setBasinPlace(false);
     snapOn=false;$('snapBtn').classList.remove('on');
     waterDumpOn=false;$('waterDumpBtn').classList.remove('on');
     if(showMap){showMap=false;$('mapBtn').classList.remove('on');}
@@ -2841,6 +2945,7 @@ cv.addEventListener('pointerdown',e=>{
     drag={orbit:true,sx,sy,az:orbit.az,el:orbit.el,ox:orbit.ox,oy:orbit.oy,shift:e.shiftKey};
     try{cv.setPointerCapture(e.pointerId);}catch(_){}return;
   }
+  if(basinPlaceOn){basinClick(sx,sy);return;}
   if(rainPaintOn){paintRainAt(sx,sy);drag={rainPaint:true};try{cv.setPointerCapture(e.pointerId);}catch(_){}draw();return;}
   if(slopePick){slopeClick(sx,sy);return;}
   if(elevPick){
@@ -2888,6 +2993,7 @@ cv.addEventListener('pointermove',e=>{
       draw();return;
     }
   }
+  if(basinPlaceOn&&!is3D&&!drag){liveSnap=snapPoint(sx,sy);draw();return;}
   if(rainPaintOn&&!is3D&&(!drag||drag.rainPaint)){
     rainBrushHover={sx,sy};
     if(drag&&drag.rainPaint){paintRainAt(sx,sy);if(RAIN.mode==='painted'&&waterOn&&!waterParticles.some(p=>!p.dumped&&isFinite(p.E)))initWaterParticles();}
@@ -2960,7 +3066,8 @@ cv.addEventListener('wheel',e=>{
 },{passive:false});
 window.addEventListener('keydown',e=>{
   if(e.key==='Escape'){
-    if(rainPaintOn){setRainPaint(false);hud('rain area painting stopped');}
+    if(basinPlaceOn){setBasinPlace(false);hud('catch basin placing stopped');}
+    else if(rainPaintOn){setRainPaint(false);hud('rain area painting stopped');}
     else if(slopePick){if(slopeA){slopeA=null;hud('point A cleared — click a new point A, Esc again to stop');}else{setSlopePick(false);hud('slope picking stopped');}draw();}
     else if(elevPick){elevPick=false;$('elevBtn').classList.remove('on');hud('elevation picking stopped');draw();}
     else if(waterDumpOn){waterDumpOn=false;$('waterDumpBtn').classList.remove('on');hud('dump water cancelled');draw();}
@@ -2974,7 +3081,7 @@ window.addEventListener('resize',resize);
 resize();
 
 /* ---------- version badge — CHANGED ON EVERY PUSH (new animal + name + build+1; see CLAUDE.md), mirroring FBK-Checker's own fruit badge ---------- */
-const VERSION={animal:'🦩',name:'FLAMINGO',build:24};
+const VERSION={animal:'🦦',name:'OTTER',build:25};
 function rotateAnimal(){const b=$('animalBadge');b.style.transform='rotate(360deg)';setTimeout(()=>{b.style.transform='rotate(0deg)';},200);}
 function showVersion(){const b=$('animalBadge');b.textContent=`${VERSION.animal} ${VERSION.name} · b${VERSION.build}`;
   b.title=`Build ${VERSION.build} · ${VERSION.name} — if this matches what Claude pushed, you're on the latest (no cache)`;}

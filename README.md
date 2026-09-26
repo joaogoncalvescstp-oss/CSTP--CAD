@@ -303,6 +303,22 @@ dependencies, and nothing to install.
   sit on a ~250-across grid over the site and show as a blue tint in 2D
   and draped on the surface in 3D.
 
+### 🎨 Speed colors and 🕳 catch basins (🌧 Rain box)
+
+- **🎨 Color drops by speed** (checkbox) colors each drop by the flow speed
+  its terrain drives, which is the local steepest-descent grade: red = slow
+  (<2%), yellow = mid (2–5%), blue = fast (5–10%), purple = super fast
+  (≥10%). On-screen motion has a minimum speed so gentle sites still move,
+  so the grade is what's colored, not the raw animation speed. Works for
+  rain and 💧 Dump Water, in 2D and 3D.
+- **🕳 Catch basins** (checkbox) turns inlets on. **📍 Place basins**: click
+  in 2D plan to drop a basin (snaps to points/vertices), click an existing
+  one to remove it, Esc stops. Any drop within the **capture radius** of an
+  inlet disappears. A rain drop re-falls elsewhere, a dumped drop is gone.
+  Each basin shows a grate icon, dashed capture circle and a running count;
+  the box shows the total caught. **Use imported manholes / CBs as inlets**
+  makes every Civil3D structure in a visible pipe network an inlet too.
+
 ## Slope between two points
 
 - **📏 Slope 2-Pt** measures the slope between two picked points on a
