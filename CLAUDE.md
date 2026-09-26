@@ -25,6 +25,7 @@ The badge renders as `<emoji> <NAME> · b<build>`.
 | 21 | 🦉 OWL | badge now changes every push and shows the build number |
 | 22 | 🐢 TURTLE | 📍 Label Points: check-all boxes for all alignments / lines / polylines |
 | 23 | 🐙 OCTOPUS | 📍 Label Points: reference alignment "None" keeps each alignment's own XML stationing |
+| 24 | 🦩 FLAMINGO | 📍 Label Points: thin dashed tangent lines PI→PC/PT and radius lines CC→PC/PT |
 
 ## Workflow
 

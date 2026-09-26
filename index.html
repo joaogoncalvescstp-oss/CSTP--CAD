@@ -1074,10 +1074,14 @@ function collectAlignmentKeyPoints(alignment){
     if(el.type==='curve'){
       const m=arcMidpoint(el);
       push('MID',{E:m.E,N:m.N,Z:((el.start.Z||0)+(el.end.Z||0))/2},el.staStart+el.length/2);
-      pts.push({type:'CC',E:el.center.E,N:el.center.N,Z:el.center.Z||0,sta:null});
-      if(el.pi)push('PI',el.pi,null);
+      // `links` = the curve's own start/end — drawn as thin dashed construction lines:
+      // CC → PC/PT are the two radii, PI → PC/PT the two tangents
+      const ends=[{E:el.start.E,N:el.start.N,Z:el.start.Z||0},{E:el.end.E,N:el.end.N,Z:el.end.Z||0}];
+      pts.push({type:'CC',E:el.center.E,N:el.center.N,Z:el.center.Z||0,sta:null,links:ends});
+      if(el.pi){push('PI',el.pi,null);pts[pts.length-1].links=ends;}
     }else if(el.type==='spiral'&&el.pi){
       push('SPI',el.pi,null);
+      pts[pts.length-1].links=[{E:el.start.E,N:el.start.N,Z:el.start.Z||0},{E:el.end.E,N:el.end.N,Z:el.end.Z||0}];
     }
   });
   (alignment.staEquations||[]).forEach(eq=>{
@@ -1296,6 +1300,18 @@ function drawGeomMarker(x,y,type,color){
 }
 function drawGeomLabels(proj){
   if(!GEOM_POINTS.length)return;
+  // thin dashed construction lines first, so markers/labels sit on top: PI/SPI → tangents to
+  // the curve's start/end, CC → radii to its PC/PT
+  ctx.save();ctx.setLineDash([5,4]);ctx.lineWidth=0.8;ctx.globalAlpha=0.75;
+  GEOM_POINTS.forEach(p=>{
+    if(!p.links)return;
+    const cat=GEOM_TYPE_CATEGORY[p.type]||'reference';if(!GEOM_LABEL_SHOW[cat])return;
+    const[x,y]=proj(p.E,p.N,p.Z||0);
+    ctx.strokeStyle=GEOM_CATEGORY_COLOR[cat];ctx.beginPath();
+    p.links.forEach(q=>{const[qx,qy]=proj(q.E,q.N,q.Z||0);ctx.moveTo(x,y);ctx.lineTo(qx,qy);});
+    ctx.stroke();
+  });
+  ctx.restore();
   GEOM_POINTS.forEach(p=>{
     const cat=GEOM_TYPE_CATEGORY[p.type]||'reference';
     if(!GEOM_LABEL_SHOW[cat])return;
@@ -2958,7 +2974,7 @@ window.addEventListener('resize',resize);
 resize();
 
 /* ---------- version badge — CHANGED ON EVERY PUSH (new animal + name + build+1; see CLAUDE.md), mirroring FBK-Checker's own fruit badge ---------- */
-const VERSION={animal:'🐙',name:'OCTOPUS',build:23};
+const VERSION={animal:'🦩',name:'FLAMINGO',build:24};
 function rotateAnimal(){const b=$('animalBadge');b.style.transform='rotate(360deg)';setTimeout(()=>{b.style.transform='rotate(0deg)';},200);}
 function showVersion(){const b=$('animalBadge');b.textContent=`${VERSION.animal} ${VERSION.name} · b${VERSION.build}`;
   b.title=`Build ${VERSION.build} · ${VERSION.name} — if this matches what Claude pushed, you're on the latest (no cache)`;}
