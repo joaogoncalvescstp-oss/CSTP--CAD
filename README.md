@@ -286,6 +286,21 @@ dependencies, and nothing to install.
   panning/rotating with the finger that's still down, rather than stopping
   the gesture dead. `touch-action:none` on the canvas hands all of this to
   the app instead of the browser's own native pinch-zoom/scroll.
+  - **Existing ground**: tick one or more loaded surfaces in the Profile
+    panel to draw the ground line along the alignment (dashed, earth-toned,
+    sampled every ~0.5 units, with gaps where the alignment leaves the surface).
+  - **Show % grades**: each design tangent is labeled with its grade, and
+    each vertical curve with its length, K value and crest/sag.
+  - **Vertical exaggeration**: Auto fills the view, or set a fixed value
+    (1×–50×) that ⊡ Fit and zooming keep.
+  - **📏 Measure**: click A then B (snaps to the design or ground line, or
+    a PVI) for ΔSta, ΔElev, grade % and slope length, drawn with run/rise
+    legs. Measurements stay until Clear. Esc cancels.
+  - **✥ Adjust PVIs**: drag a PVI to change its elevation (Shift-drag
+    slides its station between its neighbors). Grades, curves and
+    PVC/PVT/Hi/Lo update live. **↺ Reset profile** restores the imported
+    PVIs, and **⬇ PVIs** exports station / elevation / curve length /
+    grades / K as CSV.
 
 ## 🌧 Rain (Water Flow) and 🖌 painted rain areas
 

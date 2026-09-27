@@ -31,6 +31,7 @@ The badge renders as `<emoji> <NAME> · b<build>`.
 | 27 | 🦔 HEDGEHOG | UI cleanup: grouped toolbar + Import menu; every panel draggable / collapsible with remembered layout |
 | 28 | 🦜 PARROT | ☀/☾ light & dark theme toggle (UI vars + auto-adapted canvas colors) |
 | 29 | 🐧 PENGUIN | 🧊 3D view cube (faces / corners / home) + 🎥 perspective view with field of view |
+| 30 | 🦒 GIRAFFE | 📈 profile: existing-ground lines from surfaces, % grades + L/K, vertical exaggeration, measure & adjust-PVI tools |
 
 ## Workflow
 

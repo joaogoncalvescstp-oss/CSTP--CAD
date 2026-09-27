@@ -298,7 +298,22 @@ details.help[open]>summary{margin-bottom:4px}
       <h4><span>Profile View</span><button id="profileCloseBtn" title="Exit profile view">✕</button></h4>
       <details class="help"><summary>ℹ How this works</summary><p class="note">Station vs. elevation for one alignment. An alignment with an imported <code>&lt;Profile&gt;</code> shows its real design grade line and PVC/PVT/PVI/PVCC/PVRC/Hi/Lo; one without shows its horizontal geometry's own elevation instead, dashed, so it's never mistaken for an actual design profile.</p></details>
       <label style="display:block;margin-bottom:4px;font-size:11px;color:var(--mut)">Alignment</label>
-      <select id="profileAlignSel" style="width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--rule);border-radius:5px;padding:5px"></select>
+      <select id="profileAlignSel" style="width:100%;margin-bottom:8px;background:var(--panel2);color:var(--text);border:1px solid var(--rule);border-radius:5px;padding:5px"></select>
+      <label style="display:block;margin-bottom:4px;font-size:11px;color:var(--mut)">Existing ground from surface(s)</label>
+      <div id="profSurfList" style="display:flex;flex-direction:column;gap:3px;margin-bottom:8px;font-size:12px"></div>
+      <label style="margin-bottom:6px;font-size:12px"><input type="checkbox" id="profGradesChk" checked> Show % grades (and curve L / K)</label>
+      <div style="display:flex;align-items:center;justify-content:space-between;font-size:11px;color:var(--mut);margin:6px 0 2px"><span>Vertical exaggeration <b id="profVEVal" style="color:var(--gold)">—</b></span><label style="font-size:11px"><input type="checkbox" id="profVEAuto" checked> Auto</label></div>
+      <input type="range" id="profVE" min="1" max="50" step="0.5" value="10" style="width:100%;margin-bottom:10px">
+      <div style="display:flex;gap:6px;margin-bottom:6px">
+        <button class="btn" id="profMeasureBtn" style="flex:1" title="Click two points on the profile to measure ΔSta, ΔElev, grade % and slope length (Esc cancels)">📏 Measure</button>
+        <button class="btn" id="profAdjustBtn" style="flex:1" title="Drag a PVI to adjust the design profile (Shift-drag slides its station)">✥ Adjust PVIs</button>
+      </div>
+      <div style="display:flex;gap:6px;margin-bottom:6px">
+        <button class="btn" id="profClearBtn" style="flex:1" title="Clear measurements">Clear</button>
+        <button class="btn" id="profResetBtn" style="flex:1" title="Undo every PVI adjustment on this alignment" disabled>↺ Reset profile</button>
+        <button class="btn" id="profCsvBtn" style="flex:1" title="Export this alignment's PVIs (station, elevation, curve length, grades, K)">⬇ PVIs</button>
+      </div>
+      <p class="note" id="profInfo"></p>
     </div>
     <div class="hud" id="hud">Import a DXF or LandXML (TIN / pipe network) file to begin. Drag to pan, wheel to zoom — on a touchscreen: one finger to pan/orbit, two fingers to pinch-zoom or pan, double-tap to fit.</div>
   </div>
@@ -1327,6 +1342,91 @@ function sampleGeometryElevationLine(alignment,steps=200){
   return pts;
 }
 function profileLineFor(alignment){return alignment.profile?sampleProfileLine(alignment):sampleGeometryElevationLine(alignment);}
+/* ---------- 📈 profile extras: existing-ground lines, % grades, vertical exaggeration, measure / adjust ----------
+   PROF.surfaces: surface names whose ground line (sampled along the alignment) is drawn.
+   PROF.ve: null = auto (fit fills the view) or a fixed vertical exaggeration (sy = sx × ve).
+   Tools: 'measure' = click A then B (snaps to the design / ground line under the cursor) for
+   ΔSta, ΔElev, grade % and slope length; 'adjust' = drag a PVI of the design profile (up/down
+   for elevation, Shift-drag to slide its station between its neighbors) — grades, curves and
+   PVC/PVT/Hi/Lo update live; Reset restores the imported profile. */
+const PROF={surfaces:null,grades:true,ve:null,tool:null,meas:[],measA:null,hover:null,dragPvi:null};
+const profEGCache=new Map();
+function profileGroundLine(a,s){
+  const key=a.name+'|'+s.name+'|'+s.tris.length;
+  if(profEGCache.has(key))return profEGCache.get(key);
+  const els=a.elements,st0=els[0].staStart,st1=els[els.length-1].staStart+els[els.length-1].length;
+  const n=Math.min(1500,Math.max(100,Math.round((st1-st0)/0.5)));
+  const segs=[];let cur=null;
+  for(let i=0;i<=n;i++){const sta=st0+(st1-st0)*i/n,p=stationToPoint(a,sta),z=surfaceZAt(s,p.E,p.N);
+    if(z==null){cur=null;continue;}                           // off the surface — break the line
+    if(!cur){cur=[];segs.push(cur);}cur.push({sta,elev:z});}
+  profEGCache.set(key,segs);return segs;
+}
+function profSurfacesShown(){if(PROF.surfaces==null)PROF.surfaces=new Set(SURFACES.map(s=>s.name));return SURFACES.filter(s=>PROF.surfaces.has(s.name));}
+function profAllLines(a){                                       // every polyline drawn in the profile: [{pts,kind,name}]
+  const out=[{pts:profileLineFor(a),kind:'design',name:a.profile?'design':'geometry'}];
+  profSurfacesShown().forEach(s=>profileGroundLine(a,s).forEach(seg=>out.push({pts:seg,kind:'ground',name:s.name,layer:s.layer})));
+  return out;
+}
+function lineElevAt(pts,sta){for(let i=0;i<pts.length-1;i++){const a=pts[i],b=pts[i+1];if(sta>=a.sta&&sta<=b.sta){const t=(sta-a.sta)/((b.sta-a.sta)||1);return a.elev+(b.elev-a.elev)*t;}}return null;}
+// snap a profile click to the nearest drawn line directly above/below the cursor (≤12px), else free
+function profSnap(sx,sy){
+  const a=ALIGNMENTS.find(x=>x.name===profileAlignName);const[sta,elev]=S2STA(sx,sy);
+  let best=null,bd=12;
+  if(a){
+    if(a.profile)a.profile.pvis.forEach(p=>{const[x,y]=STA2S(p.sta,p.elev),d=Math.hypot(x-sx,y-sy);if(d<bd+2){bd=d-2;best={sta:p.sta,elev:p.elev,label:'PVI'};}});
+    profAllLines(a).forEach(L=>{const z=lineElevAt(L.pts,sta);if(z==null)return;const[,y]=STA2S(sta,z),d=Math.abs(y-sy);if(d<bd){bd=d;best={sta,elev:z,label:L.kind==='ground'?'ground '+L.name:'design line'};}});
+  }
+  return best||{sta,elev,label:null};
+}
+function profMeasureText(A,B){const dS=B.sta-A.sta,dE=B.elev-A.elev,g=dS?dE/dS*100:NaN;
+  return `ΔSta ${Math.abs(dS).toFixed(2)} · ΔEl ${dE>=0?'+':''}${dE.toFixed(3)} · ${isFinite(g)?(g>=0?'+':'')+g.toFixed(2)+'%':'vertical'} · L ${Math.hypot(dS,dE).toFixed(2)}`;}
+function drawProfMeasure(A,B,color,dash){
+  const[ax,ay]=STA2S(A.sta,A.elev),[bx,by]=STA2S(B.sta,B.elev);
+  ctx.save();ctx.strokeStyle=color;ctx.fillStyle=color;ctx.lineWidth=1.6;if(dash)ctx.setLineDash([6,4]);
+  ctx.beginPath();ctx.moveTo(ax,ay);ctx.lineTo(bx,by);ctx.stroke();ctx.setLineDash([3,3]);ctx.lineWidth=1;
+  ctx.beginPath();ctx.moveTo(ax,ay);ctx.lineTo(bx,ay);ctx.lineTo(bx,by);ctx.stroke();ctx.setLineDash([]);   // run / rise legs
+  [[ax,ay],[bx,by]].forEach(([x,y])=>{ctx.beginPath();ctx.arc(x,y,3.5,0,Math.PI*2);ctx.fill();});
+  ctx.font='700 11px ui-monospace,monospace';drawLabel(profMeasureText(A,B),(ax+bx)/2+8,Math.min(ay,by)-10,color);ctx.restore();
+}
+// % grade on each tangent + L / K on each vertical curve
+function drawProfileGrades(a){
+  if(!PROF.grades||!a.profile)return;
+  const pv=a.profile.pvis,g=profileGrades(pv);
+  ctx.save();ctx.font='700 11px ui-monospace,monospace';ctx.textAlign='center';
+  for(let k=0;k<pv.length-1;k++){
+    const s0=pv[k].sta+(k>0&&pv[k].curveLength?pv[k].curveLength/2:0),s1=pv[k+1].sta-(k+1<pv.length-1&&pv[k+1].curveLength?pv[k+1].curveLength/2:0);
+    const sm=(s0+s1)/2,em=pv[k].elev+g[k]*(sm-pv[k].sta);
+    const[x0,y0]=STA2S(pv[k].sta,pv[k].elev),[x1,y1]=STA2S(pv[k+1].sta,pv[k+1].elev),[xm,ym]=STA2S(sm,em);
+    if(Math.abs(x1-x0)<60)continue;
+    ctx.save();ctx.translate(xm,ym);ctx.rotate(Math.atan2(y1-y0,x1-x0));
+    ctx.lineWidth=3;ctx.strokeStyle='rgba(11,15,26,.85)';const t=`${g[k]>=0?'+':''}${(g[k]*100).toFixed(2)}%`;
+    ctx.strokeText(t,0,-7);ctx.fillStyle='#ffd24a';ctx.fillText(t,0,-7);ctx.restore();
+  }
+  ctx.textAlign='start';
+  for(let i=1;i<pv.length-1;i++){const L=pv[i].curveLength;if(!L)continue;
+    const A=(g[i]-g[i-1])*100,K=Math.abs(A)>1e-9?L/Math.abs(A):Infinity,[x,y]=STA2S(pv[i].sta,pv[i].elev);
+    ctx.font='600 10px ui-monospace,monospace';drawLabel(`L=${L.toFixed(0)}  K=${isFinite(K)?K.toFixed(1):'∞'}  ${A>0?'sag':'crest'}`,x-40,y+(A>0?30:-30),'#c792ff');}
+  ctx.restore();
+}
+function profileVE(){return pview.sy/pview.sx;}
+function setProfileVE(ve){                                      // rescale vertically about the view's center
+  const h=cv.height/devicePixelRatio,[,ec]=S2STA(0,h/2);
+  pview.sy=pview.sx*ve;pview.y=h/2+ec*pview.sy;
+}
+function renderProfileExtras(){
+  const list=$('profSurfList');if(!list)return;
+  profSurfacesShown();
+  list.innerHTML=SURFACES.length?SURFACES.map(s=>`<label><input type="checkbox" class="profSurf" value="${s.name.replace(/"/g,'&quot;')}"${PROF.surfaces.has(s.name)?' checked':''}> ⛰ ${s.name}</label>`).join(''):'<span class="note">no surface loaded — import a LandXML TIN to draw existing ground</span>';
+  $('profGradesChk').checked=PROF.grades;$('profVEAuto').checked=PROF.ve==null;
+  const ve=PROF.ve??profileVE();$('profVE').value=Math.min(50,ve);$('profVEVal').textContent=ve.toFixed(1)+'×';
+  $('profMeasureBtn').classList.toggle('on',PROF.tool==='measure');$('profAdjustBtn').classList.toggle('on',PROF.tool==='adjust');
+  const a=ALIGNMENTS.find(x=>x.name===profileAlignName);
+  $('profResetBtn').disabled=!(a&&a.profile&&a.profile._orig);
+  $('profInfo').textContent=PROF.tool==='measure'?(PROF.measA?'click point B':'click point A (snaps to the design / ground line)')
+    :PROF.tool==='adjust'?(a&&a.profile?'drag a PVI up/down to change its elevation · Shift-drag to slide its station':'this alignment has no <Profile> to adjust'):'';
+}
+function setProfTool(t){PROF.tool=PROF.tool===t?null:t;PROF.measA=null;PROF.hover=null;cv.style.cursor=PROF.tool?'crosshair':'crosshair';renderProfileExtras();draw();}
 function profileBounds(line){
   let minSta=Infinity,maxSta=-Infinity,minElev=Infinity,maxElev=-Infinity;
   line.forEach(p=>{minSta=Math.min(minSta,p.sta);maxSta=Math.max(maxSta,p.sta);minElev=Math.min(minElev,p.elev);maxElev=Math.max(maxElev,p.elev);});
@@ -1334,13 +1434,15 @@ function profileBounds(line){
 }
 function fitProfile(){
   const a=ALIGNMENTS.find(x=>x.name===profileAlignName);if(!a)return;
-  const b=profileBounds(profileLineFor(a));
+  const b=profileBounds(profAllLines(a).flatMap(L=>L.pts));
   if(b.minSta>b.maxSta)return;
   const w=cv.width/devicePixelRatio,h=cv.height/devicePixelRatio,padX=60,padY=40;
   pview.sx=(w-2*padX)/((b.maxSta-b.minSta)||1);
   pview.sy=(h-2*padY)/((b.maxElev-b.minElev)||1);
-  pview.x=padX-b.minSta*pview.sx;
-  pview.y=h-padY+b.minElev*pview.sy;
+  if(PROF.ve!=null){pview.sy=Math.min(pview.sy,pview.sx*PROF.ve);pview.sx=pview.sy/PROF.ve;}   // fixed exaggeration: fit whichever axis is tighter
+  pview.x=w/2-((b.minSta+b.maxSta)/2)*pview.sx;
+  pview.y=h/2+((b.minElev+b.maxElev)/2)*pview.sy;
+  if(typeof renderProfileExtras==='function')renderProfileExtras();
 }
 function renderProfileAlignSelect(){
   const sel=$('profileAlignSel');
@@ -1373,6 +1475,14 @@ function drawProfile(){
     ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,h);ctx.stroke();
     ctx.fillStyle='#cfe0ff';ctx.font='9px ui-monospace,monospace';ctx.fillText(p.type,x+2,12);
   });
+  // existing-ground line(s) from the loaded surface(s)
+  // dashed, in earth tones — never the design line's own blue, so ground vs design reads at a glance
+  const EG_COLORS=['#d9a066','#8fe3a0','#ff7ab3','#c792ff','#ffd24a'];
+  profSurfacesShown().forEach((sf,k)=>{const col=EG_COLORS[k%EG_COLORS.length];
+    profileGroundLine(a,sf).forEach((seg,si)=>{
+      ctx.strokeStyle=col;ctx.lineWidth=1.5;ctx.setLineDash([7,4]);ctx.beginPath();seg.forEach((p,i)=>{const[x,y]=STA2S(p.sta,p.elev);i?ctx.lineTo(x,y):ctx.moveTo(x,y);});ctx.stroke();ctx.setLineDash([]);
+      if(si===0&&seg.length){const[x,y]=STA2S(seg[0].sta,seg[0].elev);ctx.font='700 10px ui-monospace,monospace';drawLabel(`⛰ ${sf.name}`,x+4,y+14,col);}
+    });});
   // the grade line itself
   ctx.strokeStyle=hasProfile?'#7fd4ff':'#8a99b8';ctx.lineWidth=1.8;
   if(!hasProfile)ctx.setLineDash([6,4]);
@@ -1390,6 +1500,12 @@ function drawProfile(){
       placeLabelBlock(lines,x+6,y-6,color,11);
     });
   }
+  drawProfileGrades(a);
+  if(PROF.tool==='adjust'&&hasProfile)a.profile.pvis.forEach((p,i)=>{const[x,y]=STA2S(p.sta,p.elev);
+    ctx.strokeStyle=PROF.dragPvi===i?'#f1b434':'#7fd4ff';ctx.lineWidth=2;ctx.strokeRect(x-6,y-6,12,12);});   // draggable handles
+  PROF.meas.forEach(m=>drawProfMeasure(m.a,m.b,'#ff5ea8',false));
+  if(PROF.measA)drawProfMeasure(PROF.measA,PROF.hover||PROF.measA,'#ffd24a',true);
+  if(PROF.tool&&PROF.hover&&PROF.hover.label){const[x,y]=STA2S(PROF.hover.sta,PROF.hover.elev);ctx.strokeStyle='#35c184';ctx.lineWidth=2;ctx.strokeRect(x-5,y-5,10,10);}
   ctx.fillStyle='#e7ecf7';ctx.font='700 12px ui-monospace,monospace';
   ctx.fillText(`${a.name} — profile${hasProfile?'':' (no <Profile> in file — showing horizontal geometry elevation)'}`,12,18);
   ctx.fillStyle='#8a99b8';ctx.font='10px ui-monospace,monospace';
@@ -2771,7 +2887,7 @@ function importDXF(text){
   }
   if(!nEnt){hud('no recognized entities found (LINE / LWPOLYLINE / POLYLINE / POINT / CIRCLE / 3DFACE)');return;}
   renderLayerPanel();updateJobPill();
-  $('fitBtn').disabled=false;$('elevBtn').disabled=SURFACES.length===0;$('waterBtn').disabled=SURFACES.length===0;$('waterDumpBtn').disabled=SURFACES.length===0;$('surfaceDisplayBtn').disabled=SURFACES.length===0;$('elevSpotsBtn').disabled=SURFACES.length===0;$('slopeBtn').disabled=SURFACES.length===0;$('rainPaintToolBtn').disabled=SURFACES.length===0;rainTriCache=null;pipeGraphCache=null;renderSlopeSurfSel();
+  $('fitBtn').disabled=false;$('elevBtn').disabled=SURFACES.length===0;$('waterBtn').disabled=SURFACES.length===0;$('waterDumpBtn').disabled=SURFACES.length===0;$('surfaceDisplayBtn').disabled=SURFACES.length===0;$('elevSpotsBtn').disabled=SURFACES.length===0;$('slopeBtn').disabled=SURFACES.length===0;$('rainPaintToolBtn').disabled=SURFACES.length===0;rainTriCache=null;pipeGraphCache=null;profEGCache.clear();if(PROF.surfaces)SURFACES.forEach(sf=>PROF.surfaces.add(sf.name));renderSlopeSurfSel();
   $('orbitBtn').disabled=false;$('snapBtn').disabled=false;
   if(hadNothing)fit();else draw();
   hud(`imported ${nEnt} DXF entit${nEnt===1?'y':'ies'} across ${Object.keys(LAYERS).length} layer(s)`);
@@ -2864,7 +2980,7 @@ function importLandXML(text){
   const{nAlign,nCurve,nProfile}=importAlignments(doc);
   if(!nSurf&&!nPts&&!nNet&&!nAlign){hud('no <Surface> (TIN), <CgPoint>, <PipeNetwork>, or <Alignment> data found in this file');return;}
   renderLayerPanel();updateJobPill();
-  $('fitBtn').disabled=false;$('elevBtn').disabled=SURFACES.length===0;$('waterBtn').disabled=SURFACES.length===0;$('waterDumpBtn').disabled=SURFACES.length===0;$('surfaceDisplayBtn').disabled=SURFACES.length===0;$('elevSpotsBtn').disabled=SURFACES.length===0;$('slopeBtn').disabled=SURFACES.length===0;$('rainPaintToolBtn').disabled=SURFACES.length===0;rainTriCache=null;pipeGraphCache=null;renderSlopeSurfSel();
+  $('fitBtn').disabled=false;$('elevBtn').disabled=SURFACES.length===0;$('waterBtn').disabled=SURFACES.length===0;$('waterDumpBtn').disabled=SURFACES.length===0;$('surfaceDisplayBtn').disabled=SURFACES.length===0;$('elevSpotsBtn').disabled=SURFACES.length===0;$('slopeBtn').disabled=SURFACES.length===0;$('rainPaintToolBtn').disabled=SURFACES.length===0;rainTriCache=null;pipeGraphCache=null;profEGCache.clear();if(PROF.surfaces)SURFACES.forEach(sf=>PROF.surfaces.add(sf.name));renderSlopeSurfSel();
   $('orbitBtn').disabled=false;$('snapBtn').disabled=false;
   $('geomLabelsBtn').disabled=ALIGNMENTS.length===0;
   $('profileBtn').disabled=ALIGNMENTS.length===0;
@@ -3126,7 +3242,7 @@ $('profileBtn').onclick=()=>{
     if(waterOn)stopWaterAnimation();
     if(!profileAlignName||!ALIGNMENTS.some(a=>a.name===profileAlignName))profileAlignName=ALIGNMENTS[0]?.name||null;
     renderProfileAlignSelect();
-    $('profilePanel').classList.add('show');
+    $('profilePanel').classList.add('show');renderProfileExtras();
   }else{
     $('profilePanel').classList.remove('show');
   }
@@ -3135,7 +3251,20 @@ $('profileBtn').onclick=()=>{
   hud(profileOn?'profile view — drag to pan, wheel to zoom (both axes together) · pick an alignment from the Profile panel':'back to 2D plan view');
 };
 $('profileCloseBtn').onclick=()=>{if(!$('profileBtn').disabled)$('profileBtn').onclick();};
-$('profileAlignSel').onchange=()=>{profileAlignName=$('profileAlignSel').value;fit();};
+$('profileAlignSel').onchange=()=>{profileAlignName=$('profileAlignSel').value;PROF.meas=[];PROF.measA=null;fit();};
+$('profSurfList').addEventListener('change',e=>{if(!e.target.classList.contains('profSurf'))return;e.target.checked?PROF.surfaces.add(e.target.value):PROF.surfaces.delete(e.target.value);draw();});
+$('profGradesChk').onchange=()=>{PROF.grades=$('profGradesChk').checked;draw();};
+$('profVEAuto').onchange=()=>{PROF.ve=$('profVEAuto').checked?null:+$('profVE').value;fitProfile();draw();};
+$('profVE').oninput=()=>{PROF.ve=+$('profVE').value;$('profVEAuto').checked=false;setProfileVE(PROF.ve);renderProfileExtras();draw();};
+$('profMeasureBtn').onclick=()=>setProfTool('measure');
+$('profAdjustBtn').onclick=()=>setProfTool('adjust');
+$('profClearBtn').onclick=()=>{PROF.meas=[];PROF.measA=null;draw();};
+$('profResetBtn').onclick=()=>{const a=ALIGNMENTS.find(x=>x.name===profileAlignName);if(a&&a.profile&&a.profile._orig){a.profile.pvis=a.profile._orig.map(p=>({...p}));delete a.profile._orig;hud('profile reset to the imported PVIs');renderProfileExtras();draw();}};
+$('profCsvBtn').onclick=()=>{const a=ALIGNMENTS.find(x=>x.name===profileAlignName);if(!a||!a.profile){hud('this alignment has no <Profile> PVIs to export');return;}
+  const pv=a.profile.pvis,g=profileGrades(pv),rows=[['PVI','Station','Elevation','Curve length','Grade in %','Grade out %','K'].join(',')];
+  pv.forEach((p,i)=>{const gi=i>0?g[i-1]:null,go=i<pv.length-1?g[i]:null,A=gi!=null&&go!=null?(go-gi)*100:null;
+    rows.push([i+1,formatStation(p.sta),p.elev.toFixed(3),p.curveLength||'',gi!=null?(gi*100).toFixed(3):'',go!=null?(go*100).toFixed(3):'',p.curveLength&&A?(p.curveLength/Math.abs(A)).toFixed(2):''].map(geomCSVField).join(','));});
+  const el=document.createElement('a');el.href=URL.createObjectURL(new Blob([rows.join('\r\n')],{type:'text/csv'}));el.download=`${a.name}-PVIs.csv`;el.click();setTimeout(()=>URL.revokeObjectURL(el.href),1000);};
 
 /* ---------- canvas interaction: pan, zoom, elevation pick, orbit, snap ---------- */
 cv.addEventListener('pointerdown',e=>{
@@ -3160,6 +3289,20 @@ cv.addEventListener('pointerdown',e=>{
       :profileOn?{profile:true,sx,sy,x0:pview.x,y0:pview.y}
       :{pan:true,sx,sy,x0:view.x,y0:view.y};
     try{cv.setPointerCapture(e.pointerId);}catch(_){}return;
+  }
+  if(profileOn&&PROF.tool==='measure'){
+    const pt=profSnap(sx,sy);
+    if(!PROF.measA){PROF.measA=pt;}else{PROF.meas.push({a:PROF.measA,b:pt});hud('📏 '+profMeasureText(PROF.measA,pt));PROF.measA=null;}
+    renderProfileExtras();draw();return;
+  }
+  if(profileOn&&PROF.tool==='adjust'){
+    const a=ALIGNMENTS.find(x=>x.name===profileAlignName);
+    const i=a&&a.profile?a.profile.pvis.findIndex(p=>{const[x,y]=STA2S(p.sta,p.elev);return Math.hypot(x-sx,y-sy)<10;}):-1;
+    if(i>=0){
+      if(!a.profile._orig)a.profile._orig=a.profile.pvis.map(p=>({...p}));
+      PROF.dragPvi=i;drag={pvi:i,a,sx,sy,sta0:a.profile.pvis[i].sta,el0:a.profile.pvis[i].elev,shift:e.shiftKey};
+      try{cv.setPointerCapture(e.pointerId);}catch(_){}draw();return;
+    }
   }
   if(profileOn){
     drag={profile:true,sx,sy,x0:pview.x,y0:pview.y};
@@ -3244,6 +3387,10 @@ cv.addEventListener('pointermove',e=>{
     else{const[E,N]=S2W(sx,sy);hud(`free · E ${E.toFixed(3)} N ${N.toFixed(3)}${suffix}`);}
     draw();return;
   }
+  if(profileOn&&!drag&&PROF.tool){PROF.hover=profSnap(sx,sy);
+    if(PROF.tool==='measure'&&PROF.measA)hud('📏 '+profMeasureText(PROF.measA,PROF.hover));
+    else if(PROF.hover.label)hud(`${PROF.hover.label} · STA ${formatStation(PROF.hover.sta)} · EL ${PROF.hover.elev.toFixed(3)}`);
+    draw();return;}
   if(is3D&&!drag){                                          // 🧊 view cube hover
     const vc=vcubeHit(sx,sy),changed=(vc&&vc.id)!==(VCUBE.hover&&VCUBE.hover.id);
     VCUBE.hover=vc;cv.style.cursor=vc?'pointer':'grab';
@@ -3262,6 +3409,14 @@ cv.addEventListener('pointermove',e=>{
   if(drag.pan){if(is3D){orbit.ox=drag.x0+(sx-drag.sx);orbit.oy=drag.y0+(sy-drag.sy);}
     else{view.x=drag.x0+(sx-drag.sx);view.y=drag.y0+(sy-drag.sy);scheduleMapRefresh();}draw();return;}
   if(drag.profile){pview.x=drag.x0+(sx-drag.sx);pview.y=drag.y0+(sy-drag.sy);draw();return;}
+  if(drag.pvi!=null){                                        // ✥ dragging a PVI
+    const pv=drag.a.profile.pvis,i=drag.pvi,p=pv[i];
+    p.elev=drag.el0-(sy-drag.sy)/pview.sy;
+    if(drag.shift&&i>0&&i<pv.length-1){const lo=pv[i-1].sta+1e-3,hi=pv[i+1].sta-1e-3;p.sta=Math.max(lo,Math.min(hi,drag.sta0+(sx-drag.sx)/pview.sx));}
+    const g=profileGrades(pv);
+    hud(`✥ PVI ${i+1}: STA ${formatStation(p.sta)} · EL ${p.elev.toFixed(3)}${i>0?` · grade in ${(g[i-1]*100).toFixed(2)}%`:''}${i<pv.length-1?` · grade out ${(g[i]*100).toFixed(2)}%`:''}`);
+    draw();return;
+  }
 });
 function endTouchPointer(e){                                // shared by pointerup/pointercancel — a cancel (e.g. the OS interrupting mid-gesture) must still clean up activeTouches/pinchStart/tapCandidate the same way, or a "stuck" phantom touch could silently break the next real gesture
   if(!e||e.pointerType!=='touch')return false;
@@ -3290,7 +3445,7 @@ function endTouchPointer(e){                                // shared by pointer
   }
   return false;
 }
-window.addEventListener('pointerup',e=>{if(orbitDragging){orbitDragging=false;if(is3D)draw();}if(endTouchPointer(e))return;drag=null;if(showMap&&!is3D)scheduleMapRefresh();});
+window.addEventListener('pointerup',e=>{if(PROF.dragPvi!=null){PROF.dragPvi=null;renderProfileExtras();draw();}if(orbitDragging){orbitDragging=false;if(is3D)draw();}if(endTouchPointer(e))return;drag=null;if(showMap&&!is3D)scheduleMapRefresh();});
 window.addEventListener('pointercancel',e=>{orbitDragging=false;if(endTouchPointer(e))return;drag=null;});
 cv.addEventListener('wheel',e=>{
   e.preventDefault();
@@ -3302,7 +3457,8 @@ cv.addEventListener('wheel',e=>{
 window.addEventListener('keydown',e=>{
   if(e.key!=='Escape'&&/^(INPUT|SELECT|TEXTAREA)$/.test((e.target&&e.target.tagName)||''))return;   // typing a station/interval — don't trigger F/O/P
   if(e.key==='Escape'){
-    if(basinPlaceOn){setBasinPlace(false);hud('catch basin placing stopped');}
+    if(profileOn&&PROF.tool){if(PROF.measA){PROF.measA=null;hud('measure point A cleared');}else{PROF.tool=null;hud('profile tool off');}renderProfileExtras();draw();}
+    else if(basinPlaceOn){setBasinPlace(false);hud('catch basin placing stopped');}
     else if(rainPaintOn){setRainPaint(false);hud('rain area painting stopped');}
     else if(slopePick){if(slopeA){slopeA=null;hud('point A cleared — click a new point A, Esc again to stop');}else{setSlopePick(false);hud('slope picking stopped');}draw();}
     else if(elevPick){elevPick=false;$('elevBtn').classList.remove('on');hud('elevation picking stopped');draw();}
@@ -3451,7 +3607,7 @@ document.addEventListener('pointerdown',e=>{if(!e.target.closest('#importMenu,#i
 
 
 /* ---------- version badge — CHANGED ON EVERY PUSH (new animal + name + build+1; see CLAUDE.md), mirroring FBK-Checker's own fruit badge ---------- */
-const VERSION={animal:'🐧',name:'PENGUIN',build:29};
+const VERSION={animal:'🦒',name:'GIRAFFE',build:30};
 function rotateAnimal(){const b=$('animalBadge');b.style.transform='rotate(360deg)';setTimeout(()=>{b.style.transform='rotate(0deg)';},200);}
 function showVersion(){const b=$('animalBadge');b.textContent=`${VERSION.animal} ${VERSION.name} · b${VERSION.build}`;
   b.title=`Build ${VERSION.build} · ${VERSION.name} — if this matches what Claude pushed, you're on the latest (no cache)`;}
