@@ -124,6 +124,7 @@ details.help[open]>summary{margin-bottom:4px}
     <div class="tg" data-name="Labels">
       <button class="btn" id="pipeLabelsBtn" title="Choose which manhole/pipe fields show as on-canvas labels">🏷 Pipe Labels</button>
       <button class="btn" id="geomLabelsBtn" disabled title="Label key geometry points — horizontal (PC/PT/PI/MID/CC/PCC/PRC), spiral (TS/SC/CS/ST/SPI/SS), vertical/profile (PVC/PVT/PVI/PVCC/PVRC/Hi/Lo), reference (POB/POE/EQN), and custom stations (POT/POC/POS). Pick a reference alignment for stationing, then one or more alignments/lines to label (needs a LandXML file with an Alignment)">📍 Label Points</button>
+      <button class="btn" id="cutSheetBtn" disabled title="Cut sheet report — stations along a main centerline at set intervals on tangents and curves, with left/right curb offsets and design grades, exported into your Excel cut-sheet template">📋 Cut Sheet</button>
       <button class="btn" id="geomTableBtn" disabled title="View every currently labeled point as a table — station, northing, easting, elevation — a quick reference sheet for field stakeout, with CSV export">📋 Points Table</button>
     </div>
   </div>
@@ -294,6 +295,33 @@ details.help[open]>summary{margin-bottom:4px}
       <div style="overflow:auto;max-height:min(45vh,360px)">
         <table id="slopeTable" style="width:100%;border-collapse:collapse;font-size:11px;white-space:nowrap"></table>
       </div>
+    </div>
+    <div class="panel" id="cutPanel" style="width:560px">
+      <h4><span>📋 Cut Sheet Report</span><button id="cutCloseBtn" title="Close">✕</button></h4>
+      <details class="help"><summary>ℹ How this works</summary><p class="note">Stations run along the <b>main centerline</b> — one interval on tangents, another on curves, plus its PC/PT/POB/POE… if ticked. At each station the centerline's perpendicular is crossed with the <b>left</b> and <b>right</b> alignments (curb lines): <b>O/S</b> = distance from centerline to that crossing (+ stake offset), <b>Grade</b> = that curb alignment's own design profile at the crossing. The Excel output fills your cut-sheet template (Office Copy; Contractor / Inspector copies follow); <b>Hub Elev.</b> is left blank for the field and <b>Cut/Fill = Hub − Grade</b> (C = cut, F = fill).</p></details>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:8px">
+        <div><label style="display:block;font-size:11px;color:var(--mut);margin:0 0 2px">Main centerline (stationing)</label><select id="cutCL" style="width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--rule);border-radius:5px;padding:4px"></select></div><div><label style="display:block;font-size:11px;color:var(--mut);margin:0 0 2px">Left side alignment (curb)</label><select id="cutLeft" style="width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--rule);border-radius:5px;padding:4px"></select></div><div><label style="display:block;font-size:11px;color:var(--mut);margin:0 0 2px">Right side alignment (curb)</label><select id="cutRight" style="width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--rule);border-radius:5px;padding:4px"></select></div>
+        <div><label style="display:block;font-size:11px;color:var(--mut);margin:0 0 2px">Station every … on tangents</label><input type="number" id="cutTan" value="50" min="1" step="1" style="width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--rule);border-radius:5px;padding:4px"></div><div><label style="display:block;font-size:11px;color:var(--mut);margin:0 0 2px">Station every … on curves</label><input type="number" id="cutCurve" value="25" min="1" step="1" style="width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--rule);border-radius:5px;padding:4px"></div>
+        <div><label style="display:block;font-size:11px;color:var(--mut);margin:0 0 2px">&nbsp;</label><label style="font-size:12px"><input type="checkbox" id="cutKeys" checked> + PC / PT / POB / POE…</label></div>
+        <div><label style="display:block;font-size:11px;color:var(--mut);margin:0 0 2px">From station (blank = start)</label><input type="text" id="cutFrom" value="" placeholder="e.g. 10+00" style="width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--rule);border-radius:5px;padding:4px"></div><div><label style="display:block;font-size:11px;color:var(--mut);margin:0 0 2px">To station (blank = end)</label><input type="text" id="cutTo" value="" placeholder="e.g. 25+50" style="width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--rule);border-radius:5px;padding:4px"></div>
+        <div><label style="display:block;font-size:11px;color:var(--mut);margin:0 0 2px">Stake offset (added to O/S)</label><input type="number" id="cutStake" value="0" step="0.5" style="width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--rule);border-radius:5px;padding:4px"></div>
+        <div><label style="display:block;font-size:11px;color:var(--mut);margin:0 0 2px">Left label</label><input type="text" id="cutLabelL" value="LT BC"  style="width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--rule);border-radius:5px;padding:4px"></div><div><label style="display:block;font-size:11px;color:var(--mut);margin:0 0 2px">Right label</label><input type="text" id="cutLabelR" value="RT BC"  style="width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--rule);border-radius:5px;padding:4px"></div>
+        <div><label style="display:block;font-size:11px;color:var(--mut);margin:0 0 2px">Curb has no profile →</label><select id="cutFallback" style="width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--rule);border-radius:5px;padding:4px"><option value="blank">grade blank</option><option value="cl">use CL profile</option><option value="eg">use EG surface</option></select></div>
+        <div><label style="display:block;font-size:11px;color:var(--mut);margin:0 0 2px">Max search offset</label><input type="number" id="cutMaxOff" value="200" min="1" style="width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--rule);border-radius:5px;padding:4px"></div>
+      </div>
+      <details style="margin-bottom:8px"><summary style="cursor:pointer;font-size:11px;color:var(--accent)">Sheet header (work order, street, date, crew…)</summary>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-top:6px">
+          <div><label style="display:block;font-size:11px;color:var(--mut);margin:0 0 2px">Job / project #</label><input type="text" id="cutJob" value=""  style="width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--rule);border-radius:5px;padding:4px"></div><div><label style="display:block;font-size:11px;color:var(--mut);margin:0 0 2px">Work order #</label><input type="text" id="cutWO" value=""  style="width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--rule);border-radius:5px;padding:4px"></div><div><label style="display:block;font-size:11px;color:var(--mut);margin:0 0 2px">Street</label><input type="text" id="cutStreet" value=""  style="width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--rule);border-radius:5px;padding:4px"></div>
+          <div><label style="display:block;font-size:11px;color:var(--mut);margin:0 0 2px">Date</label><input type="date" id="cutDate" value=""  style="width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--rule);border-radius:5px;padding:4px"></div><div><label style="display:block;font-size:11px;color:var(--mut);margin:0 0 2px">Crew</label><input type="text" id="cutCrew" value=""  style="width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--rule);border-radius:5px;padding:4px"></div><div><label style="display:block;font-size:11px;color:var(--mut);margin:0 0 2px">Control #</label><input type="text" id="cutCtrl" value=""  style="width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--rule);border-radius:5px;padding:4px"></div><div><label style="display:block;font-size:11px;color:var(--mut);margin:0 0 2px">CHK #</label><input type="text" id="cutChk" value=""  style="width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--rule);border-radius:5px;padding:4px"></div>
+        </div></details>
+      <div style="display:flex;gap:6px;margin-bottom:6px">
+        <button class="btn" id="cutPreviewBtn" style="flex:1">↻ Preview</button>
+        <button class="btn gold" id="cutXlsxBtn" style="flex:1.4" title="Fill your Excel cut-sheet template">⬇ Excel cut sheet</button>
+        <button class="btn" id="cutCsvBtn" style="flex:1">⬇ CSV</button>
+        <label class="btn file" style="flex:1" title="Use a different cut-sheet template (.xlsx) — same layout as the built-in one">📄 Template<input type="file" id="cutTplInput" accept=".xlsx"></label>
+      </div>
+      <p class="note" id="cutInfo" style="margin-bottom:6px"></p>
+      <div style="overflow:auto;max-height:min(40vh,320px)"><table id="cutTable" style="width:100%;border-collapse:collapse;font-size:11px;white-space:nowrap"></table></div>
     </div>
     <div class="panel" id="curvePanel" style="width:470px;left:auto;right:12px">
       <h4><span>🌀 Curve Properties</span><button id="curveCloseBtn" title="Close">✕</button></h4>
@@ -1601,6 +1629,228 @@ function drawGeomMarker(x,y,type,color){
   else ctx.arc(x,y,4,0,Math.PI*2);
   ctx.fill();
 }
+/* ---------- 📋 cut sheet report generator ----------
+   Builds a field cut sheet from a MAIN CENTERLINE alignment and a LEFT and RIGHT curb (or any)
+   alignment. Stations run along the centerline at one interval on tangents and another on
+   curves (plus its PC/PT/POB/POE… key stations if asked). At each station the CL's normal is
+   intersected with each side alignment: O/S = distance from CL to that crossing (+ an optional
+   stake offset), Grade = that side alignment's own design profile at its own station there (or
+   a chosen fallback). Output fills the owner's own Excel cut-sheet template (Office Copy rows;
+   Contractor / Inspector copies follow by formula; Hub Elev. is left blank for the field and
+   Cut/Fill = Hub − Grade), or CSV. */
+const CUT={rows:[],tpl:null,show:true};
+function cutElemIntersect(el,P,n){                              // smallest-|u| u where P+u·n crosses this element
+  const hits=[];
+  if(el.type==='curve'){
+    const dx=P.E-el.center.E,dy=P.N-el.center.N,b=n[0]*dx+n[1]*dy,c=dx*dx+dy*dy-el.radius*el.radius,disc=b*b-c;
+    if(disc<0)return hits;
+    const sw=curveSweep(el);
+    [-b-Math.sqrt(disc),-b+Math.sqrt(disc)].forEach(u=>{
+      let d=Math.atan2(dy+u*n[1],dx+u*n[0])-el.a0;d-=Math.floor(d/(2*Math.PI))*2*Math.PI;if(sw<0)d-=2*Math.PI;
+      const t=d/sw,tol=1e-3;if(t>=-tol&&t<=1+tol)hits.push(u);});   // a hair of tolerance past the ends, so a station exactly on a PT still finds its crossing
+  }else{                                                        // line (a spiral is taken as its chord)
+    const ax=el.start.E,ay=el.start.N,bx=el.end.E-ax,by=el.end.N-ay,den=n[0]*by-n[1]*bx;
+    if(Math.abs(den)<1e-12)return hits;
+    const qx=ax-P.E,qy=ay-P.N,u=(qx*by-qy*bx)/den,v=(qx*n[1]-qy*n[0])/den;
+    if(v>=-1e-3&&v<=1+1e-3)hits.push(u);
+  }
+  return hits;
+}
+function cutSideAt(cl,side,sta,opt){
+  const P=stationToPoint(cl,sta);
+  if(side==='CL'){const g=profileElevAt(cl,sta);return{os:0+opt.stake,grade:g,E:P.E,N:P.N,src:g==null?'none':'CL profile'};}
+  // exact direction of travel at this station (the element that starts here wins at a PC/PT), then its left-hand normal
+  const el=cl.elements.find(e=>sta>=e.staStart-1e-6&&sta<e.staStart+e.length-1e-6)||cl.elements[cl.elements.length-1];
+  let dE,dN;
+  if(el.type==='curve'){const a=el.a0+curveSweep(el)*Math.max(0,Math.min(1,(sta-el.staStart)/(el.length||1))),sg=Math.sign(curveSweep(el));dE=-Math.sin(a)*sg;dN=Math.cos(a)*sg;}
+  else{const L0=Math.hypot(el.end.E-el.start.E,el.end.N-el.start.N)||1;dE=(el.end.E-el.start.E)/L0;dN=(el.end.N-el.start.N)/L0;}
+  const n=[-dN,dE];                                            // left-hand normal
+  let best=null;side.elements.forEach(el=>cutElemIntersect(el,P,n).forEach(u=>{if(Math.abs(u)<=opt.maxOff&&(best==null||Math.abs(u)<Math.abs(best)))best=u;}));
+  if(best==null)return null;
+  const E=P.E+best*n[0],N=P.N+best*n[1],sSta=projectStation(side,E,N);
+  let grade=profileElevAt(side,sSta),src='curb profile';
+  if(grade==null){
+    if(opt.fallback==='cl'){grade=profileElevAt(cl,sta);src='CL profile';}
+    else if(opt.fallback==='eg'){grade=surfaceElevAtPoint(E,N);src='EG surface';}
+    else src='no profile';
+    if(grade==null)src='none';
+  }
+  return{os:Math.abs(best)+opt.stake,grade,E,N,sideSta:sSta,src,u:best};
+}
+function cutSheetStations(cl,opt){
+  const els=cl.elements,S0=els[0].staStart,S1=els[els.length-1].staStart+els[els.length-1].length;
+  const from=Math.max(S0,isFinite(opt.from)?opt.from:S0),to=Math.min(S1,isFinite(opt.to)?opt.to:S1);
+  const list=[];const add=(s,key)=>{if(s<from-1e-6||s>to+1e-6)return;list.push({sta:s,key});};
+  els.forEach(el=>{const a=Math.max(el.staStart,from),b=Math.min(el.staStart+el.length,to);if(a>b)return;
+    const iv=el.type==='line'?opt.tan:opt.curve;if(!(iv>0))return;
+    for(let k=Math.ceil((a-1e-6)/iv)*iv;k<=b+1e-6;k+=iv)add(k,null);});
+  if(opt.keys)collectAlignmentKeyPoints(cl).forEach(p=>{if(p.sta!=null&&p.type!=='MID')add(p.sta,p.type);});
+  add(from,null);add(to,null);
+  list.sort((a,b)=>a.sta-b.sta);
+  const out=[];list.forEach(s=>{const prev=out[out.length-1];if(prev&&Math.abs(prev.sta-s.sta)<0.005){if(s.key&&!prev.key)prev.key=s.key;return;}out.push({...s});});
+  return out;
+}
+function cutSheetBuild(){
+  const pick=id=>{const v=$(id).value;return v==='CL'?'CL':v?ALIGNMENTS.find(a=>a.name===v)||null:null;};
+  const cl=ALIGNMENTS.find(a=>a.name===$('cutCL').value);if(!cl)return{err:'pick the main centerline alignment'};
+  const left=pick('cutLeft'),right=pick('cutRight');
+  const opt={tan:+$('cutTan').value,curve:+$('cutCurve').value,keys:$('cutKeys').checked,from:parseStationList($('cutFrom').value)[0],to:parseStationList($('cutTo').value)[0],
+    stake:+$('cutStake').value||0,fallback:$('cutFallback').value,maxOff:+$('cutMaxOff').value||200};
+  if(!(opt.tan>0)||!(opt.curve>0))return{err:'enter station intervals greater than 0 for tangents and curves'};
+  const lab=(base,key)=>[key,base].filter(Boolean).join(' ');
+  const rows=cutSheetStations(cl,opt).map(s=>{
+    const L=left?cutSideAt(cl,left,s.sta,opt):null,R=right?cutSideAt(cl,right,s.sta,opt):null;
+    return{sta:s.sta,key:s.key,cl:stationToPoint(cl,s.sta),
+      L:L&&{...L,label:lab($('cutLabelL').value,s.key)},R:R&&{...R,label:lab($('cutLabelR').value,s.key)}};
+  });
+  return{cl,left,right,rows,opt};
+}
+function renderCutPreview(){
+  const r=cutSheetBuild();
+  if(r.err){$('cutInfo').textContent=r.err;$('cutTable').innerHTML='';CUT.rows=[];draw();return null;}
+  CUT.rows=r.rows;
+  const f=(v,d)=>v==null?'—':v.toFixed(d);
+  const missL=r.left?r.rows.filter(x=>!x.L).length:0,missR=r.right?r.rows.filter(x=>!x.R).length:0;
+  const noGrade=r.rows.filter(x=>(x.L&&x.L.grade==null)||(x.R&&x.R.grade==null)).length;
+  $('cutInfo').textContent=`${r.rows.length} stations along ${r.cl.name}`+(missL||missR?` · ${missL+missR} side point(s) with no crossing within ${r.opt.maxOff} (left blank)`:'')+(noGrade?` · ${noGrade} row(s) without a grade (no profile)`:'');
+  const td=(v,st='')=>`<td style="padding:2px 6px;border-bottom:1px solid var(--rule);${st}">${v}</td>`;
+  let h='<thead><tr>'+['Station','L label','L O/S','L grade','R label','R O/S','R grade'].map(x=>`<th style="text-align:left;padding:3px 6px;border-bottom:1px solid var(--rule);position:sticky;top:0;background:var(--panel)">${x}</th>`).join('')+'</tr></thead><tbody>';
+  r.rows.forEach(x=>{h+='<tr>'+td(formatStation(x.sta),x.key?'color:var(--gold);font-weight:700':'')
+    +td(x.L?x.L.label:'')+td(x.L?f(x.L.os,2):'')+td(x.L?f(x.L.grade,3):'',x.L&&x.L.src!=='curb profile'&&x.L.src!=='CL profile'?'color:var(--mut)':'')
+    +td(x.R?x.R.label:'')+td(x.R?f(x.R.os,2):'')+td(x.R?f(x.R.grade,3):'',x.R&&x.R.src!=='curb profile'&&x.R.src!=='CL profile'?'color:var(--mut)':'')+'</tr>';});
+  $('cutTable').innerHTML=h+'</tbody>';draw();return r;
+}
+function drawCutSheetOverlay(proj,is3d){
+  if(!CUT.rows.length||!$('cutPanel').classList.contains('show'))return;
+  ctx.save();ctx.lineWidth=1;
+  CUT.rows.forEach(x=>{
+    const z=is3d?(profileElevAt(ALIGNMENTS.find(a=>a.name===$('cutCL').value),x.sta)??0):0,c=proj(x.cl.E,x.cl.N,z);
+    ['L','R'].forEach(k=>{const s=x[k];if(!s)return;const q=proj(s.E,s.N,is3d?(s.grade??z):0);
+      ctx.strokeStyle='rgba(241,180,52,.55)';ctx.beginPath();ctx.moveTo(c[0],c[1]);ctx.lineTo(q[0],q[1]);ctx.stroke();
+      ctx.fillStyle='#f1b434';ctx.fillRect(q[0]-2.5,q[1]-2.5,5,5);});
+    ctx.fillStyle=x.key?'#f1b434':'#e7ecf7';ctx.beginPath();ctx.arc(c[0],c[1],2.5,0,Math.PI*2);ctx.fill();
+  });
+  ctx.restore();
+}
+function cutSheetCSV(r){
+  const L=[['Station','Left Label','Left O/S','Left Grade','Left Hub Elev','Left Cut/Fill','Right Label','Right O/S','Right Grade','Right Hub Elev','Right Cut/Fill'].join(',')];
+  r.rows.forEach(x=>L.push([formatStation(x.sta),x.L?x.L.label:'',x.L?x.L.os.toFixed(2):'',x.L&&x.L.grade!=null?x.L.grade.toFixed(3):'','','',
+    x.R?x.R.label:'',x.R?x.R.os.toFixed(2):'',x.R&&x.R.grade!=null?x.R.grade.toFixed(3):'','',''].map(geomCSVField).join(',')));
+  return L.join('\r\n');
+}
+function downloadBlob(blob,name){const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),2000);}
+
+/* --- minimal ZIP read / write (the .xlsx container), using the browser's own deflate --- */
+const CRC_T=(()=>{const t=new Uint32Array(256);for(let n=0;n<256;n++){let c=n;for(let k=0;k<8;k++)c=c&1?0xEDB88320^(c>>>1):c>>>1;t[n]=c>>>0;}return t;})();
+function crc32(u8){let c=0xFFFFFFFF;for(let i=0;i<u8.length;i++)c=CRC_T[(c^u8[i])&255]^(c>>>8);return(c^0xFFFFFFFF)>>>0;}
+async function streamBytes(u8,tr){return new Uint8Array(await new Response(new Blob([u8]).stream().pipeThrough(tr)).arrayBuffer());}
+async function unzipAll(buf){
+  const dv=new DataView(buf);let e=buf.byteLength-22;while(e>=0&&dv.getUint32(e,true)!==0x06054b50)e--;
+  if(e<0)throw new Error('not a zip / xlsx file');
+  const n=dv.getUint16(e+10,true);let off=dv.getUint32(e+16,true);const files=new Map(),dec=new TextDecoder();
+  for(let i=0;i<n;i++){
+    const method=dv.getUint16(off+10,true),csize=dv.getUint32(off+20,true),nl=dv.getUint16(off+28,true),xl=dv.getUint16(off+30,true),cl=dv.getUint16(off+32,true),lho=dv.getUint32(off+42,true);
+    const name=dec.decode(new Uint8Array(buf,off+46,nl));off+=46+nl+xl+cl;
+    const start=lho+30+dv.getUint16(lho+26,true)+dv.getUint16(lho+28,true),raw=new Uint8Array(buf,start,csize);
+    files.set(name,method===0?raw.slice():await streamBytes(raw,new DecompressionStream('deflate-raw')));
+  }
+  return files;
+}
+async function zipAll(files){
+  const enc=new TextEncoder(),parts=[],central=[];let off=0;
+  for(const[name,data]of files){
+    const nm=enc.encode(name),crc=crc32(data);let comp=data,method=0;
+    try{comp=await streamBytes(data,new CompressionStream('deflate-raw'));method=8;}catch(_){}
+    const h=new DataView(new ArrayBuffer(30));h.setUint32(0,0x04034b50,true);h.setUint16(4,20,true);h.setUint16(8,method,true);h.setUint16(12,0x21,true);
+    h.setUint32(14,crc,true);h.setUint32(18,comp.length,true);h.setUint32(22,data.length,true);h.setUint16(26,nm.length,true);
+    const c=new DataView(new ArrayBuffer(46));c.setUint32(0,0x02014b50,true);c.setUint16(4,20,true);c.setUint16(6,20,true);c.setUint16(10,method,true);c.setUint16(14,0x21,true);
+    c.setUint32(16,crc,true);c.setUint32(20,comp.length,true);c.setUint32(24,data.length,true);c.setUint16(28,nm.length,true);c.setUint32(42,off,true);
+    parts.push(new Uint8Array(h.buffer),nm,comp);central.push(new Uint8Array(c.buffer),nm);off+=30+nm.length+comp.length;
+  }
+  const csz=central.reduce((a,b)=>a+b.length,0),eo=new DataView(new ArrayBuffer(22));
+  eo.setUint32(0,0x06054b50,true);eo.setUint16(8,files.size,true);eo.setUint16(10,files.size,true);eo.setUint32(12,csz,true);eo.setUint32(16,off,true);
+  return new Blob([...parts,...central,new Uint8Array(eo.buffer)],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+}
+/* --- fill the template --- */
+const xmlEsc=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+function xCell(ref,style,val){                                  // val: {t:'s',v} text · {t:'n',v} number · {t:'f',v} formula · null blank
+  const s=style!=null?` s="${style}"`:'';
+  if(val==null||val.v==null||val.v==='')return`<c r="${ref}"${s}/>`;
+  if(val.t==='n')return`<c r="${ref}"${s}><v>${val.v}</v></c>`;
+  if(val.t==='f')return`<c r="${ref}"${s}><f>${xmlEsc(val.v)}</f></c>`;
+  return`<c r="${ref}"${s} t="inlineStr"><is><t xml:space="preserve">${xmlEsc(val.v)}</t></is></c>`;
+}
+// rewrite given cells of given rows in one pass over the sheet XML; cells missing from a row are appended
+function xSetCells(xml,byRow){
+  return xml.replace(/<row r="(\d+)"([^>]*?)(\/>|>([\s\S]*?)<\/row>)/g,(m,r,attrs,tail,inner)=>{
+    const want=byRow.get(+r);if(!want)return m;
+    let body=inner||'';
+    Object.entries(want).forEach(([col,val])=>{
+      const ref=col+r,re=new RegExp(`<c r="${ref}"([^>]*?)(?:/>|>[\\s\\S]*?</c>)`);
+      const mm=body.match(re),st=mm&&(mm[1].match(/ s="(\d+)"/)||[])[1];
+      const cell=xCell(ref,val&&val.s!=null?val.s:st,val);
+      body=mm?body.replace(re,cell):body+cell;
+    });
+    return`<row r="${r}"${attrs}>${body}</row>`;
+  });
+}
+async function cutSheetExcel(r){
+  let buf=CUT.tpl;
+  if(!buf){try{const res=await fetch('templates/cut_sheet_template.xlsx');if(res.ok)buf=await res.arrayBuffer();}catch(_){}}
+  if(!buf){try{const b=localStorage.getItem('cstp.cutTpl');if(b)buf=Uint8Array.from(atob(b),c=>c.charCodeAt(0)).buffer;}catch(_){}}
+  if(!buf){hud('📋 pick your cut-sheet template (.xlsx) once — it will be remembered');$('cutTplInput').click();return;}
+  CUT.tpl=buf;
+  const files=await unzipAll(buf),dec=new TextDecoder(),enc=new TextEncoder(),get=n=>dec.decode(files.get(n)),put=(n,s)=>files.set(n,enc.encode(s));
+  const MAX=2399;if(r.rows.length>MAX)hud(`⚠ template holds ${MAX} rows — the last ${r.rows.length-MAX} station(s) were left off`);
+  // Office Copy: header fields + one row per station
+  const H=new Map(),today=$('cutDate').value?new Date($('cutDate').value+'T00:00:00'):null;
+  const txt=v=>v?{t:'s',v}:null;
+  H.set(2,{D:txt($('cutJob').value)});
+  H.set(4,{D:txt($('cutWO').value),G:txt($('cutStreet').value),J:today?{t:'n',v:Math.round((today-new Date(1899,11,30))/864e5)}:null,L:txt($('cutCrew').value)});
+  H.set(6,{C:txt($('cutCtrl').value),E:txt($('cutChk').value)});
+  const n3=v=>v==null?null:{t:'n',v:+v.toFixed(3)},n2=v=>v==null?null:{t:'n',v:+v.toFixed(2)};
+  for(let i=0;i<Math.max(1,Math.min(MAX,r.rows.length));i++){
+    const x=r.rows[i],row=9+i;
+    if(!x){H.set(row,{B:null,C:null,D:null,E:null,F:null,G:null,H:null,I:null,J:null,K:null,L:null,M:null,N:null});continue;}
+    H.set(row,{B:{t:'s',v:formatStation(x.sta)},
+      C:x.L?txt(x.L.label):null,D:x.L?n2(x.L.os):null,E:x.L?n3(x.L.grade):null,F:null,G:null,
+      H:{t:'f',v:`IF(OR(F${row}="",E${row}=""),"",F${row}-E${row})`,s:21},
+      I:x.R?txt(x.R.label):null,J:x.R?n2(x.R.os):null,K:x.R?n3(x.R.grade):null,L:null,M:null,
+      N:{t:'f',v:`IF(OR(L${row}="",K${row}=""),"",L${row}-K${row})`,s:21}});
+  }
+  put('xl/worksheets/sheet1.xml',xSetCells(get('xl/worksheets/sheet1.xml'),H));
+  // Contractor / Inspector copies: row r mirrors Office row r (the template's row 9 pointed at #REF! and every row after
+  // it read the Office row above), and their column headers match the Office Copy's
+  ['xl/worksheets/sheet2.xml','xl/worksheets/sheet3.xml'].forEach(n=>{if(!files.has(n))return;
+    let x=get(n).replace(/<c r="([B-N])(\d+)"([^>]*?)>\s*<f>IF\('Office Copy'!(?:#REF!|[B-N]\d+)=""(?:,|&quot;)[\s\S]*?<\/f>(?:<v>[\s\S]*?<\/v>|<v\s*\/>)?<\/c>/g,(m,col,r,attrs)=>{
+      if(+r<9)return m;const a=attrs.replace(/ t="\w+"/,'');
+      return`<c r="${col}${r}"${a}><f>IF('Office Copy'!${col}${r}="","",'Office Copy'!${col}${r})</f></c>`;});
+    const hdr=new Map([[7,{E:{t:'s',v:'Left'},K:{t:'s',v:'Right'}}],[8,{B:{t:'s',v:'Station'},C:{t:'s',v:'Label'},D:{t:'s',v:'O/S'},E:{t:'s',v:'Grade'},F:{t:'s',v:'Hub Elev.'},G:null,H:{t:'s',v:'Cut/Fill'},
+      I:{t:'s',v:'Label'},J:{t:'s',v:'O/S'},K:{t:'s',v:'Grade'},L:{t:'s',v:'Hub Elev.'},M:null,N:{t:'s',v:'Cut/Fill'}}]]);
+    put(n,xSetCells(x,hdr));});
+  // recalculate everything on open; drop the stale calc chain
+  put('xl/workbook.xml',get('xl/workbook.xml').replace(/<calcPr([^>]*?)\s*\/>/,(m,a)=>`<calcPr${a.replace(/\s*fullCalcOnLoad="\w+"/,'')} fullCalcOnLoad="1"/>`));
+  if(files.has('xl/calcChain.xml')){files.delete('xl/calcChain.xml');
+    put('[Content_Types].xml',get('[Content_Types].xml').replace(/<Override[^>]*calcChain[^>]*\/>/,''));
+    put('xl/_rels/workbook.xml.rels',get('xl/_rels/workbook.xml.rels').replace(/<Relationship[^>]*calcChain[^>]*\/>/,''));}
+  const blob=await zipAll(files);
+  const nm=`CutSheet_${($('cutStreet').value||r.cl.name).replace(/[^\w.-]+/g,'_')}_${formatStation(r.rows[0]?.sta??0)}-${formatStation(r.rows[r.rows.length-1]?.sta??0)}.xlsx`;
+  downloadBlob(blob,nm);hud(`📋 cut sheet: ${r.rows.length} stations → ${nm}`);
+  return blob;
+}
+function renderCutSelects(){
+  const opts=ALIGNMENTS.map(a=>`<option value="${a.name.replace(/"/g,'&quot;')}">${a.name}${a.profile?'':' (no profile)'}</option>`).join('');
+  const keep=id=>$(id).value;
+  const cl=keep('cutCL'),l=keep('cutLeft'),r=keep('cutRight');
+  $('cutCL').innerHTML=opts;$('cutLeft').innerHTML='<option value="">— none —</option><option value="CL">Centerline itself (O/S 0)</option>'+opts;$('cutRight').innerHTML=$('cutLeft').innerHTML;
+  const has=v=>ALIGNMENTS.some(a=>a.name===v);
+  $('cutCL').value=has(cl)?cl:(ALIGNMENTS.find(a=>/c\.?l\b|center|centre|main|mainline/i.test(a.name))||ALIGNMENTS[0]||{}).name||'';
+  const guess=re=>(ALIGNMENTS.find(a=>re.test(a.name)&&a.name!==$('cutCL').value)||{}).name||'';
+  $('cutLeft').value=l&&(l==='CL'||has(l))?l:guess(/\b(lt|left)\b|[-_ ]l(eft)?$/i);
+  $('cutRight').value=r&&(r==='CL'||has(r))?r:guess(/\b(rt|right)\b|[-_ ]r(ight)?$/i);
+  if(!$('cutDate').value)$('cutDate').value=new Date().toISOString().slice(0,10);
+}
+
 /* ---------- 🌀 curve properties panel ----------
    With 📍 labels showing, click a curve's PI, CC or MID marker (2D plan) to open every
    property of that circular curve — each with its formula — plus the stations, coordinates
@@ -1683,7 +1933,7 @@ function drawCurveHighlight(proj){
   ctx.restore();
 }
 function drawGeomLabels(proj){
-  drawCurveHighlight(proj);
+  drawCurveHighlight(proj);drawCutSheetOverlay(proj,proj.length>2||is3D);
   if(!GEOM_POINTS.length)return;
   // thin dashed construction lines first, so markers/labels sit on top: PI/SPI → tangents to
   // the curve's start/end, CC → radii to its PC/PT
@@ -3101,7 +3351,7 @@ function importLandXML(text){
   renderLayerPanel();updateJobPill();
   $('fitBtn').disabled=false;$('elevBtn').disabled=SURFACES.length===0;$('waterBtn').disabled=SURFACES.length===0;$('waterDumpBtn').disabled=SURFACES.length===0;$('surfaceDisplayBtn').disabled=SURFACES.length===0;$('elevSpotsBtn').disabled=SURFACES.length===0;$('slopeBtn').disabled=SURFACES.length===0;$('rainPaintToolBtn').disabled=SURFACES.length===0;rainTriCache=null;pipeGraphCache=null;profEGCache.clear();if(PROF.surfaces)SURFACES.forEach(sf=>PROF.surfaces.add(sf.name));renderSlopeSurfSel();
   $('orbitBtn').disabled=false;$('snapBtn').disabled=false;
-  $('geomLabelsBtn').disabled=ALIGNMENTS.length===0;
+  $('geomLabelsBtn').disabled=ALIGNMENTS.length===0;$('cutSheetBtn').disabled=ALIGNMENTS.length===0;
   $('profileBtn').disabled=ALIGNMENTS.length===0;
   if(hadNothing)fit();else draw();
   const parts=[];
@@ -3147,6 +3397,16 @@ $('pipeLabelCloseBtn').onclick=()=>$('pipeLabelPanel').classList.remove('show');
 });
 $('geomLabelsBtn').onclick=()=>{if($('geomLabelsBtn').disabled)return;renderGeomLabelSelects();$('geomLabelPanel').classList.toggle('show');};
 $('geomLabelCloseBtn').onclick=()=>$('geomLabelPanel').classList.remove('show');
+$('cutSheetBtn').onclick=()=>{if($('cutSheetBtn').disabled)return;const p=$('cutPanel');if(p.classList.contains('show')){p.classList.remove('show');draw();return;}renderCutSelects();p.classList.add('show');renderCutPreview();};
+$('cutCloseBtn').onclick=()=>{$('cutPanel').classList.remove('show');draw();};
+$('cutPreviewBtn').onclick=()=>renderCutPreview();
+['cutCL','cutLeft','cutRight','cutTan','cutCurve','cutKeys','cutFrom','cutTo','cutStake','cutLabelL','cutLabelR','cutFallback','cutMaxOff'].forEach(id=>$(id).addEventListener('change',()=>renderCutPreview()));
+$('cutCsvBtn').onclick=()=>{const r=renderCutPreview();if(r)downloadBlob(new Blob([cutSheetCSV(r)],{type:'text/csv'}),`CutSheet_${r.cl.name}.csv`);};
+$('cutXlsxBtn').onclick=async()=>{const r=renderCutPreview();if(!r)return;try{await cutSheetExcel(r);}catch(err){hud('⚠ cut sheet export failed: '+err.message);console.error(err);}};
+$('cutTplInput').onchange=async e=>{const f=e.target.files[0];e.target.value='';if(!f)return;
+  const buf=await f.arrayBuffer();try{await unzipAll(buf);}catch(_){hud('⚠ that file is not an .xlsx workbook');return;}
+  CUT.tpl=buf;try{let b='';const u=new Uint8Array(buf);for(let i=0;i<u.length;i+=0x8000)b+=String.fromCharCode.apply(null,u.subarray(i,i+0x8000));localStorage.setItem('cstp.cutTpl',btoa(b));}catch(_){}
+  hud(`📄 cut-sheet template set: ${f.name}`);const r=renderCutPreview();if(r)try{await cutSheetExcel(r);}catch(err){hud('⚠ cut sheet export failed: '+err.message);}};
 $('curveCloseBtn').onclick=()=>{$('curvePanel').classList.remove('show');draw();};
 $('curveCsvBtn').onclick=()=>{if(!CURVE_SEL)return;const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([curveCSV()],{type:'text/csv'}));
   a.download=`${CURVE_SEL.align?CURVE_SEL.align.name:'curve'}-curve-${curveProps(CURVE_SEL.el,CURVE_SEL.align).idx}.csv`;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);};
@@ -3764,7 +4024,7 @@ function resetPanels(){
   });
   hud('panels reset to their default positions');
 }
-[['layerPanel'],['curvePanel'],['pipeLabelPanel'],['surfaceDisplayPanel'],['geomLabelPanel'],['geomTablePanel'],['elevSpotsPanel'],['slopePanel'],['profilePanel'],
+[['layerPanel'],['curvePanel'],['cutPanel'],['pipeLabelPanel'],['surfaceDisplayPanel'],['geomLabelPanel'],['geomTablePanel'],['elevSpotsPanel'],['slopePanel'],['profilePanel'],
  ['view3dBox','⟲ 3D View'],['rainBox','🌧 Rain & Drainage'],['snapBox','🧲 Snap'],['legend','Legend',{collapsed:true}]]
   .forEach(([id,title,opt])=>makeFloating($(id),title||'',opt));
 $('resetPanelsBtn').onclick=resetPanels;
@@ -3779,7 +4039,7 @@ document.addEventListener('pointerdown',e=>{if(!e.target.closest('#importMenu,#i
 
 
 /* ---------- version badge — CHANGED ON EVERY PUSH (new animal + name + build+1; see CLAUDE.md), mirroring FBK-Checker's own fruit badge ---------- */
-const VERSION={animal:'🦘',name:'KANGAROO',build:33};
+const VERSION={animal:'🦬',name:'BISON',build:34};
 function rotateAnimal(){const b=$('animalBadge');b.style.transform='rotate(360deg)';setTimeout(()=>{b.style.transform='rotate(0deg)';},200);}
 function showVersion(){const b=$('animalBadge');b.textContent=`${VERSION.animal} ${VERSION.name} · b${VERSION.build}`;
   b.title=`Build ${VERSION.build} · ${VERSION.name} — if this matches what Claude pushed, you're on the latest (no cache)`;}

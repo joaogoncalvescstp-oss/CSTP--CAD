@@ -35,6 +35,7 @@ The badge renders as `<emoji> <NAME> · b<build>`.
 | 31 | 🦓 ZEBRA | 👁 deutan-safe color mode (Okabe-Ito palette, blue→orange/yellow ramps), on by default |
 | 32 | 🐌 SNAIL | 🌀 click a labeled PI / CC / MID to open a Curve Properties panel (all curve formulas, stations, coords, bearings) |
 | 33 | 🦘 KANGAROO | 📍 labels: MID/PC/PT/… elevation from the alignment's design profile (else file Z, else EG surface) instead of 0 |
+| 34 | 🦬 BISON | 📋 cut sheet report generator: CL stations at tangent/curve intervals, L/R curb O/S + grade, fills the Excel cut-sheet template |
 
 ## Workflow
 

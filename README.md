@@ -265,6 +265,28 @@ dependencies, and nothing to install.
   profile, a non-zero file Z is kept. Otherwise the elevation is read off
   the top visible surface and marked **(EG)**. The Points Table's note
   column says which source was used.
+- **📋 Cut Sheet** (Labels group) is a cut-sheet report generator. Pick the
+  **main centerline** (stationing) and the **left** and **right** side
+  alignments (curb lines, or "centerline itself" / none; names with LT/RT or
+  LEFT/RIGHT are pre-picked). Set a station interval for **tangents** and
+  another for **curves**, and optionally add the centerline's
+  PC/PT/POB/POE… key stations and a from/to station range. At each station
+  the centerline's perpendicular is crossed with each side alignment:
+  **O/S** = distance from the centerline (+ an optional stake offset), and
+  **Grade** = that curb alignment's own design profile at its own station
+  there. If a curb has no profile, the grade is left blank or taken from
+  the CL profile or EG surface, your choice. Rows preview in the panel and
+  as stake lines on the drawing.
+  - **⬇ Excel cut sheet** fills the office cut-sheet template
+    (`templates/cut_sheet_template.xlsx`). The header (job #, work order,
+    street, date, crew, control #, CHK #) and one row per station go into
+    **Office Copy**, with Hub Elev. left blank for the field and
+    Cut/Fill = Hub − Grade (shown as C / F). The **Contractor** and
+    **Inspector** copies follow by formula; the template's `#REF!` / off-by-one
+    row links and old headers on those copies are corrected in the output.
+    Excel recalculates everything on open. When the page is opened straight
+    from disk and can't fetch the template, it asks for it once (📄
+    Template) and remembers it. **⬇ CSV** exports the same rows.
 - **🌀 Curve Properties**: with 📍 labels showing, click a curve's **PI**, **CC**
   or **MID** marker (2D plan; the cursor turns to a pointer) to open a panel
   listing every property of that circular curve, each with its formula:
