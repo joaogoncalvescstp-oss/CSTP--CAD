@@ -25,10 +25,10 @@ html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:13px/
 .main{position:relative;flex:1;overflow:hidden}
 canvas{display:block;width:100%;height:100%;background:var(--bg);cursor:crosshair;touch-action:none}
 .hud{position:absolute;left:12px;bottom:10px;right:12px;font:12px ui-monospace,monospace;color:var(--mut);background:rgba(7,11,22,.7);padding:5px 9px;border-radius:6px;pointer-events:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.legend{position:absolute;right:12px;top:12px;background:rgba(7,11,22,.85);border:1px solid var(--rule);border-radius:8px;padding:8px 10px;font-size:11px;color:var(--mut);display:flex;flex-direction:column;gap:4px}
+.legend{position:absolute;right:12px;top:12px;max-width:min(360px,calc(100% - 24px));max-height:calc(100% - 60px);background:rgba(7,11,22,.85);border:1px solid var(--rule);border-radius:8px;padding:8px 10px;font-size:11px;color:var(--mut);display:flex;flex-direction:column;gap:4px}
 .legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;vertical-align:-1px}
-.panel{position:absolute;top:12px;left:12px;width:300px;max-width:calc(100% - 24px);max-height:calc(100% - 24px);overflow:auto;background:rgba(7,11,22,.94);border:1px solid var(--rule);border-radius:10px;padding:10px;display:none}
-.panel.show{display:block}
+.panel{position:absolute;top:12px;left:12px;width:300px;max-width:calc(100% - 24px);max-height:calc(100% - 24px);overflow:hidden;background:rgba(9,13,26,.98);border:1px solid var(--rule);border-radius:10px;padding:10px;display:none}
+.panel.show{display:flex;flex-direction:column}
 .panel h4{margin:0 0 8px;display:flex;align-items:center;justify-content:space-between;font-size:13px}
 .panel h4 button{background:none;border:none;color:var(--mut);cursor:pointer;font-size:15px;line-height:1}
 .panel h4 button:hover{color:var(--gold)}
@@ -43,7 +43,32 @@ canvas{display:block;width:100%;height:100%;background:var(--bg);cursor:crosshai
 .snapbox.show{display:flex}
 .snapbox label{display:flex;align-items:center;gap:5px;cursor:pointer;pointer-events:auto}
 .snapbox label.active{color:#35c184;font-weight:700}
-.view3d{position:absolute;right:12px;top:12px;width:230px;background:rgba(7,11,22,.9);border:1px solid var(--rule);border-radius:8px;padding:8px 10px;font-size:11px;color:var(--mut);display:none;flex-direction:column;gap:5px}
+/* toolbar groups + import menu */
+.tg{display:flex;align-items:center;gap:5px;padding-left:8px;border-left:1px solid var(--rule)}
+.tg:first-of-type{border-left:none;padding-left:0}
+.bar .btn{padding:6px 9px}
+.menu{position:fixed;z-index:50;display:none;flex-direction:column;gap:4px;background:var(--panel);border:1px solid var(--rule);border-radius:8px;padding:6px;box-shadow:0 8px 24px rgba(0,0,0,.45)}
+.menu.show{display:flex}
+.menu .menuitem{text-align:left;white-space:nowrap}
+/* floating windows: every panel/box gets a draggable title bar with collapse (+ close) */
+.fwin{padding:0!important;box-shadow:0 6px 20px rgba(0,0,0,.35)}
+.fwin>.fhead{display:flex;align-items:center;gap:6px;margin:0;padding:6px 8px 6px 10px;background:var(--panel2);border-bottom:1px solid var(--rule);border-radius:inherit;border-bottom-left-radius:0;border-bottom-right-radius:0;cursor:move;user-select:none;touch-action:none;font:700 12px ui-monospace,monospace;color:var(--text);pointer-events:auto;flex-shrink:0}
+.fwin>.fhead .ftitle{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fwin>.fhead button{background:none;border:none;color:var(--mut);cursor:pointer;font-size:14px;line-height:1;padding:0 3px}
+.fwin>.fhead button:hover{color:var(--gold)}
+.fwin>.fbody{padding:10px;overflow:auto;min-height:0;flex:1}
+.fwin.view3d>.fbody,.fwin.snapbox>.fbody,.fwin.legend>.fbody{display:flex;flex-direction:column;gap:5px;padding:8px 10px}
+.fwin.collapsed>.fbody{display:none}
+.fwin.collapsed>.fhead{border-bottom:none;border-radius:inherit}
+.fwin.dragging{opacity:.85}
+/* checkbox labels inside panels read as one wrapping line of text, not ragged flex columns */
+.fwin .fbody label:has(>input[type=checkbox]){display:block!important;line-height:1.45}
+.fwin .fbody label:has(>input[type=checkbox])>input{vertical-align:-2px;margin:0 6px 0 0}
+details.help{margin-bottom:8px}
+details.help>summary{cursor:pointer;font-size:11px;color:var(--accent);list-style:none}
+details.help>summary::-webkit-details-marker{display:none}
+details.help[open]>summary{margin-bottom:4px}
+.view3d{position:absolute;right:12px;top:12px;width:230px;background:rgba(9,13,26,.97);border:1px solid var(--rule);border-radius:8px;padding:8px 10px;font-size:11px;color:var(--mut);display:none;flex-direction:column;gap:5px}
 .view3d.show{display:flex}
 .view3d .row{display:flex;align-items:center;justify-content:space-between;gap:6px}
 .view3d b{color:var(--gold)}
@@ -56,30 +81,45 @@ canvas{display:block;width:100%;height:100%;background:var(--bg);cursor:crosshai
 </head>
 <body>
 <div class="app">
+<div class="menu" id="importMenu">
+  <label class="btn file menuitem" title="Import a DXF drawing — LINE, LWPOLYLINE, POLYLINE, POINT, CIRCLE, 3DFACE entities each become part of their own DXF layer, shown/hidden/locked from the Layers panel.">↥ Import DXF<input type="file" id="dxfInput" accept=".dxf"></label>
+  <label class="btn file menuitem" title="Import LandXML — a TIN surface (Pnts/Faces), CgPoints (COGO/survey points), Civil3D pipe networks (Structs/Pipes: manholes, catch basins, storm/sanitary pipes), and horizontal Alignments (CoordGeom Line/Curve/Spiral) are all read from the same file, each landing on its own toggleable layer. Use ⛰ Elevation to read a TIN's Z, or 📍 Label Points to label an alignment's PC/PT/MID.">↥ Import LandXML (TIN / Pipes / Alignments)<input type="file" id="landxmlInput" accept=".xml,.landxml"></label>
+  <label class="btn file menuitem" title="DWG is Autodesk's proprietary binary format — this viewer has no bundled DWG parser and can't read it directly. Selecting a .dwg here just explains that and tells you how to get the same data in another way.">↥ Import DWG<input type="file" id="dwgInput" accept=".dwg"></label>
+</div>
+
   <div class="bar">
     <div class="brand"><span>CSTP</span> <span class="t">CAD Viewer</span></div>
     <span id="animalBadge" style="font-size:14px;font-weight:700;letter-spacing:.06em;margin-left:4px;cursor:pointer;transition:transform 0.2s;white-space:nowrap" title="version" onclick="rotateAnimal()"></span>
     <span class="pill" id="jobpill">no drawing loaded</span>
     <div class="grow"></div>
-    <label class="btn file" title="Import a DXF drawing — LINE, LWPOLYLINE, POLYLINE, POINT, CIRCLE, 3DFACE entities each become part of their own DXF layer, shown/hidden/locked from the Layers panel.">↥ Import DXF<input type="file" id="dxfInput" accept=".dxf"></label>
-    <label class="btn file" title="Import LandXML — a TIN surface (Pnts/Faces), CgPoints (COGO/survey points), Civil3D pipe networks (Structs/Pipes: manholes, catch basins, storm/sanitary pipes), and horizontal Alignments (CoordGeom Line/Curve/Spiral) are all read from the same file, each landing on its own toggleable layer. Use ⛰ Elevation to read a TIN's Z, or 📍 Label Points to label an alignment's PC/PT/MID.">↥ Import LandXML (TIN / Pipes / Alignments)<input type="file" id="landxmlInput" accept=".xml,.landxml"></label>
-    <label class="btn file" title="DWG is Autodesk's proprietary binary format — this viewer has no bundled DWG parser and can't read it directly. Selecting a .dwg here just explains that and tells you how to get the same data in another way.">↥ Import DWG<input type="file" id="dwgInput" accept=".dwg"></label>
-    <button class="btn" id="fitBtn" disabled title="Frame everything currently loaded (F)">⊡ Fit</button>
-    <button class="btn" id="elevBtn" disabled title="Click a visible, unlocked TIN surface to save its interpolated elevation there — snaps to a nearby TIN vertex/wireframe edge, CAD line, or point first, when one's in range. Stays armed so you can save several spots in a row (Esc or click again to stop) — 2D only. View saved spots in 📐 Elevation Spots">⛰ Elevation</button>
-    <button class="btn" id="elevSpotsBtn" disabled title="View every saved ⛰ Elevation spot as a table (northing/easting/elevation, and what it snapped to) — with CSV export">📐 Elevation Spots</button>
-    <button class="btn" id="slopeBtn" disabled title="Slope between two points — pick a target surface, then click point A and point B (snaps to vertices/edges/CAD points). Reports each point's elevation on that surface, rise, horizontal & slope distance, grade %, and H:V ratio. Stays armed for more; Esc stops — 2D only">📏 Slope 2-Pt</button>
-    <button class="btn" id="waterBtn" disabled title="Animate droplets following each triangle's own steepest-descent direction across the visible TIN surface(s) — a stylized visual approximation, not a hydrology/runoff model. Renders on the real 3D terrain in ⟲ 3D orbit too, not just 2D plan">🌊 Water Flow</button>
-    <button class="btn" id="rainPaintToolBtn" disabled title="🖌 Paint the area where 🌊 Water Flow rain falls — drag on the drawing in 2D plan (Esc stops). Switches the rain to Painted areas only; set it back to Whole site from the 🌧 Rain box">🖌 Rain Area</button>
-    <button class="btn" id="waterDumpBtn" disabled title="Click a point on a visible TIN surface to dump a burst of water droplets there — they flow downhill the same steepest-descent way as 🌊 Water Flow, then fully decay (vanish, not respawn) 15 seconds after being dumped, wherever they've flowed to by then. Stays armed for repeat dumps; Esc cancels. Click-to-dump itself is 2D plan view only (no way to resolve a click to a 3D world position), but an already-dumped burst keeps flowing and renders correctly if you switch to ⟲ 3D">💧 Dump Water</button>
-    <button class="btn" id="surfaceDisplayBtn" disabled title="Choose how a TIN surface is drawn — wireframe on/off, contour lines, slope arrows">🗻 Surface Display</button>
-    <button class="btn" id="snapBtn" disabled title="CAD object snap — hover to snap onto an endpoint, a genuine crossing of two lines, a midpoint, a circle's center/quadrant, or the nearest point on a line, and read its exact E/N/Z off the hud (Esc cancels) — 2D only">🧲 Snap</button>
-    <button class="btn" id="orbitBtn" disabled title="Toggle 3D orbit view (O) — drag to rotate (re-centers on whatever's under the cursor), shift-drag or middle-drag to pan, wheel to zoom. On a touchscreen: one finger to orbit, two fingers to pinch-zoom/pan, double-tap to fit">⟲ 3D</button>
-    <button class="btn" id="profileBtn" disabled title="Toggle profile (station vs. elevation) view (P) of one alignment — shows its design <Profile> grade line and PVC/PVT/PVI/PVCC/PVRC/Hi/Lo, or falls back to its horizontal geometry's own elevation if no <Profile> was imported. Drag to pan, wheel to zoom (both axes together); on a touchscreen: one finger to pan, two fingers to pinch-zoom">📈 Profile</button>
-    <button class="btn" id="mapBtn" title="Aerial imagery background, tiled from Ramsey County MN's own imagery server (falls back to Esri/USGS NAIP) — only accurate for a job in that county's own survey coordinate system, 2D view only">🗺 Map</button>
-    <button class="btn" id="pipeLabelsBtn" title="Choose which manhole/pipe fields show as on-canvas labels">🏷 Pipe Labels</button>
-    <button class="btn" id="geomLabelsBtn" disabled title="Label key geometry points — horizontal (PC/PT/PI/MID/CC/PCC/PRC), spiral (TS/SC/CS/ST/SPI/SS), vertical/profile (PVC/PVT/PVI/PVCC/PVRC/Hi/Lo), reference (POB/POE/EQN), and custom stations (POT/POC/POS). Pick a reference alignment for stationing, then one or more alignments/lines to label (needs a LandXML file with an Alignment)">📍 Label Points</button>
-    <button class="btn" id="geomTableBtn" disabled title="View every currently labeled point as a table — station, northing, easting, elevation — a quick reference sheet for field stakeout, with CSV export">📋 Points Table</button>
-    <button class="btn gold" id="layersBtn" title="Show/hide and lock layers">📑 Layers</button>
+    <div class="tg" data-name="File">
+      <button class="btn" id="importMenuBtn" title="Import a DXF, LandXML or DWG file">↥ Import ▾</button>
+      <button class="btn" id="resetPanelsBtn" title="Put every panel back in its default place and expand it">▣ Reset panels</button>
+    </div>
+    <div class="tg" data-name="View">
+      <button class="btn" id="fitBtn" disabled title="Frame everything currently loaded (F)">⊡ Fit</button>
+      <button class="btn" id="orbitBtn" disabled title="Toggle 3D orbit view (O) — drag to rotate (re-centers on whatever's under the cursor), shift-drag or middle-drag to pan, wheel to zoom. On a touchscreen: one finger to orbit, two fingers to pinch-zoom/pan, double-tap to fit">⟲ 3D</button>
+      <button class="btn" id="profileBtn" disabled title="Toggle profile (station vs. elevation) view (P) of one alignment — shows its design <Profile> grade line and PVC/PVT/PVI/PVCC/PVRC/Hi/Lo, or falls back to its horizontal geometry's own elevation if no <Profile> was imported. Drag to pan, wheel to zoom (both axes together); on a touchscreen: one finger to pan, two fingers to pinch-zoom">📈 Profile</button>
+      <button class="btn" id="mapBtn" title="Aerial imagery background, tiled from Ramsey County MN's own imagery server (falls back to Esri/USGS NAIP) — only accurate for a job in that county's own survey coordinate system, 2D view only">🗺 Map</button>
+      <button class="btn gold" id="layersBtn" title="Show/hide and lock layers">📑 Layers</button>
+    </div>
+    <div class="tg" data-name="Surface">
+      <button class="btn" id="surfaceDisplayBtn" disabled title="Choose how a TIN surface is drawn — wireframe on/off, contour lines, slope arrows">🗻 Surface Display</button>
+      <button class="btn" id="elevBtn" disabled title="Click a visible, unlocked TIN surface to save its interpolated elevation there — snaps to a nearby TIN vertex/wireframe edge, CAD line, or point first, when one's in range. Stays armed so you can save several spots in a row (Esc or click again to stop) — 2D only. View saved spots in 📐 Elevation Spots">⛰ Elevation</button>
+      <button class="btn" id="elevSpotsBtn" disabled title="View every saved ⛰ Elevation spot as a table (northing/easting/elevation, and what it snapped to) — with CSV export">📐 Elevation Spots</button>
+      <button class="btn" id="slopeBtn" disabled title="Slope between two points — pick a target surface, then click point A and point B (snaps to vertices/edges/CAD points). Reports each point's elevation on that surface, rise, horizontal & slope distance, grade %, and H:V ratio. Stays armed for more; Esc stops — 2D only">📏 Slope 2-Pt</button>
+      <button class="btn" id="snapBtn" disabled title="CAD object snap — hover to snap onto an endpoint, a genuine crossing of two lines, a midpoint, a circle's center/quadrant, or the nearest point on a line, and read its exact E/N/Z off the hud (Esc cancels) — 2D only">🧲 Snap</button>
+    </div>
+    <div class="tg" data-name="Water">
+      <button class="btn" id="waterBtn" disabled title="Animate droplets following each triangle's own steepest-descent direction across the visible TIN surface(s) — a stylized visual approximation, not a hydrology/runoff model. Renders on the real 3D terrain in ⟲ 3D orbit too, not just 2D plan">🌊 Water Flow</button>
+      <button class="btn" id="rainPaintToolBtn" disabled title="🖌 Paint the area where 🌊 Water Flow rain falls — drag on the drawing in 2D plan (Esc stops). Switches the rain to Painted areas only; set it back to Whole site from the 🌧 Rain box">🖌 Rain Area</button>
+      <button class="btn" id="waterDumpBtn" disabled title="Click a point on a visible TIN surface to dump a burst of water droplets there — they flow downhill the same steepest-descent way as 🌊 Water Flow, then fully decay (vanish, not respawn) 15 seconds after being dumped, wherever they've flowed to by then. Stays armed for repeat dumps; Esc cancels. Click-to-dump itself is 2D plan view only (no way to resolve a click to a 3D world position), but an already-dumped burst keeps flowing and renders correctly if you switch to ⟲ 3D">💧 Dump Water</button>
+    </div>
+    <div class="tg" data-name="Labels">
+      <button class="btn" id="pipeLabelsBtn" title="Choose which manhole/pipe fields show as on-canvas labels">🏷 Pipe Labels</button>
+      <button class="btn" id="geomLabelsBtn" disabled title="Label key geometry points — horizontal (PC/PT/PI/MID/CC/PCC/PRC), spiral (TS/SC/CS/ST/SPI/SS), vertical/profile (PVC/PVT/PVI/PVCC/PVRC/Hi/Lo), reference (POB/POE/EQN), and custom stations (POT/POC/POS). Pick a reference alignment for stationing, then one or more alignments/lines to label (needs a LandXML file with an Alignment)">📍 Label Points</button>
+      <button class="btn" id="geomTableBtn" disabled title="View every currently labeled point as a table — station, northing, easting, elevation — a quick reference sheet for field stakeout, with CSV export">📋 Points Table</button>
+    </div>
   </div>
   <div class="main">
     <canvas id="cv"></canvas>
@@ -119,7 +159,7 @@ canvas{display:block;width:100%;height:100%;background:var(--bg);cursor:crosshai
       <label><input type="checkbox" id="shadowChk3d"> Cast shadows</label>
     </div>
     <div class="view3d" id="rainBox" style="left:12px;right:auto;top:auto;bottom:44px;width:250px">
-      <div class="row"><b>🌧 Rain</b><span id="rainPaintedInfo" style="font-size:10px;text-align:right"></span></div>
+      <div class="row"><span>Painted area</span><span id="rainPaintedInfo" style="font-size:10px;text-align:right"></span></div>
       <span>Rain falls on</span>
       <select id="rainModeSel"><option value="site">Whole site — random drops everywhere</option><option value="painted">Painted areas only</option></select>
       <div class="row" style="gap:4px"><button id="rainPaintBtn" style="flex:1" title="Drag on the drawing to paint rain area">🖌 Paint</button><button id="rainEraseBtn" style="flex:1" title="Drag to erase painted area">⌫ Erase</button><button id="rainClearBtn" style="flex:1">Clear</button></div>
@@ -155,7 +195,7 @@ canvas{display:block;width:100%;height:100%;background:var(--bg);cursor:crosshai
     </div>
     <div class="panel" id="pipeLabelPanel">
       <h4><span>Pipe Labels</span><button id="pipeLabelCloseBtn" title="Close">✕</button></h4>
-      <p class="note" style="margin-bottom:8px">Structure "depth" = Rim − Sump (or Rim − lowest invert, if no sump elevation is given) — the closest thing this data has to a manhole's build/barrel height. Labels only draw once you're zoomed in past a certain point (manholes/dots always show) — zoom to a single layer from the 📑 Layers panel first if a corridor-shaped project makes the whole-site view too small to label.</p>
+      <details class="help"><summary>ℹ How this works</summary><p class="note">Structure "depth" = Rim − Sump (or Rim − lowest invert, if no sump elevation is given) — the closest thing this data has to a manhole's build/barrel height. Labels only draw once you're zoomed in past a certain point (manholes/dots always show) — zoom to a single layer from the 📑 Layers panel first if a corridor-shaped project makes the whole-site view too small to label.</p></details>
       <label style="display:flex;align-items:center;gap:6px;margin-bottom:6px;cursor:pointer"><input type="checkbox" id="plRim" checked> Rim elevation</label>
       <label style="display:flex;align-items:center;gap:6px;margin-bottom:6px;cursor:pointer"><input type="checkbox" id="plDepth" checked> Structure depth (Rim − Sump)</label>
       <label style="display:flex;align-items:center;gap:6px;margin-bottom:6px;cursor:pointer"><input type="checkbox" id="plSlope" checked> Pipe % slope</label>
@@ -196,7 +236,7 @@ canvas{display:block;width:100%;height:100%;background:var(--bg);cursor:crosshai
     </div>
     <div class="panel" id="geomLabelPanel">
       <h4><span>Label Geometry Points</span><button id="geomLabelCloseBtn" title="Close">✕</button></h4>
-      <p class="note" style="margin-bottom:8px">1) Pick the <b>reference alignment</b> — this defines station 0 and direction. 2) Check one or more <b>targets</b> to label: an alignment (its own curves/spirals/profile give real PC/PT/PI/MID/CC/PCC/PRC/TS/SC/CS/ST/SPI/PVC/PVT/PVI/PVCC/PVRC/Hi/Lo/POB/POE/EQN) or a plain line/layer (no curve data, so only its segment MID points can be labeled). Checking several targets at once labels them all together, stationed against the same reference — handy for e.g. labeling a mainline plus every side street off it in one pass. Most types' station is the closest match along the reference (so checking the reference as its own target recovers native stationing); a few — EQN, POT/POC/POS, and every vertical/profile point — always keep the station they're actually defined at, since re-stationing them against an unrelated alignment wouldn't mean anything. CC (circle center) shows no station at all — it's off the physical roadway, at radius distance from the curve.</p>
+      <details class="help"><summary>ℹ How this works</summary><p class="note">1) Pick the <b>reference alignment</b> — this defines station 0 and direction. 2) Check one or more <b>targets</b> to label: an alignment (its own curves/spirals/profile give real PC/PT/PI/MID/CC/PCC/PRC/TS/SC/CS/ST/SPI/PVC/PVT/PVI/PVCC/PVRC/Hi/Lo/POB/POE/EQN) or a plain line/layer (no curve data, so only its segment MID points can be labeled). Checking several targets at once labels them all together, stationed against the same reference — handy for e.g. labeling a mainline plus every side street off it in one pass. Most types' station is the closest match along the reference (so checking the reference as its own target recovers native stationing); a few — EQN, POT/POC/POS, and every vertical/profile point — always keep the station they're actually defined at, since re-stationing them against an unrelated alignment wouldn't mean anything. CC (circle center) shows no station at all — it's off the physical roadway, at radius distance from the curve.</p></details>
       <label style="display:block;margin-bottom:4px;font-size:11px;color:var(--mut)">Reference alignment (stationing)</label>
       <select id="geomRefSel" style="width:100%;margin-bottom:8px;background:var(--panel2);color:var(--text);border:1px solid var(--rule);border-radius:5px;padding:5px"></select>
       <label style="display:block;margin-bottom:4px;font-size:11px;color:var(--mut)">Target alignment(s)/line(s) to label — check one or more</label>
@@ -214,7 +254,7 @@ canvas{display:block;width:100%;height:100%;background:var(--bg);cursor:crosshai
     </div>
     <div class="panel" id="geomTablePanel" style="width:600px">
       <h4><span>Points Table</span><button id="geomTableCloseBtn" title="Close">✕</button></h4>
-      <p class="note" style="margin-bottom:8px">Every currently labeled point, sorted by station — a field stakeout reference sheet. Shows everything computed, including types hidden on-canvas by a category toggle.</p>
+      <details class="help"><summary>ℹ How this works</summary><p class="note">Every currently labeled point, sorted by station — a field stakeout reference sheet. Shows everything computed, including types hidden on-canvas by a category toggle.</p></details>
       <button class="btn gold" id="geomTableExportBtn" style="width:100%;margin-bottom:8px">⬇ Export CSV</button>
       <div style="overflow:auto;max-height:min(55vh,420px)">
         <table id="geomTable" style="width:100%;border-collapse:collapse;font-size:11px;white-space:nowrap"></table>
@@ -233,7 +273,7 @@ canvas{display:block;width:100%;height:100%;background:var(--bg);cursor:crosshai
     </div>
     <div class="panel" id="slopePanel" style="width:440px;left:auto;right:12px;z-index:2">
       <h4><span>📏 Slope Between 2 Points</span><button id="slopeCloseBtn" title="Close">✕</button></h4>
-      <p class="note" style="margin-bottom:8px">Click point A, then point B, in 2D plan view — both snap to nearby TIN vertices/edges, CAD lines and points. Elevations are read off the target surface at each point; a point outside that surface falls back to the snapped object's own Z, if it has one. Grade = ΔZ ÷ horizontal distance, signed A → B (negative = downhill).</p>
+      <details class="help"><summary>ℹ How this works</summary><p class="note">Click point A, then point B, in 2D plan view — both snap to nearby TIN vertices/edges, CAD lines and points. Elevations are read off the target surface at each point; a point outside that surface falls back to the snapped object's own Z, if it has one. Grade = ΔZ ÷ horizontal distance, signed A → B (negative = downhill).</p></details>
       <label style="display:block;margin-bottom:4px;font-size:11px;color:var(--mut)">Target surface</label>
       <select id="slopeSurfSel" style="width:100%;margin-bottom:8px;background:var(--panel2);color:var(--text);border:1px solid var(--rule);border-radius:5px;padding:5px"></select>
       <div style="display:flex;gap:8px;margin-bottom:8px">
@@ -247,7 +287,7 @@ canvas{display:block;width:100%;height:100%;background:var(--bg);cursor:crosshai
     </div>
     <div class="panel" id="profilePanel">
       <h4><span>Profile View</span><button id="profileCloseBtn" title="Exit profile view">✕</button></h4>
-      <p class="note" style="margin-bottom:8px">Station vs. elevation for one alignment. An alignment with an imported <code>&lt;Profile&gt;</code> shows its real design grade line and PVC/PVT/PVI/PVCC/PVRC/Hi/Lo; one without shows its horizontal geometry's own elevation instead, dashed, so it's never mistaken for an actual design profile.</p>
+      <details class="help"><summary>ℹ How this works</summary><p class="note">Station vs. elevation for one alignment. An alignment with an imported <code>&lt;Profile&gt;</code> shows its real design grade line and PVC/PVT/PVI/PVCC/PVRC/Hi/Lo; one without shows its horizontal geometry's own elevation instead, dashed, so it's never mistaken for an actual design profile.</p></details>
       <label style="display:block;margin-bottom:4px;font-size:11px;color:var(--mut)">Alignment</label>
       <select id="profileAlignSel" style="width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--rule);border-radius:5px;padding:5px"></select>
     </div>
@@ -3159,6 +3199,7 @@ cv.addEventListener('wheel',e=>{
   draw();
 },{passive:false});
 window.addEventListener('keydown',e=>{
+  if(e.key!=='Escape'&&/^(INPUT|SELECT|TEXTAREA)$/.test((e.target&&e.target.tagName)||''))return;   // typing a station/interval — don't trigger F/O/P
   if(e.key==='Escape'){
     if(basinPlaceOn){setBasinPlace(false);hud('catch basin placing stopped');}
     else if(rainPaintOn){setRainPaint(false);hud('rain area painting stopped');}
@@ -3174,8 +3215,102 @@ window.addEventListener('keydown',e=>{
 window.addEventListener('resize',resize);
 resize();
 
+/* ---------- 🪟 floating panels: draggable title bar, collapse, remembered layout ----------
+   Every panel and overlay box gets the same title bar: drag it to move the panel anywhere
+   over the drawing, ▾/▸ (or double-click) to collapse it to just its title, ✕ to close where
+   the panel had a close button. Position and collapsed state persist per panel in this
+   browser (localStorage); ▣ Reset panels restores the defaults. */
+const FWIN_KEY='cstp.fwin.';
+let fwinTop=20;
+function fwinLoad(id){try{return JSON.parse(localStorage.getItem(FWIN_KEY+id)||'null');}catch(_){return null;}}
+function fwinSave(el){try{localStorage.setItem(FWIN_KEY+el.id,JSON.stringify({x:el._fx,y:el._fy,c:el.classList.contains('collapsed')}));}catch(_){}}
+function fwinPlace(el,x,y){
+  const main=el.parentElement.getBoundingClientRect(),r=el.getBoundingClientRect();
+  x=Math.max(0,Math.min(x,main.width-Math.min(r.width,120)));   // keep at least the title bar reachable
+  y=Math.max(0,Math.min(y,main.height-30));
+  el.style.left=x+'px';el.style.top=y+'px';el.style.right='auto';el.style.bottom='auto';
+  el._fx=x;el._fy=y;fwinFit(el);
+}
+// never let a panel run past the bottom of the drawing area — its body scrolls instead
+function fwinFit(el){
+  const main=el.parentElement.getBoundingClientRect(),y=el.getBoundingClientRect().top-main.top;
+  el.style.maxHeight=Math.max(80,main.height-y-12)+'px';
+}
+function makeFloating(el,title,{collapsed=false}={}){
+  if(!el||el.classList.contains('fwin'))return;
+  el.classList.add('fwin');
+  // title bar: reuse a panel's own <h4> (keeps its ✕ close button and id), else build one
+  let head=el.querySelector(':scope>h4');
+  if(head){const span=head.querySelector('span');if(span)span.className='ftitle';}
+  else{head=document.createElement('div');head.innerHTML=`<span class="ftitle">${title}</span>`;}
+  head.className='fhead';
+  const col=document.createElement('button');col.className='fcollapse';col.title='Collapse / expand';
+  head.insertBefore(col,head.querySelector('span.ftitle').nextSibling);
+  const body=document.createElement('div');body.className='fbody';
+  [...el.childNodes].forEach(n=>{if(n!==head)body.appendChild(n);});
+  el.appendChild(head);el.appendChild(body);
+  const setCollapsed=c=>{el.classList.toggle('collapsed',c);col.textContent=c?'▸':'▾';};
+  const saved=fwinLoad(el.id);
+  setCollapsed(saved?!!saved.c:collapsed);
+  el._fdefault={style:el.getAttribute('style')||'',collapsed};
+  if(saved&&isFinite(saved.x)){el._fx=saved.x;el._fy=saved.y;el._fpending=true;}
+  col.onclick=e=>{e.stopPropagation();setCollapsed(!el.classList.contains('collapsed'));fwinSave(el);};
+  head.addEventListener('dblclick',e=>{if(e.target.closest('button'))return;col.onclick(e);});
+  el.addEventListener('pointerdown',()=>{el.style.zIndex=++fwinTop;},true);
+  let d=null;
+  head.addEventListener('pointerdown',e=>{
+    if(e.target.closest('button,input,select')||e.button>0)return;
+    const main=el.parentElement.getBoundingClientRect(),r=el.getBoundingClientRect();
+    d={dx:e.clientX-r.left,dy:e.clientY-r.top,mx:main.left,my:main.top};
+    el.classList.add('dragging');try{head.setPointerCapture(e.pointerId);}catch(_){}
+    e.preventDefault();
+  });
+  head.addEventListener('pointermove',e=>{if(!d)return;fwinPlace(el,e.clientX-d.mx-d.dx,e.clientY-d.my-d.dy);});
+  const end=()=>{if(!d)return;d=null;el.classList.remove('dragging');fwinSave(el);};
+  head.addEventListener('pointerup',end);head.addEventListener('pointercancel',end);
+}
+// a saved position is applied the first time the panel is actually visible (a hidden panel has no size to clamp with)
+function fwinApplyPending(){document.querySelectorAll('.fwin').forEach(el=>{
+  const vis=!!el.offsetParent,was=el._fvis;el._fvis=vis;
+  if(!vis)return;
+  if(!was)el.style.zIndex=++fwinTop;                         // a panel you just opened comes to the front
+  if(el._fpending){el._fpending=false;fwinPlace(el,el._fx,el._fy);return;}
+  // just opened at its default spot while another panel already sits there → cascade it down/right
+  if(!was&&el._fx==null&&el.classList.contains('panel')){
+    const r=el.getBoundingClientRect(),main=el.parentElement.getBoundingClientRect();
+    let x=r.left-main.left,y=r.top-main.top,n=0;
+    const taken=()=>[...document.querySelectorAll('.panel.fwin')].some(o=>o!==el&&o.offsetParent&&Math.abs(o.getBoundingClientRect().left-main.left-x)<8&&Math.abs(o.getBoundingClientRect().top-main.top-y)<8);
+    while(taken()&&n<12){x+=28;y+=28;n++;}
+    if(n){el.style.left=x+'px';el.style.top=y+'px';el.style.right='auto';}   // not saved — only a drag saves a position
+  }
+  if(!was)fwinFit(el);
+  });}
+window.addEventListener('resize',()=>document.querySelectorAll('.fwin').forEach(el=>{if(el.offsetParent)fwinFit(el);}));
+new MutationObserver(fwinApplyPending).observe(document.querySelector('.main'),{subtree:true,attributes:true,attributeFilter:['class','style']});
+function resetPanels(){
+  document.querySelectorAll('.fwin').forEach(el=>{
+    try{localStorage.removeItem(FWIN_KEY+el.id);}catch(_){}
+    const keepDisplay=el.style.display;el.setAttribute('style',el._fdefault.style);if(keepDisplay)el.style.display=keepDisplay;
+    el._fx=el._fy=undefined;el._fpending=false;el._fvis=!!el.offsetParent;
+    el.classList.toggle('collapsed',el._fdefault.collapsed);el.querySelector('.fcollapse').textContent=el._fdefault.collapsed?'▸':'▾';
+  });
+  hud('panels reset to their default positions');
+}
+[['layerPanel'],['pipeLabelPanel'],['surfaceDisplayPanel'],['geomLabelPanel'],['geomTablePanel'],['elevSpotsPanel'],['slopePanel'],['profilePanel'],
+ ['view3dBox','⟲ 3D View'],['rainBox','🌧 Rain & Drainage'],['snapBox','🧲 Snap'],['legend','Legend',{collapsed:true}]]
+  .forEach(([id,title,opt])=>makeFloating($(id),title||'',opt));
+$('resetPanelsBtn').onclick=resetPanels;
+// ↥ Import ▾ menu
+$('importMenuBtn').onclick=e=>{
+  e.stopPropagation();const m=$('importMenu'),r=$('importMenuBtn').getBoundingClientRect();
+  m.style.left=Math.max(8,Math.min(r.left,innerWidth-230))+'px';m.style.top=(r.bottom+4)+'px';m.classList.toggle('show');
+};
+document.addEventListener('pointerdown',e=>{if(!e.target.closest('#importMenu,#importMenuBtn'))$('importMenu').classList.remove('show');});
+['dxfInput','landxmlInput','dwgInput'].forEach(id=>$(id).addEventListener('change',()=>$('importMenu').classList.remove('show')));
+
+
 /* ---------- version badge — CHANGED ON EVERY PUSH (new animal + name + build+1; see CLAUDE.md), mirroring FBK-Checker's own fruit badge ---------- */
-const VERSION={animal:'🦫',name:'BEAVER',build:26};
+const VERSION={animal:'🦔',name:'HEDGEHOG',build:27};
 function rotateAnimal(){const b=$('animalBadge');b.style.transform='rotate(360deg)';setTimeout(()=>{b.style.transform='rotate(0deg)';},200);}
 function showVersion(){const b=$('animalBadge');b.textContent=`${VERSION.animal} ${VERSION.name} · b${VERSION.build}`;
   b.title=`Build ${VERSION.build} · ${VERSION.name} — if this matches what Claude pushed, you're on the latest (no cache)`;}

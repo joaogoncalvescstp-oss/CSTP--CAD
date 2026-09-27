@@ -330,6 +330,22 @@ dependencies, and nothing to install.
   and in 3D the water visibly travels underground along the invert line.
   Placed 🕳 basins (not tied to a structure) still just remove water.
 
+## Toolbar and panels
+
+- The toolbar is grouped: **↥ Import ▾** (DXF / LandXML / DWG in one menu)
+  and **▣ Reset panels**, then View, Surface & survey tools, Water, and
+  Labels.
+- **Every panel is a floating window**: all the tool panels plus the 3D
+  View box, Rain & Drainage box, Snap box and Legend. Drag the title bar
+  to move it, **▾/▸** (or double-click the title) to collapse it to just
+  its title, **✕** to close. Each panel's position and collapsed state are
+  remembered in this browser. **▣ Reset panels** puts everything back.
+  Clicking a panel brings it to the front. Newly opened panels cascade
+  instead of stacking on top of each other and shrink to fit the window
+  (the body scrolls). The Legend starts collapsed.
+- Long explanations sit behind an **ℹ How this works** toggle.
+- F / O / P shortcuts are ignored while typing in a text field.
+
 ## Slope between two points
 
 - **📏 Slope 2-Pt** measures the slope between two picked points on a
