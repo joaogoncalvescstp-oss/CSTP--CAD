@@ -366,6 +366,16 @@ dependencies, and nothing to install.
   same hue with flipped lightness, so pale lines, labels and water turn into
   deep versions of themselves and the dark label halos turn light. Surface
   shaders are exempt, so hillshade light and shadow never invert.
+- **👁 Deutan** (toolbar, **on by default**, remembered) switches every
+  color scheme to deutan-safe colors, for red-green color-blindness
+  (deuteranopia). It uses the Okabe-Ito color-blind-safe palette for layer
+  and point-category colors, blue → orange for slope shading and the slope
+  shader, blue → yellow for the elevation shader, and vermillion / yellow /
+  sky / white for water-speed classes. Legend and panel swatches recolor to
+  match. Checked with a Machado 2009 deuteranopia simulation: the most
+  similar pair in each set went from ΔE 2.9 → 33.6 (water speed) and
+  8.7 → 18.3 (point categories). It combines with ☀ Light; click 👁 to go
+  back to the original palette.
 
 ## Slope between two points
 

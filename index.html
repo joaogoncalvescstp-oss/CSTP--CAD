@@ -98,6 +98,7 @@ details.help[open]>summary{margin-bottom:4px}
     <div class="grow"></div>
     <div class="tg" data-name="File">
       <button class="btn" id="importMenuBtn" title="Import a DXF, LandXML or DWG file">↥ Import ▾</button>
+      <button class="btn on" id="cvdBtn" title="Deutan-safe colors ON — click for the original palette">👁 Deutan</button>
       <button class="btn" id="themeBtn" title="Switch between dark and light theme (T)">☀ Light</button>
       <button class="btn" id="resetPanelsBtn" title="Put every panel back in its default place and expand it">▣ Reset panels</button>
     </div>
@@ -770,13 +771,13 @@ function inShadow(E,N,Z,sun,grid,ve,eps){
 }
 // per-triangle CSS colors for one surface under the current SHADE settings (cached)
 function surfaceShadeColors(s){
-  const key=[SHADE.mode,SHADE.sunAz,SHADE.sunAlt,SHADE.shadows,orbit.ve,SHADE.shadows?visibleSurfaceKey():'',LAYERS[s.layer]?.color].join(',');
+  const key=[SHADE.mode,deutan,SHADE.sunAz,SHADE.sunAlt,SHADE.shadows,orbit.ve,SHADE.shadows?visibleSurfaceKey():'',LAYERS[s.layer]?.color].join(',');
   if(s._shadeKey===key)return s._shadeCols;
   const ve=orbit.ve,sun=sunVector(),{lo,hi}=surfaceZRange(s),zr=(hi-lo)||1;
   let slo=Infinity,shi=-Infinity;
   if(SHADE.mode==='slope')s.tris.forEach(t=>{const n=triUnitNormal(t,1);if(n){const g=Math.hypot(n[0],n[1])/n[2];slo=Math.min(slo,g);shi=Math.max(shi,g);}});
   const grid=SHADE.shadows&&SHADE.mode!=='normal'&&SHADE.mode!=='aspect'?shadowGrid():null,eps=zr*ve*1e-3+1e-6;
-  const base=hexRGB(LAYERS[s.layer]?.color);
+  const base=hexRGB(deutanHex(LAYERS[s.layer]?.color));
   const cols=s.tris.map(tri=>{
     const n=triUnitNormal(tri,ve);if(!n)return null;
     if(SHADE.mode==='normal')return `rgb(${(n[0]*.5+.5)*255|0},${(n[1]*.5+.5)*255|0},${n[2]*255|0})`;
@@ -3482,35 +3483,82 @@ resize();
    lightness flipped (L → 1−L). Pale lines/labels/water become deep versions of the same color
    and the dark label halos become light ones. Terrain shaders opt out (canvasRawColors) so a
    hillshade's light and shadow are never inverted. The choice is remembered in this browser. */
-let lightTheme=false,canvasRawColors=false;
+let lightTheme=false,canvasRawColors=false,deutan=false;   // deutan: see 👁 deutan-safe colors below (turned on at startup)
 const themeColorCache=new Map();
 function themeColor(v){
-  if(!lightTheme||canvasRawColors||typeof v!=='string')return v;
+  if(typeof v!=='string'||canvasRawColors)return v;
+  if(!lightTheme&&!deutan)return v;
   let out=themeColorCache.get(v);if(out!==undefined)return out;
+  const v0=v;v=deutanHex(v);
+  if(!lightTheme){themeColorCache.set(v0,v);return v;}
   let r,g,b,a=1,m;
   if((m=/^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(v))){let h=m[1];if(h.length===3)h=h.replace(/./g,c=>c+c);const n=parseInt(h,16);r=n>>16&255;g=n>>8&255;b=n&255;}
   else if((m=/^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*(?:,\s*([\d.]+)\s*)?\)$/i.exec(v))){r=+m[1];g=+m[2];b=+m[3];if(m[4]!=null)a=+m[4];}
-  else{themeColorCache.set(v,v);return v;}
+  else{themeColorCache.set(v0,v);return v;}
   r/=255;g/=255;b/=255;const mx=Math.max(r,g,b),mn=Math.min(r,g,b);let h=0,s=0,l=(mx+mn)/2;
   if(mx!==mn){const d=mx-mn;s=l>.5?d/(2-mx-mn):d/(mx+mn);h=mx===r?(g-b)/d+(g<b?6:0):mx===g?(b-r)/d+2:(r-g)/d+4;h/=6;}
   l=1-l;if(l>.42&&l<.6&&s>.3)l=.4;                          // mid-tone saturated colors (red/orange) nudge darker so they still pop on white
   const q=l<.5?l*(1+s):l+s-l*s,pp=2*l-q,hue=t=>{t=(t+1)%1;return t<1/6?pp+(q-pp)*6*t:t<1/2?q:t<2/3?pp+(q-pp)*(2/3-t)*6:pp;};
   const R=Math.round((s?hue(h+1/3):l)*255),G=Math.round((s?hue(h):l)*255),B=Math.round((s?hue(h-1/3):l)*255);
   out=a<1?`rgba(${R},${G},${B},${a})`:`rgb(${R},${G},${B})`;
-  themeColorCache.set(v,out);return out;
+  themeColorCache.set(v0,out);return out;
 }
 ['fillStyle','strokeStyle'].forEach(k=>{
   const d=Object.getOwnPropertyDescriptor(CanvasRenderingContext2D.prototype,k);
   Object.defineProperty(ctx,k,{configurable:true,get(){return d.get.call(this);},set(v){d.set.call(this,themeColor(v));}});
 });
 function setTheme(light,save){
-  lightTheme=light;document.documentElement.dataset.theme=light?'light':'dark';
+  lightTheme=light;themeColorCache.clear();document.documentElement.dataset.theme=light?'light':'dark';
   $('themeBtn').textContent=light?'☾ Dark':'☀ Light';
   if(save)try{localStorage.setItem('cstp.theme',light?'light':'dark');}catch(_){}
   draw();
 }
 $('themeBtn').onclick=()=>setTheme(!lightTheme,true);
 try{if(localStorage.getItem('cstp.theme')==='light')setTheme(true,false);}catch(_){}
+
+/* ---------- 👁 deutan-safe colors (color-vision-deficiency mode) ----------
+   Deuteranopia (green-cone) makes red↔green, orange↔pink and green→red ramps hard to tell
+   apart. With this mode on, every drawing color passes through DEUTAN_MAP (Okabe-Ito
+   color-blind-safe palette, brightened for the dark background), the surface-shader ramps
+   switch to blue→orange / blue→yellow (the axis deutans see best), and matching swatches in
+   the legend and panels are recolored. The theme's light/dark adaptation runs AFTER this
+   swap, so both work together. On by default; the 👁 button toggles it (remembered). */
+const DEUTAN_MAP={
+  // layer palette → Okabe-Ito
+  '#7fd4ff':'#56b4e9','#ff9f6b':'#e69f00','#c792ff':'#cc79a7','#8fe3a0':'#1fbf92','#ffd24a':'#f0e442',
+  '#ff7ab3':'#d55e00','#6ee0c8':'#2f8fd8','#a8b6e0':'#d9d9d9','#ff8f5d':'#ffffff','#5dd0ff':'#9ad0f5','#ffb86b':'#e69f00',
+  // 5-class slope shading green→red  →  blue→orange
+  '#2ecc71':'#2f6fbf','#a3d977':'#7fb2e5','#f1c40f':'#e8e8d0','#e67e22':'#f2a640','#e74c3c':'#d55e00',
+  // water speed classes red/yellow/blue/purple → vermillion/yellow/sky/white
+  '#ff4d4d':'#d55e00','#4da3ff':'#56b4e9','#c07bff':'#ffffff',
+  // misc reds/pinks
+  '#ff5ea8':'#cc79a7','#ff7a7a':'#e69f00','#ff5d52':'#e69f00','#ff8a80':'#f0e442'};
+const RAMPS_DEFAULT={hypso:HYPSO.map(c=>c.slice()),slope:SLOPE_RAMP.map(c=>c.slice())};
+const RAMPS_DEUTAN={hypso:[[40,80,150],[70,130,200],[150,170,185],[215,190,110],[240,215,80],[250,250,235]],
+  slope:[[47,111,191],[127,178,229],[232,232,208],[242,166,64],[213,94,0]]};
+function deutanHex(c){return deutan&&typeof c==='string'?(DEUTAN_MAP[c.toLowerCase()]||c):c;}
+// recolor inline-styled swatches/labels in the page (legend, panels, layer list) — original kept in data-orig-style
+function recolorDOM(root){
+  (root.querySelectorAll?[root,...root.querySelectorAll('[style]')]:[]).forEach(el=>{
+    if(!el.getAttribute||!el.getAttribute('style'))return;
+    if(el.dataset.origStyle==null){if(!/#[0-9a-f]{6}/i.test(el.getAttribute('style')))return;el.dataset.origStyle=el.getAttribute('style');}
+    const o=el.dataset.origStyle;
+    el.setAttribute('style',deutan?o.replace(/#[0-9a-f]{6}\b/gi,m=>DEUTAN_MAP[m.toLowerCase()]||m):o);
+  });
+}
+new MutationObserver(ms=>{if(!deutan)return;ms.forEach(m=>m.addedNodes.forEach(n=>{if(n.nodeType===1&&!n.closest('#cv'))recolorDOM(n);}));})
+  .observe(document.body,{childList:true,subtree:true});
+function setDeutan(on,save){
+  deutan=on;themeColorCache.clear();
+  const r=on?RAMPS_DEUTAN:RAMPS_DEFAULT;
+  HYPSO.splice(0,HYPSO.length,...r.hypso.map(c=>c.slice()));SLOPE_RAMP.splice(0,SLOPE_RAMP.length,...r.slope.map(c=>c.slice()));
+  SURFACES.forEach(sf=>{sf._shadeKey=null;});
+  recolorDOM(document.body);
+  $('cvdBtn').classList.toggle('on',on);$('cvdBtn').title=on?'Deutan-safe colors ON — click for the original palette':'Switch to deutan (red-green color-blind) safe colors';
+  if(save)try{localStorage.setItem('cstp.cvd',on?'deutan':'off');}catch(_){}
+  draw();
+}
+$('cvdBtn').onclick=()=>{setDeutan(!deutan,true);hud(deutan?'👁 deutan-safe colors on':'original color palette');};
 
 /* ---------- 🪟 floating panels: draggable title bar, collapse, remembered layout ----------
    Every panel and overlay box gets the same title bar: drag it to move the panel anywhere
@@ -3597,6 +3645,7 @@ function resetPanels(){
  ['view3dBox','⟲ 3D View'],['rainBox','🌧 Rain & Drainage'],['snapBox','🧲 Snap'],['legend','Legend',{collapsed:true}]]
   .forEach(([id,title,opt])=>makeFloating($(id),title||'',opt));
 $('resetPanelsBtn').onclick=resetPanels;
+try{setDeutan(localStorage.getItem('cstp.cvd')!=='off',false);}catch(_){setDeutan(true,false);}
 // ↥ Import ▾ menu
 $('importMenuBtn').onclick=e=>{
   e.stopPropagation();const m=$('importMenu'),r=$('importMenuBtn').getBoundingClientRect();
@@ -3607,7 +3656,7 @@ document.addEventListener('pointerdown',e=>{if(!e.target.closest('#importMenu,#i
 
 
 /* ---------- version badge — CHANGED ON EVERY PUSH (new animal + name + build+1; see CLAUDE.md), mirroring FBK-Checker's own fruit badge ---------- */
-const VERSION={animal:'🦒',name:'GIRAFFE',build:30};
+const VERSION={animal:'🦓',name:'ZEBRA',build:31};
 function rotateAnimal(){const b=$('animalBadge');b.style.transform='rotate(360deg)';setTimeout(()=>{b.style.transform='rotate(0deg)';},200);}
 function showVersion(){const b=$('animalBadge');b.textContent=`${VERSION.animal} ${VERSION.name} · b${VERSION.build}`;
   b.title=`Build ${VERSION.build} · ${VERSION.name} — if this matches what Claude pushed, you're on the latest (no cache)`;}
