@@ -257,6 +257,14 @@ dependencies, and nothing to install.
   sheet. It shows everything computed regardless of the on-canvas category
   toggles, and **⬇ Export CSV** saves the same table to a file for printing
   or loading into a data collector.
+- **Label elevations** (📍 Label Points / 📋 Points Table): LandXML horizontal
+  geometry is usually 2D (Z = 0), so each horizontal point's **EL** (MID,
+  PC, PT, PI, POB, POE, PCC/PRC, spiral points, POT/POC/POS) is taken from
+  that alignment's own **design profile** at the point's own station
+  (tangents and parabolic vertical curves; the PI uses PC + T). With no
+  profile, a non-zero file Z is kept. Otherwise the elevation is read off
+  the top visible surface and marked **(EG)**. The Points Table's note
+  column says which source was used.
 - **🌀 Curve Properties**: with 📍 labels showing, click a curve's **PI**, **CC**
   or **MID** marker (2D plan; the cursor turns to a pointer) to open a panel
   listing every property of that circular curve, each with its formula:

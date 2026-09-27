@@ -1528,6 +1528,34 @@ const GEOM_REPROJECT=new Set(['PC','PT','PI','MID','PCC','PRC','TS','SC','CS','S
 // every real point type; a plain line/layer has no curve or station data at all, so the only
 // honest point to offer is each segment's own midpoint (never invent a PC/PT/PVI that isn't
 // backed by real curve/profile geometry).
+// design-grade elevation of an alignment's <Profile> at a station (tangents + parabolic
+// vertical curves), or null outside the profile / with no profile
+function profileElevAt(alignment,sta){
+  const pv=alignment.profile&&alignment.profile.pvis;if(!pv||pv.length<2||sta==null)return null;
+  if(sta<pv[0].sta-1e-6||sta>pv[pv.length-1].sta+1e-6)return null;
+  const g=profileGrades(pv);
+  for(let i=1;i<pv.length-1;i++){const L=pv[i].curveLength;if(!L)continue;
+    const pvc=pv[i].sta-L/2;if(sta>=pvc&&sta<=pv[i].sta+L/2){const x=sta-pvc;return pv[i].elev-g[i-1]*(L/2)+g[i-1]*x+((g[i]-g[i-1])/(2*L))*x*x;}}
+  for(let k=0;k<pv.length-1;k++)if(sta>=pv[k].sta-1e-6&&sta<=pv[k+1].sta+1e-6)return pv[k].elev+g[k]*(sta-pv[k].sta);
+  return null;
+}
+// top visible surface elevation at (E,N) — the fallback when a point has no design grade
+function surfaceElevAtPoint(E,N){const h=findWaterTriangleAt(E,N);return h?pointInTri(E,N,h.tri[0],h.tri[1],h.tri[2]):null;}
+// give every labeled point a real elevation: the alignment's own design profile at the point's
+// own (native) station first; else a non-zero Z the file gave it; else the ground (EG) under it
+function assignGeomElevations(pts,alignment){
+  pts.forEach(p=>{
+    if(p.elev!=null)return;                                  // vertical/profile points already carry their design elevation
+    let sta=p.sta;
+    if(sta==null&&p.type==='PI'&&p.curve)sta=p.curve.staStart+p.curve.radius*Math.tan(Math.abs(curveSweep(p.curve))/2);   // PI station = PC + T
+    const pz=alignment?profileElevAt(alignment,sta):null;
+    if(pz!=null&&p.type!=='CC'){p.elev=pz;p.Z=pz;p.elevSrc='profile';return;}
+    if(p.Z)return;                                           // the file's own non-zero Z
+    const sz=surfaceElevAtPoint(p.E,p.N);
+    if(sz!=null){p.elev=sz;p.Z=sz;p.elevSrc='surface';}
+  });
+  return pts;
+}
 function collectKeyPoints(target,extraStations){
   const pts=[];
   if(target.kind==='alignment'){
@@ -1539,6 +1567,7 @@ function collectKeyPoints(target,extraStations){
       const p=stationToPoint(target.obj,sta);
       pts.push({type:el.type==='line'?'POT':el.type==='curve'?'POC':'POS',E:p.E,N:p.N,Z:p.Z||0,sta});
     });
+    assignGeomElevations(pts,target.obj);                   // stations here are still the alignment's own, before any re-stationing
   }else{
     ENTITIES.forEach(e=>{
       if(e.layer!==target.name)return;
@@ -1549,6 +1578,7 @@ function collectKeyPoints(target,extraStations){
           pts.push({type:'MID',E:(a.E+b.E)/2,N:(a.N+b.N)/2,Z:((a.Z||0)+(b.Z||0))/2});}
       }
     });
+    assignGeomElevations(pts,null);
   }
   return pts;
 }
@@ -1677,7 +1707,7 @@ function drawGeomLabels(proj){
     const lines=[p.type];
     if(p.sta!=null)lines.push(`STA ${formatStation(p.sta)}`);
     const elev=geomPointElev(p);   // a vertical/profile point's own design elevation, or the point's plain geometry Z otherwise — same fallback the table uses, so every category shows an elevation whenever the source data actually carries one
-    if(elev!=null)lines.push(`EL ${elev.toFixed(2)}`);
+    if(elev!=null)lines.push(`EL ${elev.toFixed(2)}${p.elevSrc==='surface'?' (EG)':''}`);
     if(p.note)lines.push(p.note);
     placeLabelBlock(lines,x+7,y-7,color,11);
   });
@@ -1811,6 +1841,7 @@ function resolveTargetRef(val){
 // elevation to show in the table/export: a vertical/profile point's own design elevation
 // takes priority (that's the authoritative number for those), otherwise fall back to the
 // point's plain geometry Z.
+const geomElevNote=p=>[p.note,p.elevSrc==='profile'?'EL: design profile':p.elevSrc==='surface'?'EL: EG surface':''].filter(Boolean).join(' · ');
 function geomPointElev(p){return p.elev!=null?p.elev:(p.Z!=null?p.Z:null);}
 function geomTableRows(){
   return GEOM_POINTS.slice().sort((a,b)=>{
@@ -1827,7 +1858,7 @@ function renderGeomTable(){
   rows.forEach((p,i)=>{
     const cat=GEOM_TYPE_CATEGORY[p.type]||'reference';
     const elev=geomPointElev(p);
-    const cells=[i+1,p.type,cat,p.target||'',p.sta!=null?formatStation(p.sta):'—',p.N.toFixed(3),p.E.toFixed(3),elev!=null?elev.toFixed(2):'—',p.note||''];
+    const cells=[i+1,p.type,cat,p.target||'',p.sta!=null?formatStation(p.sta):'—',p.N.toFixed(3),p.E.toFixed(3),elev!=null?elev.toFixed(2):'—',geomElevNote(p)];
     html+='<tr>'+cells.map(v=>`<td style="padding:3px 8px;border-bottom:1px solid var(--rule)">${v}</td>`).join('')+'</tr>';
   });
   tbl.innerHTML=html+'</tbody>';
@@ -1839,7 +1870,7 @@ function geomTableCSV(){
   geomTableRows().forEach((p,i)=>{
     const cat=GEOM_TYPE_CATEGORY[p.type]||'reference';
     const elev=geomPointElev(p);
-    lines.push([i+1,p.type,cat,p.target||'',p.sta!=null?formatStation(p.sta):'',p.N.toFixed(3),p.E.toFixed(3),elev!=null?elev.toFixed(2):'',p.note||''].map(geomCSVField).join(','));
+    lines.push([i+1,p.type,cat,p.target||'',p.sta!=null?formatStation(p.sta):'',p.N.toFixed(3),p.E.toFixed(3),elev!=null?elev.toFixed(2):'',geomElevNote(p)].map(geomCSVField).join(','));
   });
   return lines.join('\r\n');
 }
@@ -3748,7 +3779,7 @@ document.addEventListener('pointerdown',e=>{if(!e.target.closest('#importMenu,#i
 
 
 /* ---------- version badge — CHANGED ON EVERY PUSH (new animal + name + build+1; see CLAUDE.md), mirroring FBK-Checker's own fruit badge ---------- */
-const VERSION={animal:'🐌',name:'SNAIL',build:32};
+const VERSION={animal:'🦘',name:'KANGAROO',build:33};
 function rotateAnimal(){const b=$('animalBadge');b.style.transform='rotate(360deg)';setTimeout(()=>{b.style.transform='rotate(0deg)';},200);}
 function showVersion(){const b=$('animalBadge');b.textContent=`${VERSION.animal} ${VERSION.name} · b${VERSION.build}`;
   b.title=`Build ${VERSION.build} · ${VERSION.name} — if this matches what Claude pushed, you're on the latest (no cache)`;}
