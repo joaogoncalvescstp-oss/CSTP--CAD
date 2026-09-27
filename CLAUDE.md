@@ -33,6 +33,7 @@ The badge renders as `<emoji> <NAME> · b<build>`.
 | 29 | 🐧 PENGUIN | 🧊 3D view cube (faces / corners / home) + 🎥 perspective view with field of view |
 | 30 | 🦒 GIRAFFE | 📈 profile: existing-ground lines from surfaces, % grades + L/K, vertical exaggeration, measure & adjust-PVI tools |
 | 31 | 🦓 ZEBRA | 👁 deutan-safe color mode (Okabe-Ito palette, blue→orange/yellow ramps), on by default |
+| 32 | 🐌 SNAIL | 🌀 click a labeled PI / CC / MID to open a Curve Properties panel (all curve formulas, stations, coords, bearings) |
 
 ## Workflow
 

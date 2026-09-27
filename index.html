@@ -295,6 +295,11 @@ details.help[open]>summary{margin-bottom:4px}
         <table id="slopeTable" style="width:100%;border-collapse:collapse;font-size:11px;white-space:nowrap"></table>
       </div>
     </div>
+    <div class="panel" id="curvePanel" style="width:470px;left:auto;right:12px">
+      <h4><span>🌀 Curve Properties</span><button id="curveCloseBtn" title="Close">✕</button></h4>
+      <div id="curveBody"></div>
+      <button class="btn" id="curveCsvBtn" style="width:100%;margin-top:8px">⬇ Export curve data CSV</button>
+    </div>
     <div class="panel" id="profilePanel">
       <h4><span>Profile View</span><button id="profileCloseBtn" title="Exit profile view">✕</button></h4>
       <details class="help"><summary>ℹ How this works</summary><p class="note">Station vs. elevation for one alignment. An alignment with an imported <code>&lt;Profile&gt;</code> shows its real design grade line and PVC/PVT/PVI/PVCC/PVRC/Hi/Lo; one without shows its horizontal geometry's own elevation instead, dashed, so it's never mistaken for an actual design profile.</p></details>
@@ -1240,12 +1245,12 @@ function collectAlignmentKeyPoints(alignment){
   els.forEach(el=>{
     if(el.type==='curve'){
       const m=arcMidpoint(el);
-      push('MID',{E:m.E,N:m.N,Z:((el.start.Z||0)+(el.end.Z||0))/2},el.staStart+el.length/2);
+      push('MID',{E:m.E,N:m.N,Z:((el.start.Z||0)+(el.end.Z||0))/2},el.staStart+el.length/2);pts[pts.length-1].curve=el;pts[pts.length-1].align=alignment;
       // `links` = the curve's own start/end — drawn as thin dashed construction lines:
       // CC → PC/PT are the two radii, PI → PC/PT the two tangents
       const ends=[{E:el.start.E,N:el.start.N,Z:el.start.Z||0},{E:el.end.E,N:el.end.N,Z:el.end.Z||0}];
-      pts.push({type:'CC',E:el.center.E,N:el.center.N,Z:el.center.Z||0,sta:null,links:ends});
-      if(el.pi){push('PI',el.pi,null);pts[pts.length-1].links=ends;}
+      pts.push({type:'CC',E:el.center.E,N:el.center.N,Z:el.center.Z||0,sta:null,links:ends,curve:el,align:alignment});
+      if(el.pi){push('PI',el.pi,null);Object.assign(pts[pts.length-1],{links:ends,curve:el,align:alignment});}
     }else if(el.type==='spiral'&&el.pi){
       push('SPI',el.pi,null);
       pts[pts.length-1].links=[{E:el.start.E,N:el.start.N,Z:el.start.Z||0},{E:el.end.E,N:el.end.N,Z:el.end.Z||0}];
@@ -1566,7 +1571,89 @@ function drawGeomMarker(x,y,type,color){
   else ctx.arc(x,y,4,0,Math.PI*2);
   ctx.fill();
 }
+/* ---------- 🌀 curve properties panel ----------
+   With 📍 labels showing, click a curve's PI, CC or MID marker (2D plan) to open every
+   property of that circular curve — each with its formula — plus the stations, coordinates
+   and tangent / chord bearings of PC, PI, PT, MID and CC. The selected curve is highlighted
+   on the drawing. Δ = arc length / R from the file's own geometry; the PI shown is the
+   file's <PI> when present (and checked against PC + T along the back tangent). */
+let CURVE_SEL=null;                                          // {el,align} currently shown
+function dms(deg){const s=Math.round(Math.abs(deg)*3600),d=Math.floor(s/3600),m=Math.floor(s%3600/60),x=s%60;return `${d}°${String(m).padStart(2,'0')}'${String(x).padStart(2,'0')}"`;}
+function bearingOf(dE,dN){const hh=Math.hypot(dE,dN)||1;if(Math.abs(dN)<1e-9*hh)dN=0;if(Math.abs(dE)<1e-9*hh)dE=0;   // float noise on a due-E/N tangent
+  const q=Math.atan2(Math.abs(dE),Math.abs(dN))*180/Math.PI;
+  return q<1e-9?(dN>=0?'N 0°00\'00" E':'S 0°00\'00" E'):`${dN>=0?'N':'S'} ${dms(q)} ${dE>=0?'E':'W'}`;}
+function curveProps(el,align){
+  const R=el.radius,sw=curveSweep(el),D=Math.abs(sw),ccw=el.rot==='ccw';
+  const tan=a=>ccw?[-Math.sin(a),Math.cos(a)]:[Math.sin(a),-Math.cos(a)];   // direction of travel along the arc at angle a
+  const tb=tan(el.a0),ta=tan(el.a0+sw),T=R*Math.tan(D/2);
+  const PC=el.start,PT=el.end,CC=el.center,MID=arcMidpoint(el);
+  const PIcalc={E:PC.E+tb[0]*T,N:PC.N+tb[1]*T};
+  const PI=el.pi||PIcalc,piErr=el.pi?Math.hypot(el.pi.E-PIcalc.E,el.pi.N-PIcalc.N):null;
+  const L=R*D,staPC=el.staStart,staPT=el.staStart+el.length;
+  return{R,D,T,L,Lfile:el.length,LC:2*R*Math.sin(D/2),E:R*(1/Math.cos(D/2)-1),M:R*(1-Math.cos(D/2)),
+    Da:5729.5779513/R,Dc:R>=50?2*Math.asin(Math.min(1,50/R))*180/Math.PI:null,
+    sector:R*R*D/2,segment:R*R/2*(D-Math.sin(D)),dir:ccw?'Left':'Right',
+    back:bearingOf(tb[0],tb[1]),ahead:bearingOf(ta[0],ta[1]),chord:bearingOf(PT.E-PC.E,PT.N-PC.N),
+    pts:[['PC',staPC,PC],['PI',staPC+T,PI],['MID',staPC+el.length/2,MID],['PT',staPT,PT],['CC',null,CC]],
+    piErr,align:align?align.name:'',idx:align?align.elements.indexOf(el)+1:null};
+}
+function showCurvePanel(el,align){
+  CURVE_SEL={el,align};const c=curveProps(el,align),f=(v,n=3)=>v==null?'—':v.toFixed(n);
+  const rows=[
+    ['Direction','turns','',c.dir],
+    ['Radius','R','',f(c.R)],
+    ['Delta (central angle)','Δ','L / R',`${dms(c.D*180/Math.PI)}  (${f(c.D*180/Math.PI,4)}°)`],
+    ['Arc length','L','R·Δ',f(c.L)+(Math.abs(c.L-c.Lfile)>1e-3?`  (file ${f(c.Lfile)})`:'')],
+    ['Tangent length','T','R·tan(Δ/2)',f(c.T)],
+    ['Long chord','LC','2R·sin(Δ/2)',f(c.LC)],
+    ['External','E','R·(sec(Δ/2) − 1)',f(c.E)],
+    ['Middle ordinate','M','R·(1 − cos(Δ/2))',f(c.M)],
+    ['Degree of curve (arc)','Dₐ','5729.578 / R',`${dms(c.Da)}  (${f(c.Da,4)}°)`],
+    ['Degree of curve (chord)','D꜀','2·asin(50 / R)',c.Dc==null?'— (R < 50)':`${dms(c.Dc)}  (${f(c.Dc,4)}°)`],
+    ['Sector area','A','R²·Δ / 2',f(c.sector,2)],
+    ['Segment area','Aₛ','R²/2·(Δ − sin Δ)',f(c.segment,2)],
+    ['Back tangent','PC→PI','bearing',c.back],
+    ['Ahead tangent','PI→PT','bearing',c.ahead],
+    ['Long chord bearing','PC→PT','bearing',c.chord]];
+  const td=(v,st='')=>`<td style="padding:3px 7px;border-bottom:1px solid var(--rule);${st}">${v}</td>`;
+  let h=`<div style="margin-bottom:6px;font-size:12px"><b style="color:var(--gold)">${c.align}</b> · curve ${c.idx??''} · STA ${formatStation(c.pts[0][1])} → ${formatStation(c.pts[3][1])}</div>`;
+  h+='<table style="width:100%;border-collapse:collapse;font-size:11px;margin-bottom:10px"><thead><tr>'+['Property','','Formula','Value'].map(x=>`<th style="text-align:left;padding:3px 7px;border-bottom:1px solid var(--rule);color:var(--mut)">${x}</th>`).join('')+'</tr></thead><tbody>';
+  rows.forEach(r=>{h+='<tr>'+td(r[0])+td(r[1],'color:var(--accent);font-weight:700')+td(r[2],'color:var(--mut)')+td(r[3],'white-space:nowrap;font-weight:700')+'</tr>';});
+  h+='</tbody></table><table style="width:100%;border-collapse:collapse;font-size:11px"><thead><tr>'+['Point','Station','Northing','Easting'].map(x=>`<th style="text-align:left;padding:3px 7px;border-bottom:1px solid var(--rule);color:var(--mut)">${x}</th>`).join('')+'</tr></thead><tbody>';
+  c.pts.forEach(([n,sta,p])=>{h+='<tr>'+td(n,'font-weight:700')+td(sta==null?'—':formatStation(sta))+td(p.N.toFixed(3))+td(p.E.toFixed(3))+'</tr>';});
+  h+='</tbody></table>';
+  if(c.piErr!=null)h+=`<p class="note" style="margin-top:6px">File PI vs PC + T along the back tangent: ${c.piErr<0.005?'✓ matches':'differs by '+c.piErr.toFixed(3)}.</p>`;
+  $('curveBody').innerHTML=h;$('curvePanel').classList.add('show');
+  hud(`🌀 ${c.align} curve: R ${f(c.R,2)} · Δ ${dms(c.D*180/Math.PI)} · L ${f(c.L,2)} · T ${f(c.T,2)} ${c.dir}`);
+  draw();
+}
+function curveCSV(){
+  if(!CURVE_SEL)return'';const c=curveProps(CURVE_SEL.el,CURVE_SEL.align);
+  const L=[['Property','Value'].join(','),['Alignment',c.align],['Direction',c.dir],['R',c.R],['Delta (deg)',c.D*180/Math.PI],['Delta (DMS)',dms(c.D*180/Math.PI)],['L',c.L],['T',c.T],['LC',c.LC],['E',c.E],['M',c.M],
+    ['Da (deg)',c.Da],['Dc (deg)',c.Dc??''],['Sector area',c.sector],['Segment area',c.segment],['Back tangent',c.back],['Ahead tangent',c.ahead],['Chord bearing',c.chord]].map(r=>Array.isArray(r)?r.map(geomCSVField).join(','):r);
+  L.push('');L.push('Point,Station,Northing,Easting');c.pts.forEach(([n,sta,p])=>L.push([n,sta==null?'':formatStation(sta),p.N.toFixed(3),p.E.toFixed(3)].map(geomCSVField).join(',')));
+  return L.join('\r\n');
+}
+// the 📍 label point (PI / CC / MID of a circular curve) under the cursor in 2D, or null
+function curvePointHit(sx,sy){
+  if(!GEOM_POINTS.length||is3D||profileOn)return null;
+  let best=null,bd=11;
+  GEOM_POINTS.forEach(p=>{if(!p.curve)return;const cat=GEOM_TYPE_CATEGORY[p.type]||'reference';if(!GEOM_LABEL_SHOW[cat])return;
+    const[x,y]=W2S(p.E,p.N),d=Math.hypot(x-sx,y-sy);if(d<bd){bd=d;best=p;}});
+  return best;
+}
+function drawCurveHighlight(proj){
+  if(!CURVE_SEL||!$('curvePanel').classList.contains('show'))return;
+  const el=CURVE_SEL.el,c=curveProps(el,CURVE_SEL.align),z=el.start.Z||0;
+  ctx.save();ctx.strokeStyle='#f1b434';ctx.lineWidth=5;ctx.globalAlpha=0.55;ctx.lineCap='round';
+  ctx.beginPath();sampleArc(el,48).forEach((p,i)=>{const[x,y]=proj(p.E,p.N,z);i?ctx.lineTo(x,y):ctx.moveTo(x,y);});ctx.stroke();
+  ctx.globalAlpha=0.9;ctx.lineWidth=1.2;ctx.setLineDash([6,4]);
+  const P=n=>c.pts.find(q=>q[0]===n)[2];
+  ctx.beginPath();[[P('PC'),P('PI')],[P('PI'),P('PT')],[P('PC'),P('PT')]].forEach(([a,b])=>{const A=proj(a.E,a.N,z),B=proj(b.E,b.N,z);ctx.moveTo(A[0],A[1]);ctx.lineTo(B[0],B[1]);});ctx.stroke();
+  ctx.restore();
+}
 function drawGeomLabels(proj){
+  drawCurveHighlight(proj);
   if(!GEOM_POINTS.length)return;
   // thin dashed construction lines first, so markers/labels sit on top: PI/SPI → tangents to
   // the curve's start/end, CC → radii to its PC/PT
@@ -3029,6 +3116,9 @@ $('pipeLabelCloseBtn').onclick=()=>$('pipeLabelPanel').classList.remove('show');
 });
 $('geomLabelsBtn').onclick=()=>{if($('geomLabelsBtn').disabled)return;renderGeomLabelSelects();$('geomLabelPanel').classList.toggle('show');};
 $('geomLabelCloseBtn').onclick=()=>$('geomLabelPanel').classList.remove('show');
+$('curveCloseBtn').onclick=()=>{$('curvePanel').classList.remove('show');draw();};
+$('curveCsvBtn').onclick=()=>{if(!CURVE_SEL)return;const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([curveCSV()],{type:'text/csv'}));
+  a.download=`${CURVE_SEL.align?CURVE_SEL.align.name:'curve'}-curve-${curveProps(CURVE_SEL.el,CURVE_SEL.align).idx}.csv`;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);};
 $('geomApplyBtn').onclick=()=>{
   const refVal=$('geomRefSel').value||'',noRef=refVal==='none';
   const ref=noRef?null:ALIGNMENTS.find(a=>a.name===refVal.slice(6));
@@ -3350,6 +3440,7 @@ cv.addEventListener('pointerdown',e=>{
     else{const[E,N]=S2W(sx,sy);hud(`free · E ${E.toFixed(3)} N ${N.toFixed(3)}`);}
     return;
   }
+  const cp=curvePointHit(sx,sy);if(cp){showCurvePanel(cp.curve,cp.align);return;}   // 🌀 clicked a curve's PI / CC / MID label
   drag={pan:true,sx,sy,x0:view.x,y0:view.y};
   try{cv.setPointerCapture(e.pointerId);}catch(_){}
 });
@@ -3404,6 +3495,7 @@ cv.addEventListener('pointermove',e=>{
     if(pv||orbitHover){orbitHover=pv;if(pv)hud(`🎯 pivot: ${describePivot(pv)}`);draw();}
     return;
   }
+  if(!drag&&!is3D&&!profileOn&&GEOM_POINTS.length){const cp=curvePointHit(sx,sy);cv.style.cursor=cp?'pointer':'crosshair';if(cp)hud(`click ${cp.type} to show ${cp.align.name}'s curve properties`);}
   if(!drag)return;
   if(drag.orbit){if(drag.shift){orbit.ox=drag.ox+(sx-drag.sx);orbit.oy=drag.oy+(sy-drag.sy);}
     else{orbit.az=drag.az+(sx-drag.sx)*0.008;orbit.el=Math.max(0.12,Math.min(1.55,drag.el-(sy-drag.sy)*0.006));}draw();return;}
@@ -3641,7 +3733,7 @@ function resetPanels(){
   });
   hud('panels reset to their default positions');
 }
-[['layerPanel'],['pipeLabelPanel'],['surfaceDisplayPanel'],['geomLabelPanel'],['geomTablePanel'],['elevSpotsPanel'],['slopePanel'],['profilePanel'],
+[['layerPanel'],['curvePanel'],['pipeLabelPanel'],['surfaceDisplayPanel'],['geomLabelPanel'],['geomTablePanel'],['elevSpotsPanel'],['slopePanel'],['profilePanel'],
  ['view3dBox','⟲ 3D View'],['rainBox','🌧 Rain & Drainage'],['snapBox','🧲 Snap'],['legend','Legend',{collapsed:true}]]
   .forEach(([id,title,opt])=>makeFloating($(id),title||'',opt));
 $('resetPanelsBtn').onclick=resetPanels;
@@ -3656,7 +3748,7 @@ document.addEventListener('pointerdown',e=>{if(!e.target.closest('#importMenu,#i
 
 
 /* ---------- version badge — CHANGED ON EVERY PUSH (new animal + name + build+1; see CLAUDE.md), mirroring FBK-Checker's own fruit badge ---------- */
-const VERSION={animal:'🦓',name:'ZEBRA',build:31};
+const VERSION={animal:'🐌',name:'SNAIL',build:32};
 function rotateAnimal(){const b=$('animalBadge');b.style.transform='rotate(360deg)';setTimeout(()=>{b.style.transform='rotate(0deg)';},200);}
 function showVersion(){const b=$('animalBadge');b.textContent=`${VERSION.animal} ${VERSION.name} · b${VERSION.build}`;
   b.title=`Build ${VERSION.build} · ${VERSION.name} — if this matches what Claude pushed, you're on the latest (no cache)`;}

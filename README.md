@@ -257,6 +257,17 @@ dependencies, and nothing to install.
   sheet. It shows everything computed regardless of the on-canvas category
   toggles, and **⬇ Export CSV** saves the same table to a file for printing
   or loading into a data collector.
+- **🌀 Curve Properties**: with 📍 labels showing, click a curve's **PI**, **CC**
+  or **MID** marker (2D plan; the cursor turns to a pointer) to open a panel
+  listing every property of that circular curve, each with its formula:
+  direction, R, Δ (DMS and decimal), L = R·Δ, T = R·tan(Δ/2),
+  LC = 2R·sin(Δ/2), E = R·(sec(Δ/2) − 1), M = R·(1 − cos(Δ/2)), degree of
+  curve by arc (5729.578 / R) and chord (2·asin(50 / R)), sector and segment
+  area, and the back tangent, ahead tangent and long chord bearings. A
+  second table gives station / northing / easting for PC, PI, MID, PT and
+  CC. The file's own `<PI>` is checked against PC + T. The selected curve
+  is highlighted, with its tangents and chord dashed. ⬇ exports the data as
+  CSV.
 - **📈 Profile** (P) is a third view mode, alongside 2D plan and 3D orbit,
   for one alignment at a time: station on the X axis, elevation on Y, each
   with its **own independent scale** rather than the plan view's single
