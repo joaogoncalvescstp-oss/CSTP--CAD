@@ -265,28 +265,39 @@ dependencies, and nothing to install.
   profile, a non-zero file Z is kept. Otherwise the elevation is read off
   the top visible surface and marked **(EG)**. The Points Table's note
   column says which source was used.
-- **📋 Cut Sheet** (Labels group) is a cut-sheet report generator. Pick the
-  **main centerline** (stationing) and the **left** and **right** side
-  alignments (curb lines, or "centerline itself" / none; names with LT/RT or
-  LEFT/RIGHT are pre-picked). Set a station interval for **tangents** and
-  another for **curves**, and optionally add the centerline's
-  PC/PT/POB/POE… key stations and a from/to station range. At each station
-  the centerline's perpendicular is crossed with each side alignment:
-  **O/S** = distance from the centerline (+ an optional stake offset), and
-  **Grade** = that curb alignment's own design profile at its own station
-  there. If a curb has no profile, the grade is left blank or taken from
-  the CL profile or EG surface, your choice. Rows preview in the panel and
-  as stake lines on the drawing.
-  - **⬇ Excel cut sheet** fills the office cut-sheet template
-    (`templates/cut_sheet_template.xlsx`). The header (job #, work order,
-    street, date, crew, control #, CHK #) and one row per station go into
-    **Office Copy**, with Hub Elev. left blank for the field and
-    Cut/Fill = Hub − Grade (shown as C / F). The **Contractor** and
-    **Inspector** copies follow by formula; the template's `#REF!` / off-by-one
-    row links and old headers on those copies are corrected in the output.
-    Excel recalculates everything on open. When the page is opened straight
-    from disk and can't fetch the template, it asks for it once (📄
-    Template) and remembers it. **⬇ CSV** exports the same rows.
+- **📋 Cut Sheet** (Labels group) is a cut-sheet report generator, organized
+  by **street**. Each street card has a **main alignment** (stationing), a
+  street name (goes in the sheet header), and a list of the other (minor)
+  alignments with **LT curb** / **RT curb** checkboxes. Tick as many as that
+  side has (curb segments, returns…); at each station the nearest ticked
+  curb on that side is used. On opening, streets are set up automatically:
+  every alignment that doesn't look like a curb line is a street, and each
+  curb-like alignment (LT/RT/curb/BC/FL… in its name) is ticked on the
+  street it runs beside, on the side it's on. **+ Add street** adds more.
+  - Stations run along each main alignment at one interval on
+    **tangents** and another on **curves** (+ optional PC/PT/POB/POE…,
+    from/to range). At each station the perpendicular is crossed with that
+    side's curbs. **O/S = the hub's distance from the curb** (the "Hub O/S
+    from curb" value; the hub sits that far behind the curb, away from the
+    centerline). **Grade** = the curb alignment's own design profile there
+    (fallback when a curb has no profile: blank / CL profile / EG).
+  - **Catch basins**: with a pipe-network LandXML loaded, each catch basin
+    (CB / inlet by name or description, or all structures) beside a street
+    gets its own row at its station on that main alignment, on its side,
+    labeled with its number (e.g. CB-12), with O/S = hub from CB and
+    grade = rim elevation.
+  - The preview table groups rows by street; the drawing shows each stake
+    line with the curb point (■) and hub (×).
+  - **⬇ Excel cut sheet** writes **one workbook per street** from the
+    office cut-sheet template (`templates/cut_sheet_template.xlsx`). The
+    header (job #, work order, date, crew, control #, CHK #, and the street
+    name) and one row per station go into **Office Copy**, with Hub Elev.
+    left blank for the field and Cut/Fill = Hub − Grade (shown C / F). The
+    **Contractor** and **Inspector** copies follow by formula; the template's
+    `#REF!` / off-by-one row links and old headers on those copies are
+    corrected. Excel recalculates on open. When opened straight from disk,
+    the page asks for the template once (📄 Template) and remembers it.
+    **⬇ CSV** exports all streets with a Street column.
 - **🌀 Curve Properties**: with 📍 labels showing, click a curve's **PI**, **CC**
   or **MID** marker (2D plan; the cursor turns to a pointer) to open a panel
   listing every property of that circular curve, each with its formula:

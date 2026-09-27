@@ -298,20 +298,23 @@ details.help[open]>summary{margin-bottom:4px}
     </div>
     <div class="panel" id="cutPanel" style="width:560px">
       <h4><span>📋 Cut Sheet Report</span><button id="cutCloseBtn" title="Close">✕</button></h4>
-      <details class="help"><summary>ℹ How this works</summary><p class="note">Stations run along the <b>main centerline</b> — one interval on tangents, another on curves, plus its PC/PT/POB/POE… if ticked. At each station the centerline's perpendicular is crossed with the <b>left</b> and <b>right</b> alignments (curb lines): <b>O/S</b> = distance from centerline to that crossing (+ stake offset), <b>Grade</b> = that curb alignment's own design profile at the crossing. The Excel output fills your cut-sheet template (Office Copy; Contractor / Inspector copies follow); <b>Hub Elev.</b> is left blank for the field and <b>Cut/Fill = Hub − Grade</b> (C = cut, F = fill).</p></details>
+      <details class="help"><summary>ℹ How this works</summary><p class="note">Each <b>street</b> is a main alignment plus the curb alignments ticked as its <b>LT</b> / <b>RT</b> curbs (several per side allowed — e.g. curb returns); each street gets its own cut sheet. Stations run along the <b>main alignment</b> — one interval on tangents, another on curves, plus its PC/PT/POB/POE… if ticked. At each station the centerline's perpendicular is crossed with the nearest ticked curb on each side: <b>O/S</b> = the hub's distance from the curb (hub set behind the curb, away from the centerline), <b>Grade</b> = that curb alignment's own design profile at the crossing. With a pipe network loaded, each <b>catch basin</b> gets its own row at its station on the main alignment, labeled with its number, grade = rim. The Excel output fills your cut-sheet template (Office Copy; Contractor / Inspector copies follow); <b>Hub Elev.</b> is left blank for the field and <b>Cut/Fill = Hub − Grade</b> (C = cut, F = fill).</p></details>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin:2px 0 4px"><b style="font-size:12px">🛣 Streets</b><button class="btn" id="cutAddStreetBtn" style="padding:3px 8px" title="Add another street — each street gets its own cut sheet">+ Add street</button></div>
+      <div id="cutStreets" style="display:flex;flex-direction:column;gap:6px;margin-bottom:8px"></div>
       <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:8px">
-        <div><label style="display:block;font-size:11px;color:var(--mut);margin:0 0 2px">Main centerline (stationing)</label><select id="cutCL" style="width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--rule);border-radius:5px;padding:4px"></select></div><div><label style="display:block;font-size:11px;color:var(--mut);margin:0 0 2px">Left side alignment (curb)</label><select id="cutLeft" style="width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--rule);border-radius:5px;padding:4px"></select></div><div><label style="display:block;font-size:11px;color:var(--mut);margin:0 0 2px">Right side alignment (curb)</label><select id="cutRight" style="width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--rule);border-radius:5px;padding:4px"></select></div>
         <div><label style="display:block;font-size:11px;color:var(--mut);margin:0 0 2px">Station every … on tangents</label><input type="number" id="cutTan" value="50" min="1" step="1" style="width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--rule);border-radius:5px;padding:4px"></div><div><label style="display:block;font-size:11px;color:var(--mut);margin:0 0 2px">Station every … on curves</label><input type="number" id="cutCurve" value="25" min="1" step="1" style="width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--rule);border-radius:5px;padding:4px"></div>
         <div><label style="display:block;font-size:11px;color:var(--mut);margin:0 0 2px">&nbsp;</label><label style="font-size:12px"><input type="checkbox" id="cutKeys" checked> + PC / PT / POB / POE…</label></div>
         <div><label style="display:block;font-size:11px;color:var(--mut);margin:0 0 2px">From station (blank = start)</label><input type="text" id="cutFrom" value="" placeholder="e.g. 10+00" style="width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--rule);border-radius:5px;padding:4px"></div><div><label style="display:block;font-size:11px;color:var(--mut);margin:0 0 2px">To station (blank = end)</label><input type="text" id="cutTo" value="" placeholder="e.g. 25+50" style="width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--rule);border-radius:5px;padding:4px"></div>
-        <div><label style="display:block;font-size:11px;color:var(--mut);margin:0 0 2px">Stake offset (added to O/S)</label><input type="number" id="cutStake" value="0" step="0.5" style="width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--rule);border-radius:5px;padding:4px"></div>
+        <div><label style="display:block;font-size:11px;color:var(--mut);margin:0 0 2px">Hub O/S from curb</label><input type="number" id="cutHub" value="3" step="0.5" min="0" style="width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--rule);border-radius:5px;padding:4px" title="How far behind the curb the hub (stake) is set — this is the O/S printed on the sheet"></div>
         <div><label style="display:block;font-size:11px;color:var(--mut);margin:0 0 2px">Left label</label><input type="text" id="cutLabelL" value="LT BC"  style="width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--rule);border-radius:5px;padding:4px"></div><div><label style="display:block;font-size:11px;color:var(--mut);margin:0 0 2px">Right label</label><input type="text" id="cutLabelR" value="RT BC"  style="width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--rule);border-radius:5px;padding:4px"></div>
         <div><label style="display:block;font-size:11px;color:var(--mut);margin:0 0 2px">Curb has no profile →</label><select id="cutFallback" style="width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--rule);border-radius:5px;padding:4px"><option value="blank">grade blank</option><option value="cl">use CL profile</option><option value="eg">use EG surface</option></select></div>
+        <div><label style="display:block;font-size:11px;color:var(--mut);margin:0 0 2px">Catch basins (pipe XML)</label><label style="font-size:12px"><input type="checkbox" id="cutCB" checked> add a row per CB</label></div>
+        <div><label style="display:block;font-size:11px;color:var(--mut);margin:0 0 2px">Which structures</label><select id="cutCBWhich" style="width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--rule);border-radius:5px;padding:4px"><option value="cb">CB / inlets only</option><option value="all">all structures</option></select></div>
         <div><label style="display:block;font-size:11px;color:var(--mut);margin:0 0 2px">Max search offset</label><input type="number" id="cutMaxOff" value="200" min="1" style="width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--rule);border-radius:5px;padding:4px"></div>
       </div>
-      <details style="margin-bottom:8px"><summary style="cursor:pointer;font-size:11px;color:var(--accent)">Sheet header (work order, street, date, crew…)</summary>
+      <details style="margin-bottom:8px"><summary style="cursor:pointer;font-size:11px;color:var(--accent)">Sheet header (job, work order, date, crew… — the street comes from each street’s name)</summary>
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-top:6px">
-          <div><label style="display:block;font-size:11px;color:var(--mut);margin:0 0 2px">Job / project #</label><input type="text" id="cutJob" value=""  style="width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--rule);border-radius:5px;padding:4px"></div><div><label style="display:block;font-size:11px;color:var(--mut);margin:0 0 2px">Work order #</label><input type="text" id="cutWO" value=""  style="width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--rule);border-radius:5px;padding:4px"></div><div><label style="display:block;font-size:11px;color:var(--mut);margin:0 0 2px">Street</label><input type="text" id="cutStreet" value=""  style="width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--rule);border-radius:5px;padding:4px"></div>
+          <div><label style="display:block;font-size:11px;color:var(--mut);margin:0 0 2px">Job / project #</label><input type="text" id="cutJob" value=""  style="width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--rule);border-radius:5px;padding:4px"></div><div><label style="display:block;font-size:11px;color:var(--mut);margin:0 0 2px">Work order #</label><input type="text" id="cutWO" value=""  style="width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--rule);border-radius:5px;padding:4px"></div>
           <div><label style="display:block;font-size:11px;color:var(--mut);margin:0 0 2px">Date</label><input type="date" id="cutDate" value=""  style="width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--rule);border-radius:5px;padding:4px"></div><div><label style="display:block;font-size:11px;color:var(--mut);margin:0 0 2px">Crew</label><input type="text" id="cutCrew" value=""  style="width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--rule);border-radius:5px;padding:4px"></div><div><label style="display:block;font-size:11px;color:var(--mut);margin:0 0 2px">Control #</label><input type="text" id="cutCtrl" value=""  style="width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--rule);border-radius:5px;padding:4px"></div><div><label style="display:block;font-size:11px;color:var(--mut);margin:0 0 2px">CHK #</label><input type="text" id="cutChk" value=""  style="width:100%;background:var(--panel2);color:var(--text);border:1px solid var(--rule);border-radius:5px;padding:4px"></div>
         </div></details>
       <div style="display:flex;gap:6px;margin-bottom:6px">
@@ -1638,7 +1641,7 @@ function drawGeomMarker(x,y,type,color){
    a chosen fallback). Output fills the owner's own Excel cut-sheet template (Office Copy rows;
    Contractor / Inspector copies follow by formula; Hub Elev. is left blank for the field and
    Cut/Fill = Hub − Grade), or CSV. */
-const CUT={rows:[],tpl:null,show:true};
+const CUT={built:null,tpl:null,streets:[]};                  // streets: [{main,name,lt:[names],rt:[names]}]
 function cutElemIntersect(el,P,n){                              // smallest-|u| u where P+u·n crosses this element
   const hits=[];
   if(el.type==='curve'){
@@ -1656,27 +1659,6 @@ function cutElemIntersect(el,P,n){                              // smallest-|u| 
   }
   return hits;
 }
-function cutSideAt(cl,side,sta,opt){
-  const P=stationToPoint(cl,sta);
-  if(side==='CL'){const g=profileElevAt(cl,sta);return{os:0+opt.stake,grade:g,E:P.E,N:P.N,src:g==null?'none':'CL profile'};}
-  // exact direction of travel at this station (the element that starts here wins at a PC/PT), then its left-hand normal
-  const el=cl.elements.find(e=>sta>=e.staStart-1e-6&&sta<e.staStart+e.length-1e-6)||cl.elements[cl.elements.length-1];
-  let dE,dN;
-  if(el.type==='curve'){const a=el.a0+curveSweep(el)*Math.max(0,Math.min(1,(sta-el.staStart)/(el.length||1))),sg=Math.sign(curveSweep(el));dE=-Math.sin(a)*sg;dN=Math.cos(a)*sg;}
-  else{const L0=Math.hypot(el.end.E-el.start.E,el.end.N-el.start.N)||1;dE=(el.end.E-el.start.E)/L0;dN=(el.end.N-el.start.N)/L0;}
-  const n=[-dN,dE];                                            // left-hand normal
-  let best=null;side.elements.forEach(el=>cutElemIntersect(el,P,n).forEach(u=>{if(Math.abs(u)<=opt.maxOff&&(best==null||Math.abs(u)<Math.abs(best)))best=u;}));
-  if(best==null)return null;
-  const E=P.E+best*n[0],N=P.N+best*n[1],sSta=projectStation(side,E,N);
-  let grade=profileElevAt(side,sSta),src='curb profile';
-  if(grade==null){
-    if(opt.fallback==='cl'){grade=profileElevAt(cl,sta);src='CL profile';}
-    else if(opt.fallback==='eg'){grade=surfaceElevAtPoint(E,N);src='EG surface';}
-    else src='no profile';
-    if(grade==null)src='none';
-  }
-  return{os:Math.abs(best)+opt.stake,grade,E,N,sideSta:sSta,src,u:best};
-}
 function cutSheetStations(cl,opt){
   const els=cl.elements,S0=els[0].staStart,S1=els[els.length-1].staStart+els[els.length-1].length;
   const from=Math.max(S0,isFinite(opt.from)?opt.from:S0),to=Math.min(S1,isFinite(opt.to)?opt.to:S1);
@@ -1690,52 +1672,121 @@ function cutSheetStations(cl,opt){
   const out=[];list.forEach(s=>{const prev=out[out.length-1];if(prev&&Math.abs(prev.sta-s.sta)<0.005){if(s.key&&!prev.key)prev.key=s.key;return;}out.push({...s});});
   return out;
 }
+// exact direction of travel along an alignment at a station (the element that STARTS there wins at a PC/PT)
+function alignTangent(al,sta){
+  const el=al.elements.find(e=>sta>=e.staStart-1e-6&&sta<e.staStart+e.length-1e-6)||al.elements[al.elements.length-1];
+  if(el.type==='curve'){const a=el.a0+curveSweep(el)*Math.max(0,Math.min(1,(sta-el.staStart)/(el.length||1))),sg=Math.sign(curveSweep(el));return[-Math.sin(a)*sg,Math.cos(a)*sg];}
+  const L0=Math.hypot(el.end.E-el.start.E,el.end.N-el.start.N)||1;return[(el.end.E-el.start.E)/L0,(el.end.N-el.start.N)/L0];
+}
+// station + signed offset (+ = left) of a point relative to an alignment
+// `beyond` = the point lies past either END of the alignment (its projection clamped to the end point), so it isn't
+// really beside it — the across-the-road offset would be meaningless there
+function alignStaOff(al,E,N){const sta=projectStation(al,E,N),P=stationToPoint(al,sta),t=alignTangent(al,sta);
+  const along=t[0]*(E-P.E)+t[1]*(N-P.N);
+  return{sta,off:t[0]*(N-P.N)-t[1]*(E-P.E),beyond:Math.abs(along)>0.5};}
+// one side of the cut sheet at a CL station: nearest crossing of the CL's perpendicular with any of that side's
+// curb alignments (left side = positive offsets). O/S = the hub's distance FROM THE CURB; the hub sits that far
+// beyond the curb, away from the centerline. Grade = the curb alignment's own profile at its own station there.
+function cutSideAt(cl,curbs,sideSign,sta,opt){
+  const P=stationToPoint(cl,sta),t=alignTangent(cl,sta),n=[-t[1],t[0]];
+  let best=null,bestAl=null;
+  curbs.forEach(al=>al.elements.forEach(el=>cutElemIntersect(el,P,n).forEach(u=>{
+    if(u*sideSign<=0.01||Math.abs(u)>opt.maxOff)return;
+    if(best==null||Math.abs(u)<Math.abs(best)){best=u;bestAl=al;}})));
+  if(best==null)return null;
+  const E=P.E+best*n[0],N=P.N+best*n[1],sSta=projectStation(bestAl,E,N);
+  let grade=profileElevAt(bestAl,sSta),src='curb profile';
+  if(grade==null){
+    if(opt.fallback==='cl'){grade=profileElevAt(cl,sta);src='CL profile';}
+    else if(opt.fallback==='eg'){grade=surfaceElevAtPoint(E,N);src='EG surface';}
+    else src='no profile';
+    if(grade==null)src='none';
+  }
+  const h=best+sideSign*opt.hub;                                // hub: `hub` further out from the curb
+  return{os:opt.hub,cl:Math.abs(best),grade,E,N,hubE:P.E+h*n[0],hubN:P.N+h*n[1],curb:bestAl.name,sideSta:sSta,src};
+}
+// catch basins (or all structures) of the loaded pipe networks that sit along this street
+function cutCatchBasins(cl,opt,from,to){
+  const out=[];
+  PIPE_NETWORKS.forEach(net=>{const ly=LAYERS[net.layer];if(ly&&!ly.visible)return;
+    net.structs.forEach(st=>{
+      if(st.dummy)return;
+      if(opt.cbWhich==='cb'&&!/\bC\.?B\b|CB[-\s#]?\d|catch|inlet/i.test(st.name+' '+(st.desc||'')))return;
+      const so=alignStaOff(cl,st.E,st.N);
+      if(so.beyond||Math.abs(so.off)>opt.maxOff||so.sta<from-1e-6||so.sta>to+1e-6)return;   // past the street's ends, too far off, or outside the station range
+      const name=st.name.replace(/\s*\([^)]*\)\s*$/,'').trim();
+      const P=stationToPoint(cl,so.sta),t=alignTangent(cl,so.sta),n=[-t[1],t[0]],side=so.off>=0?1:-1,h=so.off+side*opt.hub;
+      out.push({sta:so.sta,key:null,cb:true,side:side>0?'L':'R',
+        entry:{label:name,os:opt.hub,cl:Math.abs(so.off),grade:st.rim??null,E:st.E,N:st.N,hubE:P.E+h*n[0],hubN:P.N+h*n[1],src:st.rim!=null?'rim':'none',struct:name}});
+    });});
+  return out;
+}
+function cutOptions(){
+  return{tan:+$('cutTan').value,curve:+$('cutCurve').value,keys:$('cutKeys').checked,from:parseStationList($('cutFrom').value)[0],to:parseStationList($('cutTo').value)[0],
+    hub:+$('cutHub').value||0,fallback:$('cutFallback').value,maxOff:+$('cutMaxOff').value||200,cb:$('cutCB').checked,cbWhich:$('cutCBWhich').value,
+    labelL:$('cutLabelL').value,labelR:$('cutLabelR').value};
+}
+// every street (main alignment + its LT / RT curb alignments) → its own list of rows
 function cutSheetBuild(){
-  const pick=id=>{const v=$(id).value;return v==='CL'?'CL':v?ALIGNMENTS.find(a=>a.name===v)||null:null;};
-  const cl=ALIGNMENTS.find(a=>a.name===$('cutCL').value);if(!cl)return{err:'pick the main centerline alignment'};
-  const left=pick('cutLeft'),right=pick('cutRight');
-  const opt={tan:+$('cutTan').value,curve:+$('cutCurve').value,keys:$('cutKeys').checked,from:parseStationList($('cutFrom').value)[0],to:parseStationList($('cutTo').value)[0],
-    stake:+$('cutStake').value||0,fallback:$('cutFallback').value,maxOff:+$('cutMaxOff').value||200};
+  const opt=cutOptions();
   if(!(opt.tan>0)||!(opt.curve>0))return{err:'enter station intervals greater than 0 for tangents and curves'};
-  const lab=(base,key)=>[key,base].filter(Boolean).join(' ');
-  const rows=cutSheetStations(cl,opt).map(s=>{
-    const L=left?cutSideAt(cl,left,s.sta,opt):null,R=right?cutSideAt(cl,right,s.sta,opt):null;
-    return{sta:s.sta,key:s.key,cl:stationToPoint(cl,s.sta),
-      L:L&&{...L,label:lab($('cutLabelL').value,s.key)},R:R&&{...R,label:lab($('cutLabelR').value,s.key)}};
-  });
-  return{cl,left,right,rows,opt};
+  const byName=n=>ALIGNMENTS.find(a=>a.name===n);
+  const streets=[];
+  for(const s of CUT.streets){
+    const cl=byName(s.main);if(!cl)continue;
+    const lt=s.lt.map(byName).filter(Boolean),rt=s.rt.map(byName).filter(Boolean);
+    const els=cl.elements,S0=els[0].staStart,S1=els[els.length-1].staStart+els[els.length-1].length;
+    const from=Math.max(S0,isFinite(opt.from)?opt.from:S0),to=Math.min(S1,isFinite(opt.to)?opt.to:S1);
+    const lab=(base,key)=>[key,base].filter(Boolean).join(' ');
+    const rows=cutSheetStations(cl,opt).map(st=>{
+      const L=lt.length?cutSideAt(cl,lt,1,st.sta,opt):null,R=rt.length?cutSideAt(cl,rt,-1,st.sta,opt):null;
+      return{sta:st.sta,key:st.key,cl:stationToPoint(cl,st.sta),L:L&&{...L,label:lab(opt.labelL,st.key)},R:R&&{...R,label:lab(opt.labelR,st.key)}};
+    });
+    if(opt.cb&&PIPE_NETWORKS.length)cutCatchBasins(cl,opt,from,to).forEach(c=>rows.push({sta:c.sta,key:null,cb:true,cl:stationToPoint(cl,c.sta),L:c.side==='L'?c.entry:null,R:c.side==='R'?c.entry:null}));
+    rows.sort((a,b)=>a.sta-b.sta||(a.cb?1:0)-(b.cb?1:0));
+    streets.push({name:(s.name||cl.name).trim(),cl,lt,rt,rows});
+  }
+  if(!streets.length)return{err:'add a street: pick its main alignment, then tick its LT / RT curb alignments'};
+  return{streets,opt};
 }
 function renderCutPreview(){
   const r=cutSheetBuild();
-  if(r.err){$('cutInfo').textContent=r.err;$('cutTable').innerHTML='';CUT.rows=[];draw();return null;}
-  CUT.rows=r.rows;
-  const f=(v,d)=>v==null?'—':v.toFixed(d);
-  const missL=r.left?r.rows.filter(x=>!x.L).length:0,missR=r.right?r.rows.filter(x=>!x.R).length:0;
-  const noGrade=r.rows.filter(x=>(x.L&&x.L.grade==null)||(x.R&&x.R.grade==null)).length;
-  $('cutInfo').textContent=`${r.rows.length} stations along ${r.cl.name}`+(missL||missR?` · ${missL+missR} side point(s) with no crossing within ${r.opt.maxOff} (left blank)`:'')+(noGrade?` · ${noGrade} row(s) without a grade (no profile)`:'');
-  const td=(v,st='')=>`<td style="padding:2px 6px;border-bottom:1px solid var(--rule);${st}">${v}</td>`;
-  let h='<thead><tr>'+['Station','L label','L O/S','L grade','R label','R O/S','R grade'].map(x=>`<th style="text-align:left;padding:3px 6px;border-bottom:1px solid var(--rule);position:sticky;top:0;background:var(--panel)">${x}</th>`).join('')+'</tr></thead><tbody>';
-  r.rows.forEach(x=>{h+='<tr>'+td(formatStation(x.sta),x.key?'color:var(--gold);font-weight:700':'')
-    +td(x.L?x.L.label:'')+td(x.L?f(x.L.os,2):'')+td(x.L?f(x.L.grade,3):'',x.L&&x.L.src!=='curb profile'&&x.L.src!=='CL profile'?'color:var(--mut)':'')
-    +td(x.R?x.R.label:'')+td(x.R?f(x.R.os,2):'')+td(x.R?f(x.R.grade,3):'',x.R&&x.R.src!=='curb profile'&&x.R.src!=='CL profile'?'color:var(--mut)':'')+'</tr>';});
+  if(r.err){$('cutInfo').textContent=r.err;$('cutTable').innerHTML='';CUT.built=null;draw();return null;}
+  CUT.built=r;
+  const f=(v,d)=>v==null?'—':v.toFixed(d),td=(v,st='')=>`<td style="padding:2px 6px;border-bottom:1px solid var(--rule);${st}">${v}</td>`;
+  const dim=e=>e&&!['curb profile','CL profile','rim'].includes(e.src)?'color:var(--mut)':'';
+  let h='<thead><tr>'+['Station','L label','L O/S','L grade','L curb@CL','R label','R O/S','R grade','R curb@CL'].map(x=>`<th style="text-align:left;padding:3px 6px;border-bottom:1px solid var(--rule);position:sticky;top:0;background:var(--panel)">${x}</th>`).join('')+'</tr></thead><tbody>';
+  const notes=[];
+  r.streets.forEach(s=>{
+    const nCB=s.rows.filter(x=>x.cb).length,miss=s.rows.filter(x=>!x.cb&&((s.lt.length&&!x.L)||(s.rt.length&&!x.R))).length;
+    notes.push(`${s.name}: ${s.rows.length} rows${nCB?` (${nCB} CB)`:''}${miss?` · ${miss} with a side not found`:''}`);
+    h+=`<tr><td colspan="9" style="padding:5px 6px;background:var(--panel2);font-weight:700;color:var(--gold)">🛣 ${s.name} — main ${s.cl.name} · LT ${s.lt.map(a=>a.name).join(', ')||'—'} · RT ${s.rt.map(a=>a.name).join(', ')||'—'}</td></tr>`;
+    s.rows.forEach(x=>{const st=x.cb?'color:#56b4e9;font-weight:700':x.key?'color:var(--gold);font-weight:700':'';
+      h+='<tr>'+td(formatStation(x.sta),st)
+        +td(x.L?x.L.label:'',x.cb&&x.L?st:'')+td(x.L?f(x.L.os,2):'')+td(x.L?f(x.L.grade,3):'',dim(x.L))+td(x.L?f(x.L.cl,2):'','color:var(--mut)')
+        +td(x.R?x.R.label:'',x.cb&&x.R?st:'')+td(x.R?f(x.R.os,2):'')+td(x.R?f(x.R.grade,3):'',dim(x.R))+td(x.R?f(x.R.cl,2):'','color:var(--mut)')+'</tr>';});
+  });
+  $('cutInfo').textContent=notes.join(' · ');
   $('cutTable').innerHTML=h+'</tbody>';draw();return r;
 }
 function drawCutSheetOverlay(proj,is3d){
-  if(!CUT.rows.length||!$('cutPanel').classList.contains('show'))return;
+  if(!CUT.built||!$('cutPanel').classList.contains('show'))return;
   ctx.save();ctx.lineWidth=1;
-  CUT.rows.forEach(x=>{
-    const z=is3d?(profileElevAt(ALIGNMENTS.find(a=>a.name===$('cutCL').value),x.sta)??0):0,c=proj(x.cl.E,x.cl.N,z);
-    ['L','R'].forEach(k=>{const s=x[k];if(!s)return;const q=proj(s.E,s.N,is3d?(s.grade??z):0);
-      ctx.strokeStyle='rgba(241,180,52,.55)';ctx.beginPath();ctx.moveTo(c[0],c[1]);ctx.lineTo(q[0],q[1]);ctx.stroke();
-      ctx.fillStyle='#f1b434';ctx.fillRect(q[0]-2.5,q[1]-2.5,5,5);});
+  CUT.built.streets.forEach(s=>s.rows.forEach(x=>{
+    const z=is3d?(profileElevAt(s.cl,x.sta)??0):0,c=proj(x.cl.E,x.cl.N,z);
+    ['L','R'].forEach(k=>{const e=x[k];if(!e)return;const gz=is3d?(e.grade??z):0,q=proj(e.E,e.N,gz),hb=proj(e.hubE,e.hubN,gz);
+      ctx.strokeStyle=x.cb?'rgba(86,180,233,.7)':'rgba(241,180,52,.55)';ctx.beginPath();ctx.moveTo(c[0],c[1]);ctx.lineTo(hb[0],hb[1]);ctx.stroke();
+      ctx.fillStyle=x.cb?'#56b4e9':'#f1b434';ctx.fillRect(q[0]-2.5,q[1]-2.5,5,5);                  // curb (or CB) point
+      ctx.strokeStyle=ctx.fillStyle;ctx.beginPath();ctx.moveTo(hb[0]-4,hb[1]-4);ctx.lineTo(hb[0]+4,hb[1]+4);ctx.moveTo(hb[0]+4,hb[1]-4);ctx.lineTo(hb[0]-4,hb[1]+4);ctx.stroke();   // hub ×
+      if(x.cb){ctx.font='700 10px ui-monospace,monospace';drawLabel(e.label,q[0]+6,q[1]-6,'#56b4e9');}});
     ctx.fillStyle=x.key?'#f1b434':'#e7ecf7';ctx.beginPath();ctx.arc(c[0],c[1],2.5,0,Math.PI*2);ctx.fill();
-  });
+  }));
   ctx.restore();
 }
 function cutSheetCSV(r){
-  const L=[['Station','Left Label','Left O/S','Left Grade','Left Hub Elev','Left Cut/Fill','Right Label','Right O/S','Right Grade','Right Hub Elev','Right Cut/Fill'].join(',')];
-  r.rows.forEach(x=>L.push([formatStation(x.sta),x.L?x.L.label:'',x.L?x.L.os.toFixed(2):'',x.L&&x.L.grade!=null?x.L.grade.toFixed(3):'','','',
-    x.R?x.R.label:'',x.R?x.R.os.toFixed(2):'',x.R&&x.R.grade!=null?x.R.grade.toFixed(3):'','',''].map(geomCSVField).join(',')));
+  const L=[['Street','Station','Left Label','Left O/S (hub from curb)','Left Grade','Left Hub Elev','Left Cut/Fill','Right Label','Right O/S (hub from curb)','Right Grade','Right Hub Elev','Right Cut/Fill'].join(',')];
+  const c=(e,k)=>!e?'':k==='os'?e.os.toFixed(2):e.grade!=null?e.grade.toFixed(3):'';
+  r.streets.forEach(s=>s.rows.forEach(x=>L.push([s.name,formatStation(x.sta),x.L?x.L.label:'',c(x.L,'os'),c(x.L,'g'),'','',x.R?x.R.label:'',c(x.R,'os'),c(x.R,'g'),'',''].map(geomCSVField).join(','))));
   return L.join('\r\n');
 }
 function downloadBlob(blob,name){const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),2000);}
@@ -1794,7 +1845,7 @@ function xSetCells(xml,byRow){
     return`<row r="${r}"${attrs}>${body}</row>`;
   });
 }
-async function cutSheetExcel(r){
+async function cutSheetExcel(r,streetName){
   let buf=CUT.tpl;
   if(!buf){try{const res=await fetch('templates/cut_sheet_template.xlsx');if(res.ok)buf=await res.arrayBuffer();}catch(_){}}
   if(!buf){try{const b=localStorage.getItem('cstp.cutTpl');if(b)buf=Uint8Array.from(atob(b),c=>c.charCodeAt(0)).buffer;}catch(_){}}
@@ -1806,7 +1857,7 @@ async function cutSheetExcel(r){
   const H=new Map(),today=$('cutDate').value?new Date($('cutDate').value+'T00:00:00'):null;
   const txt=v=>v?{t:'s',v}:null;
   H.set(2,{D:txt($('cutJob').value)});
-  H.set(4,{D:txt($('cutWO').value),G:txt($('cutStreet').value),J:today?{t:'n',v:Math.round((today-new Date(1899,11,30))/864e5)}:null,L:txt($('cutCrew').value)});
+  H.set(4,{D:txt($('cutWO').value),G:txt(streetName),J:today?{t:'n',v:Math.round((today-new Date(1899,11,30))/864e5)}:null,L:txt($('cutCrew').value)});
   H.set(6,{C:txt($('cutCtrl').value),E:txt($('cutChk').value)});
   const n3=v=>v==null?null:{t:'n',v:+v.toFixed(3)},n2=v=>v==null?null:{t:'n',v:+v.toFixed(2)};
   for(let i=0;i<Math.max(1,Math.min(MAX,r.rows.length));i++){
@@ -1834,21 +1885,50 @@ async function cutSheetExcel(r){
     put('[Content_Types].xml',get('[Content_Types].xml').replace(/<Override[^>]*calcChain[^>]*\/>/,''));
     put('xl/_rels/workbook.xml.rels',get('xl/_rels/workbook.xml.rels').replace(/<Relationship[^>]*calcChain[^>]*\/>/,''));}
   const blob=await zipAll(files);
-  const nm=`CutSheet_${($('cutStreet').value||r.cl.name).replace(/[^\w.-]+/g,'_')}_${formatStation(r.rows[0]?.sta??0)}-${formatStation(r.rows[r.rows.length-1]?.sta??0)}.xlsx`;
+  const nm=`CutSheet_${(streetName||r.cl.name).replace(/[^\w.-]+/g,'_')}_${formatStation(r.rows[0]?.sta??0)}-${formatStation(r.rows[r.rows.length-1]?.sta??0)}.xlsx`;
   downloadBlob(blob,nm);hud(`📋 cut sheet: ${r.rows.length} stations → ${nm}`);
   return blob;
 }
-function renderCutSelects(){
-  const opts=ALIGNMENTS.map(a=>`<option value="${a.name.replace(/"/g,'&quot;')}">${a.name}${a.profile?'':' (no profile)'}</option>`).join('');
-  const keep=id=>$(id).value;
-  const cl=keep('cutCL'),l=keep('cutLeft'),r=keep('cutRight');
-  $('cutCL').innerHTML=opts;$('cutLeft').innerHTML='<option value="">— none —</option><option value="CL">Centerline itself (O/S 0)</option>'+opts;$('cutRight').innerHTML=$('cutLeft').innerHTML;
-  const has=v=>ALIGNMENTS.some(a=>a.name===v);
-  $('cutCL').value=has(cl)?cl:(ALIGNMENTS.find(a=>/c\.?l\b|center|centre|main|mainline/i.test(a.name))||ALIGNMENTS[0]||{}).name||'';
-  const guess=re=>(ALIGNMENTS.find(a=>re.test(a.name)&&a.name!==$('cutCL').value)||{}).name||'';
-  $('cutLeft').value=l&&(l==='CL'||has(l))?l:guess(/\b(lt|left)\b|[-_ ]l(eft)?$/i);
-  $('cutRight').value=r&&(r==='CL'||has(r))?r:guess(/\b(rt|right)\b|[-_ ]r(ight)?$/i);
+const CURB_RE=/\b(lt|rt|left|right|curb|crb|bc|bk|fl|flowline|gutter|eop|ec|toc|tbc)\b|[-_ ](lt|rt|l|r)$/i;
+// guess streets: every alignment that doesn't look like a curb line is a street's main; each curb-like alignment
+// goes to the street it runs along (median offset within the search distance), on the side it's on
+function cutAutoStreets(){
+  const maxOff=+$('cutMaxOff').value||200;
+  let mains=ALIGNMENTS.filter(a=>!CURB_RE.test(a.name));if(!mains.length)mains=ALIGNMENTS.slice(0,1);
+  const curbs=ALIGNMENTS.filter(a=>!mains.includes(a));
+  const streets=mains.map(m=>({main:m.name,name:m.name,lt:[],rt:[]}));
+  curbs.forEach(c=>{
+    const els=c.elements,S0=els[0].staStart,S1=els[els.length-1].staStart+els[els.length-1].length;
+    let best=null;
+    streets.forEach(st=>{const m=ALIGNMENTS.find(a=>a.name===st.main);
+      const so=[0.1,0.3,0.5,0.7,0.9].map(f=>{const q=stationToPoint(c,S0+(S1-S0)*f);return alignStaOff(m,q.E,q.N);});
+      if(so.filter(o=>o.beyond).length>2)return;                  // mostly past this street's ends — belongs to another street
+      const offs=so.filter(o=>!o.beyond).map(o=>o.off).sort((a,b)=>a-b),med=offs[Math.floor(offs.length/2)];
+      if(offs.length&&Math.abs(med)<=maxOff&&(!best||Math.abs(med)<Math.abs(best.med)))best={st,med};});
+    if(best)(best.med>=0?best.st.lt:best.st.rt).push(c.name);
+  });
+  return streets.filter(st=>st.lt.length||st.rt.length||streets.length===1||mains.length<=3);
+}
+function renderCutStreets(){
   if(!$('cutDate').value)$('cutDate').value=new Date().toISOString().slice(0,10);
+  const names=new Set(ALIGNMENTS.map(a=>a.name));
+  CUT.streets=CUT.streets.filter(st=>names.has(st.main)).map(st=>({...st,lt:st.lt.filter(n=>names.has(n)),rt:st.rt.filter(n=>names.has(n))}));
+  if(!CUT.streets.length)CUT.streets=cutAutoStreets();
+  const esc=v=>String(v).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
+  $('cutStreets').innerHTML=CUT.streets.map((st,i)=>{
+    const others=ALIGNMENTS.filter(a=>a.name!==st.main);
+    return`<div class="cutStreet" data-i="${i}" style="border:1px solid var(--rule);border-radius:6px;padding:6px;background:var(--panel2)">
+      <div style="display:grid;grid-template-columns:1fr 1fr auto;gap:6px;align-items:end;margin-bottom:5px">
+        <div><label style="display:block;font-size:11px;color:var(--mut)">Main alignment (stationing)</label><select data-k="main" style="width:100%;background:var(--panel);color:var(--text);border:1px solid var(--rule);border-radius:5px;padding:3px">${ALIGNMENTS.map(a=>`<option value="${esc(a.name)}"${a.name===st.main?' selected':''}>${esc(a.name)}${a.profile?'':' (no profile)'}</option>`).join('')}</select></div>
+        <div><label style="display:block;font-size:11px;color:var(--mut)">Street name (sheet header)</label><input data-k="name" value="${esc(st.name)}" style="width:100%;background:var(--panel);color:var(--text);border:1px solid var(--rule);border-radius:5px;padding:3px"></div>
+        <button data-k="del" class="btn" style="padding:3px 7px" title="Remove this street">✕</button>
+      </div>
+      <table style="width:100%;border-collapse:collapse;font-size:11px"><thead><tr><th style="text-align:left;color:var(--mut);font-weight:400">Minor alignment</th><th style="width:44px;color:var(--mut);font-weight:400">LT curb</th><th style="width:44px;color:var(--mut);font-weight:400">RT curb</th></tr></thead><tbody>
+      ${others.map(a=>`<tr><td style="padding:1px 0">${esc(a.name)}${a.profile?'':' <span style="color:var(--mut)">(no profile)</span>'}</td>
+        <td style="text-align:center"><input type="checkbox" data-k="lt" value="${esc(a.name)}"${st.lt.includes(a.name)?' checked':''}></td>
+        <td style="text-align:center"><input type="checkbox" data-k="rt" value="${esc(a.name)}"${st.rt.includes(a.name)?' checked':''}></td></tr>`).join('')||'<tr><td colspan="3" class="note">no other alignments loaded</td></tr>'}
+      </tbody></table></div>`;}).join('');
+  $('cutCB').disabled=!PIPE_NETWORKS.length;$('cutCBWhich').disabled=!PIPE_NETWORKS.length;
 }
 
 /* ---------- 🌀 curve properties panel ----------
@@ -3397,16 +3477,28 @@ $('pipeLabelCloseBtn').onclick=()=>$('pipeLabelPanel').classList.remove('show');
 });
 $('geomLabelsBtn').onclick=()=>{if($('geomLabelsBtn').disabled)return;renderGeomLabelSelects();$('geomLabelPanel').classList.toggle('show');};
 $('geomLabelCloseBtn').onclick=()=>$('geomLabelPanel').classList.remove('show');
-$('cutSheetBtn').onclick=()=>{if($('cutSheetBtn').disabled)return;const p=$('cutPanel');if(p.classList.contains('show')){p.classList.remove('show');draw();return;}renderCutSelects();p.classList.add('show');renderCutPreview();};
+$('cutSheetBtn').onclick=()=>{if($('cutSheetBtn').disabled)return;const p=$('cutPanel');if(p.classList.contains('show')){p.classList.remove('show');draw();return;}renderCutStreets();p.classList.add('show');renderCutPreview();};
 $('cutCloseBtn').onclick=()=>{$('cutPanel').classList.remove('show');draw();};
 $('cutPreviewBtn').onclick=()=>renderCutPreview();
-['cutCL','cutLeft','cutRight','cutTan','cutCurve','cutKeys','cutFrom','cutTo','cutStake','cutLabelL','cutLabelR','cutFallback','cutMaxOff'].forEach(id=>$(id).addEventListener('change',()=>renderCutPreview()));
-$('cutCsvBtn').onclick=()=>{const r=renderCutPreview();if(r)downloadBlob(new Blob([cutSheetCSV(r)],{type:'text/csv'}),`CutSheet_${r.cl.name}.csv`);};
-$('cutXlsxBtn').onclick=async()=>{const r=renderCutPreview();if(!r)return;try{await cutSheetExcel(r);}catch(err){hud('⚠ cut sheet export failed: '+err.message);console.error(err);}};
+['cutTan','cutCurve','cutKeys','cutFrom','cutTo','cutHub','cutLabelL','cutLabelR','cutFallback','cutMaxOff','cutCB','cutCBWhich'].forEach(id=>$(id).addEventListener('change',()=>renderCutPreview()));
+$('cutAddStreetBtn').onclick=()=>{const used=new Set(CUT.streets.map(s=>s.main));const m=ALIGNMENTS.find(a=>!used.has(a.name)&&!CURB_RE.test(a.name))||ALIGNMENTS.find(a=>!used.has(a.name))||ALIGNMENTS[0];
+  if(!m)return;CUT.streets.push({main:m.name,name:m.name,lt:[],rt:[]});renderCutStreets();renderCutPreview();};
+$('cutStreets').addEventListener('change',e=>{const card=e.target.closest('.cutStreet');if(!card)return;const st=CUT.streets[+card.dataset.i],k=e.target.dataset.k;
+  if(k==='main'){if(st.name===st.main)st.name=e.target.value;st.main=e.target.value;st.lt=st.lt.filter(n=>n!==st.main);st.rt=st.rt.filter(n=>n!==st.main);renderCutStreets();}
+  else if(k==='name')st.name=e.target.value;
+  else if(k==='lt'||k==='rt'){const arr=st[k],o=st[k==='lt'?'rt':'lt'];
+    if(e.target.checked){if(!arr.includes(e.target.value))arr.push(e.target.value);const oi=o.indexOf(e.target.value);if(oi>=0){o.splice(oi,1);renderCutStreets();}}   // one curb can't be both sides
+    else arr.splice(arr.indexOf(e.target.value),1);}
+  renderCutPreview();});
+$('cutStreets').addEventListener('click',e=>{if(e.target.dataset.k!=='del')return;const card=e.target.closest('.cutStreet');CUT.streets.splice(+card.dataset.i,1);renderCutStreets();renderCutPreview();});
+$('cutCsvBtn').onclick=()=>{const r=renderCutPreview();if(r)downloadBlob(new Blob([cutSheetCSV(r)],{type:'text/csv'}),`CutSheet_${r.streets.map(s=>s.name).join('_').replace(/[^\w.-]+/g,'_')}.csv`);};
+async function cutExportAll(r){for(const st of r.streets){await cutSheetExcel({cl:st.cl,rows:st.rows},st.name);if(!CUT.tpl)return;await new Promise(res=>setTimeout(res,400));}   // one workbook per street
+  if(r.streets.length>1)hud(`📋 ${r.streets.length} cut sheets exported — one per street`);}
+$('cutXlsxBtn').onclick=async()=>{const r=renderCutPreview();if(!r)return;try{await cutExportAll(r);}catch(err){hud('⚠ cut sheet export failed: '+err.message);console.error(err);}};
 $('cutTplInput').onchange=async e=>{const f=e.target.files[0];e.target.value='';if(!f)return;
   const buf=await f.arrayBuffer();try{await unzipAll(buf);}catch(_){hud('⚠ that file is not an .xlsx workbook');return;}
   CUT.tpl=buf;try{let b='';const u=new Uint8Array(buf);for(let i=0;i<u.length;i+=0x8000)b+=String.fromCharCode.apply(null,u.subarray(i,i+0x8000));localStorage.setItem('cstp.cutTpl',btoa(b));}catch(_){}
-  hud(`📄 cut-sheet template set: ${f.name}`);const r=renderCutPreview();if(r)try{await cutSheetExcel(r);}catch(err){hud('⚠ cut sheet export failed: '+err.message);}};
+  hud(`📄 cut-sheet template set: ${f.name}`);const r=renderCutPreview();if(r)try{await cutExportAll(r);}catch(err){hud('⚠ cut sheet export failed: '+err.message);}};
 $('curveCloseBtn').onclick=()=>{$('curvePanel').classList.remove('show');draw();};
 $('curveCsvBtn').onclick=()=>{if(!CURVE_SEL)return;const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([curveCSV()],{type:'text/csv'}));
   a.download=`${CURVE_SEL.align?CURVE_SEL.align.name:'curve'}-curve-${curveProps(CURVE_SEL.el,CURVE_SEL.align).idx}.csv`;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);};
@@ -4039,7 +4131,7 @@ document.addEventListener('pointerdown',e=>{if(!e.target.closest('#importMenu,#i
 
 
 /* ---------- version badge — CHANGED ON EVERY PUSH (new animal + name + build+1; see CLAUDE.md), mirroring FBK-Checker's own fruit badge ---------- */
-const VERSION={animal:'🦬',name:'BISON',build:34};
+const VERSION={animal:'🦡',name:'BADGER',build:35};
 function rotateAnimal(){const b=$('animalBadge');b.style.transform='rotate(360deg)';setTimeout(()=>{b.style.transform='rotate(0deg)';},200);}
 function showVersion(){const b=$('animalBadge');b.textContent=`${VERSION.animal} ${VERSION.name} · b${VERSION.build}`;
   b.title=`Build ${VERSION.build} · ${VERSION.name} — if this matches what Claude pushed, you're on the latest (no cache)`;}
