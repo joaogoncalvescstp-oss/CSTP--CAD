@@ -345,6 +345,12 @@ dependencies, and nothing to install.
   (the body scrolls). The Legend starts collapsed.
 - Long explanations sit behind an **ℹ How this works** toggle.
 - F / O / P shortcuts are ignored while typing in a text field.
+- **☀ Light / ☾ Dark** (toolbar, or the **T** key) switches the theme; the
+  choice is remembered in this browser. The page chrome switches via CSS
+  variables. On the canvas, light theme runs every drawing color through the
+  same hue with flipped lightness, so pale lines, labels and water turn into
+  deep versions of themselves and the dark label halos turn light. Surface
+  shaders are exempt, so hillshade light and shadow never invert.
 
 ## Slope between two points
 
