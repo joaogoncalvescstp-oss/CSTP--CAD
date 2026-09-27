@@ -37,6 +37,7 @@ The badge renders as `<emoji> <NAME> · b<build>`.
 | 33 | 🦘 KANGAROO | 📍 labels: MID/PC/PT/… elevation from the alignment's design profile (else file Z, else EG surface) instead of 0 |
 | 34 | 🦬 BISON | 📋 cut sheet report generator: CL stations at tangent/curve intervals, L/R curb O/S + grade, fills the Excel cut-sheet template |
 | 35 | 🦡 BADGER | 📋 cut sheet: streets (main + LT/RT curb checkboxes, one sheet per street), CB rows from pipe XML, O/S = hub from curb |
+| 36 | 🦥 SLOTH | 📋 cut sheet MID + AP stations (CL and curbs' own key points); ✂ Declutter: click a stake / label on the map to remove it, ↺ restore |
 
 ## Workflow
 

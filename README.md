@@ -286,8 +286,21 @@ dependencies, and nothing to install.
     gets its own row at its station on that main alignment, on its side,
     labeled with its number (e.g. CB-12), with O/S = hub from CB and
     grade = rim elevation.
-  - The preview table groups rows by street; the drawing shows each stake
-    line with the curb point (■) and hub (×).
+  - **Key stations**: "+ PC / PT / MID / AP / POB / POE" adds the main
+    alignment's curve points, curve **MID**points and **AP** (angle points,
+    where two straight segments meet at a bend with no curve). "+ curbs' own
+    PC / MID / PT / AP" also stakes each ticked curb's own key points, e.g.
+    a curb return's PC / MID / PT or a curb angle point, at the exact curb
+    point, stationed on the main alignment. Points that coincide with a
+    centerline row (within 0.25 ft) aren't repeated.
+  - The preview table groups rows by street (✕ removes a row); the drawing
+    shows each stake line with the curb point (■) and hub (×).
+- **✂ Declutter** (Labels group): click any cut-sheet stake or 📍 point
+  label on the map to remove it. A station dot removes the whole row; a curb
+  point or hub removes just that side. On an exact overlap the 📍 label
+  wins. A red ⊗ previews what the click removes; Esc stops. Removals survive
+  re-previews and re-labels. **↺ Restore removed** (Cut Sheet panel) and
+  **↺ Restore removed labels** (Label Points panel) bring them back.
   - **⬇ Excel cut sheet** writes **one workbook per street** from the
     office cut-sheet template (`templates/cut_sheet_template.xlsx`). The
     header (job #, work order, date, crew, control #, CHK #, and the street
