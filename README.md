@@ -381,6 +381,15 @@ adapted to this viewer's DXF/TIN/pipe-network data model:
   there's no world-space inverse for this oblique projection to resolve a
   screen click back through, the same limitation the source app's own
   object-snap-driven tools have in its 3D view.
+  - **🧊 View cube** (lower-right corner of 3D) turns with the view. Click
+    a face (TOP / N / S / E / W) to look straight at the site from that side,
+    a top corner (NE / NW / SE / SW) for that 3/4 view, or ⌂ to reset. The
+    view swings there around the current pivot. A ground ring marks north.
+  - **🎥 Perspective view** (3D View box, or V): near things larger, far
+    things shrink toward a vanishing point, with a **field of view** slider
+    (15°–100°). Anything at the pivot's depth keeps the same scale as the
+    parallel view. Re-centering the orbit on a new point keeps the camera in
+    place, so the picture doesn't jump. The wheel/pinch zoom acts as a lens zoom.
   - **🎯 Pivot snap** — when a drag starts, the orbit pivot snaps to the
     nearest CgPoint / DXF POINT / manhole, else the nearest DXF or TIN
     vertex within 12px, else the front-most TIN surface point under the

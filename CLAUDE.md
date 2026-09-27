@@ -30,10 +30,11 @@ The badge renders as `<emoji> <NAME> · b<build>`.
 | 26 | 🦫 BEAVER | 🚰 pipe flow: water caught by structures travels down the pipes to the outfall |
 | 27 | 🦔 HEDGEHOG | UI cleanup: grouped toolbar + Import menu; every panel draggable / collapsible with remembered layout |
 | 28 | 🦜 PARROT | ☀/☾ light & dark theme toggle (UI vars + auto-adapted canvas colors) |
+| 29 | 🐧 PENGUIN | 🧊 3D view cube (faces / corners / home) + 🎥 perspective view with field of view |
 
 ## Workflow
 
 - The owner wants finished work **pushed straight to `main`**. Keep the working
   branch in sync with `main` too.
-- Before pushing: `node --check` the extracted inline script, and exercise the
+- Before pushing: `node --check` the main inline script (extract the LARGEST `<script>` block — a one-line theme script sits in `<head>`), and exercise the
   change in headless Chromium (Playwright) with a small LandXML fixture.

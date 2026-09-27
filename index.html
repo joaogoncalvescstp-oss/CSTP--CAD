@@ -162,6 +162,10 @@ details.help[open]>summary{margin-bottom:4px}
       <div class="row"><span>☀ Sun altitude <b id="sunAltVal3d">45°</b></span></div>
       <input type="range" id="sunAlt3d" min="5" max="90" step="1" value="45">
       <label><input type="checkbox" id="shadowChk3d"> Cast shadows</label>
+      <div style="border-top:1px solid var(--rule);margin:2px 0"></div>
+      <label title="Perspective camera: near things larger, far things shrink toward a vanishing point (V)"><input type="checkbox" id="perspChk"> 🎥 Perspective view</label>
+      <div class="row"><span>Field of view <b id="fovVal">45°</b></span></div>
+      <input type="range" id="fovSlider" min="15" max="100" step="1" value="45" title="Wider = stronger perspective">
     </div>
     <div class="view3d" id="rainBox" style="left:12px;right:auto;top:auto;bottom:44px;width:250px">
       <div class="row"><span>Painted area</span><span id="rainPaintedInfo" style="font-size:10px;text-align:right"></span></div>
@@ -394,7 +398,8 @@ const SLOPE_SHADE_COLORS=['#2ecc71','#a3d977','#f1c40f','#e67e22','#e74c3c'];
    Same oblique-projection scheme: rotate a point about a world pivot (orbit.cx/cy/cz)
    by azimuth/elevation, exaggerate Z by orbit.ve, then scale/pan in screen space. */
 let is3D=false;
-let orbit={az:0.6,el:1.0,s:1,ox:0,oy:0,ve:3,cx:0,cy:0,cz:0};
+let orbit={az:0.6,el:1.0,s:1,ox:0,oy:0,ve:3,cx:0,cy:0,cz:0,
+  persp:false,fov:45,D:1,Df:1,Lx:0,Ly:0};                        // perspective: camera sits D world units out along the view axis, offset Lx/Ly sideways (see P3)
 
 /* ---------- 📈 profile (station vs elevation) view ----------
    A third view mode alongside 2D plan/3D orbit — station on the X axis, elevation on Y, each
@@ -493,13 +498,25 @@ function llToSurvey(la,lo){const phi=la*RC.D,lam=lo*RC.D;
   return [RC.FE+x/RC.FT,RC.FN+y/RC.FT];}
 
 /* ---------- 3D projection (ported from FBK-Checker) ---------- */
-function P3(E,N,Z){const w=cv.width/devicePixelRatio,h=cv.height/devicePixelRatio;
-  const e=E-orbit.cx,n=N-orbit.cy,u=(Z-orbit.cz)*orbit.ve;
+// Returns [sx,sy,toward] — `toward` grows toward the viewer. Orthographic by default. In
+// perspective the camera sits D world units from the pivot along the view axis (shifted
+// sideways by Lx/Ly) and everything scales by D/(distance from camera) — so anything at the
+// pivot's own depth keeps exactly the orthographic scale `s`, nearer things grow, farther
+// things shrink toward the vanishing point. Points at/behind the camera are clamped just in
+// front of it rather than flipped.
+function makeProj3(){
+  const w=cv.width/devicePixelRatio,h=cv.height/devicePixelRatio;
   const cA=Math.cos(orbit.az),sA=Math.sin(orbit.az),cE=Math.cos(orbit.el),sE=Math.sin(orbit.el);
-  const x1=e*cA+n*sA, y1=-e*sA+n*cA, z1=u;
-  const sx=x1*orbit.s + w/2 + orbit.ox;
-  const sy=-(y1*sE+z1*cE)*orbit.s + h/2 + orbit.oy;
-  const depth=y1*cE+z1*sE; return [sx,sy,depth];}
+  const {cx,cy,cz,ve,s,ox,oy,persp,D,Df,Lx,Ly}=orbit,X0=w/2+ox,Y0=h/2+oy,near=Df*0.03;
+  return (E,N,Z)=>{const e=E-cx,n=N-cy,u=(Z-cz)*ve;
+    const x1=e*cA+n*sA,y1=-e*sA+n*cA,up=y1*sE+u*cE,t=-y1*cE+u*sE;
+    if(!persp)return[x1*s+X0,-up*s+Y0,t];
+    const k=s*Df/Math.max(near,D-t);                       // Df = the fixed focal reference, D = where the camera actually is
+    return[(x1-Lx)*k+X0,-(up-Ly)*k+Y0,t];};
+}
+function P3(E,N,Z){return makeProj3()(E,N,Z);}
+// camera distance for the chosen field of view: the pivot-depth plane spans the view height
+function perspResetCamera(){const h=cv.height/devicePixelRatio;orbit.D=orbit.Df=(h/orbit.s)/(2*Math.tan(orbit.fov*Math.PI/360));orbit.Lx=0;orbit.Ly=0;}
 // re-center the orbit pivot on whatever's under the cursor (a real point, or the ground
 // plane at the pivot's own elevation) at the start of every orbit drag — with zero visual
 // jump, since the new pivot's own projection is trivially (w/2+ox, h/2+oy).
@@ -511,6 +528,15 @@ function retargetOrbitPivot(sx,sy,pt){
     const cA=Math.cos(orbit.az),sA=Math.sin(orbit.az),sE=Math.sin(orbit.el);
     const x1=(sx-w/2-orbit.ox)/orbit.s, y1=-(sy-h/2-orbit.oy)/(orbit.s*sE);
     E=x1*cA-y1*sA+orbit.cx; N=x1*sA+y1*cA+orbit.cy; Z=orbit.cz;
+  }
+  if(orbit.persp){
+    // perspective: keep the CAMERA where it is (so nothing on screen moves) and just re-express
+    // it relative to the new pivot — shift the lateral offset and distance by the pivot's move
+    const cA=Math.cos(orbit.az),sA=Math.sin(orbit.az),cE=Math.cos(orbit.el),sE=Math.sin(orbit.el);
+    const e=E-orbit.cx,n=N-orbit.cy,u=(Z-orbit.cz)*orbit.ve,x1=e*cA+n*sA,y1=-e*sA+n*cA;
+    orbit.Lx-=x1;orbit.Ly-=y1*sE+u*cE;orbit.D-=-y1*cE+u*sE;
+    if(orbit.D<1e-6)perspResetCamera();
+    orbit.cx=E;orbit.cy=N;orbit.cz=Z;return;
   }
   orbit.cx=E;orbit.cy=N;orbit.cz=Z;
   orbit.ox=sx-w/2;orbit.oy=sy-h/2;
@@ -556,6 +582,73 @@ function pick3D(sx,sy){
     net.structs.forEach(st=>{if(st.dummy)return;const s=P3(st.E,st.N,st.rim||0),d=Math.hypot(s[0]-sx,s[1]-sy);if(d<bd){bd=d;best={E:st.E,N:st.N,Z:st.rim||0};}});});
   return best;
 }
+
+/* ---------- 🧊 view cube (3D) ----------
+   A small cube in the lower-right corner that turns with the view. Click a face (TOP / N / S /
+   E / W) to look straight at the site from that side, a top corner for that 3/4 (isometric)
+   view, or ⌂ to reset. The view swings there in a short animation around the current pivot. */
+const VCUBE={size:40,hover:null,anim:null};
+function vcubeCenter(){const w=cv.width/devicePixelRatio,h=cv.height/devicePixelRatio;return[w-76,h-120];}
+const VCUBE_FACES=[
+  {id:'TOP',n:[0,0,1],v:[[-1,-1,1],[1,-1,1],[1,1,1],[-1,1,1]]},
+  {id:'S',n:[0,-1,0],v:[[-1,-1,-1],[1,-1,-1],[1,-1,1],[-1,-1,1]]},
+  {id:'N',n:[0,1,0],v:[[1,1,-1],[-1,1,-1],[-1,1,1],[1,1,1]]},
+  {id:'E',n:[1,0,0],v:[[1,-1,-1],[1,1,-1],[1,1,1],[1,-1,1]]},
+  {id:'W',n:[-1,0,0],v:[[-1,1,-1],[-1,-1,-1],[-1,-1,1],[-1,1,1]]},
+  {id:'BOTTOM',n:[0,0,-1],v:[[-1,1,-1],[1,1,-1],[1,-1,-1],[-1,-1,-1]]}];
+const VCUBE_CORNERS=[[1,1,'NE'],[-1,1,'NW'],[1,-1,'SE'],[-1,-1,'SW']];
+function vcubeProj(v){const[cx,cy]=vcubeCenter(),S=VCUBE.size/2,cA=Math.cos(orbit.az),sA=Math.sin(orbit.az),cE=Math.cos(orbit.el),sE=Math.sin(orbit.el);
+  const x1=v[0]*cA+v[1]*sA,y1=-v[0]*sA+v[1]*cA;return[cx+x1*S,cy-(y1*sE+v[2]*cE)*S,-y1*cE+v[2]*sE];}
+function vcubeHome(){const[cx,cy]=vcubeCenter();return[cx+VCUBE.size*0.95,cy-VCUBE.size*0.95];}
+function vcubeHit(sx,sy){
+  if(!is3D)return null;
+  const[hx,hy]=vcubeHome();if(Math.hypot(sx-hx,sy-hy)<9)return{id:'HOME'};
+  for(const[e,n,id]of VCUBE_CORNERS){const q=vcubeProj([e,n,1]);if(Math.hypot(sx-q[0],sy-q[1])<7)return{id,corner:[e,n]};}
+  const vis=VCUBE_FACES.map(f=>({f,t:vcubeProj(f.n)[2]})).filter(o=>o.t>0.02).sort((a,b)=>b.t-a.t);
+  for(const{f}of vis){const q=f.v.map(vcubeProj);let inside=true;
+    for(let i=0;i<4;i++){const a=q[i],b=q[(i+1)%4];if((b[0]-a[0])*(sy-a[1])-(b[1]-a[1])*(sx-a[0])>0){inside=false;break;}}
+    if(!inside){inside=true;for(let i=0;i<4;i++){const a=q[i],b=q[(i+1)%4];if((b[0]-a[0])*(sy-a[1])-(b[1]-a[1])*(sx-a[0])<0){inside=false;break;}}}
+    if(inside)return{id:f.id};}
+  return null;
+}
+function drawViewCube(){
+  const vis=VCUBE_FACES.map(f=>({f,t:vcubeProj(f.n)[2]})).filter(o=>o.t>0.02).sort((a,b)=>a.t-b.t);
+  ctx.save();ctx.lineJoin='round';
+  vis.forEach(({f,t})=>{const q=f.v.map(vcubeProj);const hov=VCUBE.hover&&VCUBE.hover.id===f.id;
+    ctx.beginPath();q.forEach((p,i)=>i?ctx.lineTo(p[0],p[1]):ctx.moveTo(p[0],p[1]));ctx.closePath();
+    const shade=Math.round(40+t*40);
+    ctx.fillStyle=hov?'#f1b434':`rgb(${shade},${shade+8},${shade+30})`;ctx.globalAlpha=0.92;ctx.fill();ctx.globalAlpha=1;
+    ctx.strokeStyle='#7fd4ff';ctx.lineWidth=1;ctx.stroke();
+    if(t>0.25){const c=q.reduce((a,p)=>[a[0]+p[0]/4,a[1]+p[1]/4],[0,0]);
+      ctx.font=`700 ${f.id==='TOP'?9:10}px ui-monospace,monospace`;ctx.textAlign='center';ctx.textBaseline='middle';
+      ctx.fillStyle=hov?'#231a04':'#e7ecf7';ctx.fillText(f.id,c[0],c[1]);}});
+  VCUBE_CORNERS.forEach(([e,n,id])=>{const q=vcubeProj([e,n,1]);if(q[2]<-0.2)return;const hov=VCUBE.hover&&VCUBE.hover.id===id;
+    ctx.beginPath();ctx.arc(q[0],q[1],hov?5:3.5,0,Math.PI*2);ctx.fillStyle=hov?'#f1b434':'#7fd4ff';ctx.fill();});
+  // north arrow on the ground ring + home button
+  const[cx,cy]=vcubeCenter(),r=VCUBE.size*1.05,cA=Math.cos(orbit.az),sA=Math.sin(orbit.az),sE=Math.sin(orbit.el);
+  ctx.strokeStyle='rgba(127,212,255,.45)';ctx.lineWidth=1;ctx.beginPath();ctx.ellipse(cx,cy+VCUBE.size*0.5*Math.cos(orbit.el),r,r*sE,0,0,Math.PI*2);ctx.stroke();
+  const nx=cx+sA*r,ny=cy+VCUBE.size*0.5*Math.cos(orbit.el)-cA*r*sE;
+  ctx.font='700 10px ui-monospace,monospace';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillStyle='#ff7a7a';ctx.fillText('N',nx,ny);
+  const[hx,hy]=vcubeHome(),hh=VCUBE.hover&&VCUBE.hover.id==='HOME';
+  ctx.fillStyle=hh?'#f1b434':'#7fd4ff';ctx.font='13px ui-monospace,monospace';ctx.fillText('⌂',hx,hy);
+  ctx.restore();ctx.textAlign='start';ctx.textBaseline='alphabetic';
+}
+// swing the view to (az,el) over ~350ms
+function animateOrbitTo(az,el){
+  let d=az-orbit.az;d=Math.atan2(Math.sin(d),Math.cos(d));   // shortest way round
+  const a0=orbit.az,e0=orbit.el,t0=performance.now();
+  if(VCUBE.anim)cancelAnimationFrame(VCUBE.anim);
+  const step=now=>{const k=Math.min(1,(now-t0)/350),s=k<.5?2*k*k:1-Math.pow(-2*k+2,2)/2;
+    orbit.az=a0+d*s;orbit.el=e0+(el-e0)*s;draw();VCUBE.anim=k<1?requestAnimationFrame(step):null;};
+  VCUBE.anim=requestAnimationFrame(step);
+}
+function vcubeClick(hit){
+  const views={TOP:[0,1.55],S:[0,0.1],N:[Math.PI,0.1],E:[Math.PI/2,0.1],W:[-Math.PI/2,0.1],BOTTOM:[0,1.55]};
+  if(hit.id==='HOME'){fit();animateOrbitTo(0.6,1.0);hud('view reset');return;}
+  if(hit.corner){animateOrbitTo(Math.atan2(hit.corner[0],-hit.corner[1]),0.62);hud(`${hit.id} 3/4 view`);return;}
+  const v=views[hit.id];animateOrbitTo(v[0],v[1]);hud(`${hit.id==='TOP'?'top (plan)':hit.id+' side'} view`);
+}
+
 /* ---------- 🎯 orbit pivot snap (3D) ----------
    Extends pick3D: when an orbit drag starts, the pivot snaps (in priority order) to a
    CgPoint/DXF POINT/manhole, else the nearest vertex of any visible DXF linework or TIN
@@ -571,14 +664,7 @@ let lastHoverPick=0;
 // P3 with the trig hoisted out, for the per-vertex loops below (picking, shading) that can
 // project hundreds of thousands of vertices per call. Returns [sx,sy,toward] — `toward` grows
 // toward the viewer (camera looks along -(0,-cosEl,sinEl) in the azimuth-rotated frame).
-function projector(){
-  const w=cv.width/devicePixelRatio,h=cv.height/devicePixelRatio;
-  const cA=Math.cos(orbit.az),sA=Math.sin(orbit.az),cE=Math.cos(orbit.el),sE=Math.sin(orbit.el);
-  const {cx,cy,cz,ve,s,ox,oy}=orbit;
-  return (E,N,Z)=>{const e=E-cx,n=N-cy,u=(Z-cz)*ve;
-    const x1=e*cA+n*sA,y1=-e*sA+n*cA;
-    return [x1*s+w/2+ox,-(y1*sE+u*cE)*s+h/2+oy,-y1*cE+u*sE];};
-}
+function projector(){return makeProj3();}
 function surfaceHit3D(sx,sy,pr){
   let best=null,bt=-Infinity;
   SURFACES.forEach(s=>{const ly=LAYERS[s.layer];if(ly&&!ly.visible)return;
@@ -783,7 +869,7 @@ function fit(){
     orbit.cx=(b.minE+b.maxE)/2;orbit.cy=(b.minN+b.maxN)/2;
     orbit.cz=b.minZ<=b.maxZ?(b.minZ+b.maxZ)/2:0;
     const span=Math.max(b.maxE-b.minE,b.maxN-b.minN)||1;
-    orbit.s=(Math.min(w,h)-2*pad)/span;orbit.ox=0;orbit.oy=0;
+    orbit.s=(Math.min(w,h)-2*pad)/span;orbit.ox=0;orbit.oy=0;perspResetCamera();
     draw();
   }else if(fitToBounds(b))draw();
 }
@@ -809,7 +895,7 @@ function zoomToLayer(name){
     const w=cv.width/devicePixelRatio,h=cv.height/devicePixelRatio,pad=60;
     orbit.cx=(b.minE+b.maxE)/2;orbit.cy=(b.minN+b.maxN)/2;orbit.cz=0;
     const span=Math.max(b.maxE-b.minE,b.maxN-b.minN)||1;
-    orbit.s=(Math.min(w,h)-2*pad)/span;orbit.ox=0;orbit.oy=0;
+    orbit.s=(Math.min(w,h)-2*pad)/span;orbit.ox=0;orbit.oy=0;perspResetCamera();
   }else fitToBounds(b);
   draw();hud(`zoomed to layer: ${name}`);
 }
@@ -934,6 +1020,7 @@ function draw3D(){
   ctx.globalAlpha=1;
   drawSlopeMeasurements((E,N,Z)=>P3(E,N,Z));
   drawPivotMarkers();
+  drawViewCube();
 }
 
 /* ---------- Civil3D pipe networks (manholes/CBs + pipes) ---------- */
@@ -2967,6 +3054,8 @@ $('sdShadows').onchange=()=>setShade('shadows',$('sdShadows').checked);
 $('shadowChk3d').onchange=()=>setShade('shadows',$('shadowChk3d').checked);
 $('veSlider').oninput=()=>{orbit.ve=+$('veSlider').value;syncShadeUI();draw();};   // the pivot sits at Z=orbit.cz, so rescaling Z about it never moves it on screen
 $('veResetBtn').onclick=()=>{orbit.ve=1;syncShadeUI();draw();hud('vertical exaggeration reset to true scale (1×)');};
+$('perspChk').onchange=()=>{orbit.persp=$('perspChk').checked;perspResetCamera();draw();hud(orbit.persp?`🎥 perspective view · ${orbit.fov}° field of view`:'orthographic (parallel) view');};
+$('fovSlider').oninput=()=>{orbit.fov=+$('fovSlider').value;$('fovVal').textContent=orbit.fov+'°';const L=[orbit.Lx,orbit.Ly];perspResetCamera();orbit.Lx=L[0];orbit.Ly=L[1];draw();};
 $('pivotSnapChk').onchange=()=>{pivotSnapOn=$('pivotSnapChk').checked;orbitHover=null;draw();};
 $('sdWireframe').onchange=()=>{SURFACE_DISPLAY.wireframe=$('sdWireframe').checked;draw();};
 $('sdContours').onchange=()=>{SURFACE_DISPLAY.contours=$('sdContours').checked;draw();};
@@ -3077,6 +3166,7 @@ cv.addEventListener('pointerdown',e=>{
     try{cv.setPointerCapture(e.pointerId);}catch(_){}return;
   }
   if(is3D){
+    const vc=vcubeHit(sx,sy);if(vc){vcubeClick(vc);return;}
     if(!e.shiftKey){                                       // rotate around whatever's under the cursor, not a fixed far-off pivot — same fix FBK-Checker's own orbit view needed for a large, elongated site
       const pv=pickOrbitPivot(sx,sy);retargetOrbitPivot(sx,sy,pv);
       orbitDragging=true;orbitHover=null;hud(pv?`🎯 orbit pivot snapped to ${describePivot(pv)}`:'orbit pivot on the ground plane (nothing to snap to under the cursor)');
@@ -3154,6 +3244,12 @@ cv.addEventListener('pointermove',e=>{
     else{const[E,N]=S2W(sx,sy);hud(`free · E ${E.toFixed(3)} N ${N.toFixed(3)}${suffix}`);}
     draw();return;
   }
+  if(is3D&&!drag){                                          // 🧊 view cube hover
+    const vc=vcubeHit(sx,sy),changed=(vc&&vc.id)!==(VCUBE.hover&&VCUBE.hover.id);
+    VCUBE.hover=vc;cv.style.cursor=vc?'pointer':'grab';
+    if(vc){if(changed){if(orbitHover)orbitHover=null;draw();}return;}
+    if(changed)draw();
+  }
   if(is3D&&!drag&&e.pointerType!=='touch'&&pivotSnapOn){   // preview where an orbit drag started here would pivot
     const now=performance.now();if(now-lastHoverPick<30)return;lastHoverPick=now;   // a dense TIN is a full vertex sweep per pick — cap it at ~30/s
     const pv=pickOrbitPivot(sx,sy);
@@ -3215,6 +3311,7 @@ window.addEventListener('keydown',e=>{
   }
   else if(e.key.toLowerCase()==='f'&&!$('fitBtn').disabled)fit();
   else if(e.key.toLowerCase()==='t'&&!e.ctrlKey&&!e.metaKey)$('themeBtn').onclick();
+  else if(e.key.toLowerCase()==='v'&&is3D){$('perspChk').checked=!$('perspChk').checked;$('perspChk').onchange();}
   else if(e.key.toLowerCase()==='o'&&!$('orbitBtn').disabled)$('orbitBtn').onclick();
   else if(e.key.toLowerCase()==='p'&&!$('profileBtn').disabled)$('profileBtn').onclick();
 });
@@ -3354,7 +3451,7 @@ document.addEventListener('pointerdown',e=>{if(!e.target.closest('#importMenu,#i
 
 
 /* ---------- version badge — CHANGED ON EVERY PUSH (new animal + name + build+1; see CLAUDE.md), mirroring FBK-Checker's own fruit badge ---------- */
-const VERSION={animal:'🦜',name:'PARROT',build:28};
+const VERSION={animal:'🐧',name:'PENGUIN',build:29};
 function rotateAnimal(){const b=$('animalBadge');b.style.transform='rotate(360deg)';setTimeout(()=>{b.style.transform='rotate(0deg)';},200);}
 function showVersion(){const b=$('animalBadge');b.textContent=`${VERSION.animal} ${VERSION.name} · b${VERSION.build}`;
   b.title=`Build ${VERSION.build} · ${VERSION.name} — if this matches what Claude pushed, you're on the latest (no cache)`;}
