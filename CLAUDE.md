@@ -38,6 +38,7 @@ The badge renders as `<emoji> <NAME> · b<build>`.
 | 34 | 🦬 BISON | 📋 cut sheet report generator: CL stations at tangent/curve intervals, L/R curb O/S + grade, fills the Excel cut-sheet template |
 | 35 | 🦡 BADGER | 📋 cut sheet: streets (main + LT/RT curb checkboxes, one sheet per street), CB rows from pipe XML, O/S = hub from curb |
 | 36 | 🦥 SLOTH | 📋 cut sheet MID + AP stations (CL and curbs' own key points); ✂ Declutter: click a stake / label on the map to remove it, ↺ restore |
+| 37 | 🐿️ SQUIRREL | 🏷 GIS street names (OpenStreetMap / Overpass) auto-loaded for anything imported, big labels along streets in 2D + 3D |
 
 ## Workflow
 

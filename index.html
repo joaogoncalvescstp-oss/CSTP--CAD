@@ -107,6 +107,7 @@ details.help[open]>summary{margin-bottom:4px}
       <button class="btn" id="orbitBtn" disabled title="Toggle 3D orbit view (O) — drag to rotate (re-centers on whatever's under the cursor), shift-drag or middle-drag to pan, wheel to zoom. On a touchscreen: one finger to orbit, two fingers to pinch-zoom/pan, double-tap to fit">⟲ 3D</button>
       <button class="btn" id="profileBtn" disabled title="Toggle profile (station vs. elevation) view (P) of one alignment — shows its design <Profile> grade line and PVC/PVT/PVI/PVCC/PVRC/Hi/Lo, or falls back to its horizontal geometry's own elevation if no <Profile> was imported. Drag to pan, wheel to zoom (both axes together); on a touchscreen: one finger to pan, two fingers to pinch-zoom">📈 Profile</button>
       <button class="btn" id="mapBtn" title="Aerial imagery background, tiled from Ramsey County MN's own imagery server (falls back to Esri/USGS NAIP) — only accurate for a job in that county's own survey coordinate system, 2D view only">🗺 Map</button>
+      <button class="btn on" id="streetBtn" title="street names from GIS">🏷 Streets</button>
       <button class="btn gold" id="layersBtn" title="Show/hide and lock layers">📑 Layers</button>
     </div>
     <div class="tg" data-name="Surface">
@@ -551,6 +552,85 @@ function llToSurvey(la,lo){const phi=la*RC.D,lam=lo*RC.D;
   const rho=RC.a*RC.F*Math.pow(RC.t(phi),RC.n),th=RC.n*(lam-RC.lam0);
   const x=rho*Math.sin(th),y=RC.rho0-rho*Math.cos(th);
   return [RC.FE+x/RC.FT,RC.FN+y/RC.FT];}
+
+/* ---------- 🏷 GIS street names ----------
+   Whenever something is loaded, the drawing's extent is converted from Ramsey County survey
+   feet to lat/lon (the same projection 🗺 Map uses) and every named road in that area is pulled
+   from OpenStreetMap's public GIS (Overpass API, two mirrors). Each road comes back as a named
+   centerline in lat/lon → converted to survey coords → labeled along its own direction in big
+   bold capitals, repeated along long streets, in 2D plan and draped on the surface in 3D. */
+const STREETS={on:true,lines:false,list:[],key:'',loading:false,err:null,src:''};
+const OVERPASS=['https://overpass-api.de/api/interpreter','https://overpass.kumi.systems/api/interpreter'];
+function streetBBoxLL(){
+  const b=bounds();if(b.minE>b.maxE)return null;
+  const pad=Math.max(150,0.15*Math.max(b.maxE-b.minE,b.maxN-b.minN));
+  const cs=[[b.minE-pad,b.minN-pad],[b.maxE+pad,b.minN-pad],[b.minE-pad,b.maxN+pad],[b.maxE+pad,b.maxN+pad]].map(([E,N])=>surveyToLL(E,N));
+  const la=cs.map(c=>c[0]),lo=cs.map(c=>c[1]);
+  const bb={s:Math.min(...la),n:Math.max(...la),w:Math.min(...lo),e:Math.max(...lo)};
+  // sanity: the drawing must actually be in Ramsey County survey feet (east-central Minnesota), and not continent-sized
+  if(!(bb.s>43.5&&bb.n<46.5&&bb.w>-95&&bb.e<-91.5)||bb.n-bb.s>0.25||bb.e-bb.w>0.35)return{bad:true,bb};
+  return bb;
+}
+async function fetchStreetNames(force){
+  if(!STREETS.on||STREETS.loading)return;
+  const bb=streetBBoxLL();
+  if(!bb)return;
+  if(bb.bad){STREETS.err='coordinates are not Ramsey County survey feet — no GIS street names for this drawing';hud('🏷 '+STREETS.err);updateStreetUI();return;}
+  const key=[bb.s,bb.w,bb.n,bb.e].map(v=>v.toFixed(4)).join(',');
+  if(!force&&key===STREETS.key&&STREETS.list.length)return;
+  STREETS.loading=true;STREETS.err=null;updateStreetUI();
+  const q=`[out:json][timeout:25];way["highway"]["name"](${bb.s},${bb.w},${bb.n},${bb.e});out tags geom;`;
+  let data=null,lastErr='';
+  for(const url of OVERPASS){
+    try{const r=await fetch(url,{method:'POST',body:'data='+encodeURIComponent(q),headers:{'Content-Type':'application/x-www-form-urlencoded'}});
+      if(!r.ok){lastErr=`HTTP ${r.status}`;continue;}data=await r.json();STREETS.src=new URL(url).host;break;}
+    catch(e){lastErr=e.message||'network error';}
+  }
+  STREETS.loading=false;
+  if(!data){STREETS.err=`couldn't reach the GIS street service (${lastErr})`;hud('🏷 '+STREETS.err);updateStreetUI();return;}
+  STREETS.key=key;
+  STREETS.list=(data.elements||[]).filter(el=>el.type==='way'&&el.tags&&el.tags.name&&el.geometry&&el.geometry.length>1)
+    .map(el=>({name:el.tags.name,kind:el.tags.highway,pts:el.geometry.map(g=>{const[E,N]=llToSurvey(g.lat,g.lon);return{E,N};})}));
+  const names=new Set(STREETS.list.map(s=>s.name));
+  hud(`🏷 ${names.size} street name(s) from GIS (OpenStreetMap via ${STREETS.src})`);
+  updateStreetUI();draw();
+}
+let streetFetchTimer=null;
+function scheduleStreetFetch(){clearTimeout(streetFetchTimer);streetFetchTimer=setTimeout(()=>fetchStreetNames(false),300);}
+function updateStreetUI(){const b=$('streetBtn');if(!b)return;b.classList.toggle('on',STREETS.on);
+  b.title=STREETS.loading?'loading street names from GIS…':STREETS.err?('🏷 '+STREETS.err):STREETS.on?`street names ON (${new Set(STREETS.list.map(s=>s.name)).size} from GIS) — click to hide · Shift-click to also show GIS centerlines`:'show GIS street names';
+  b.textContent=STREETS.loading?'🏷 Streets…':'🏷 Streets';}
+// elevation to drape a label on in 3D: the surface there, else the middle of the data's own Z range
+function streetZ(E,N,fallback){const z=typeof surfaceElevAtPoint==='function'?surfaceElevAtPoint(E,N):null;return z??fallback;}
+function drawStreetNames(proj,is3d){
+  if(!STREETS.on||!STREETS.list.length)return;
+  const w=cv.width/devicePixelRatio,h=cv.height/devicePixelRatio,b=bounds(),zf=b.minZ<=b.maxZ?(b.minZ+b.maxZ)/2:0;
+  ctx.save();
+  if(STREETS.lines){ctx.strokeStyle='rgba(231,236,247,.35)';ctx.lineWidth=1.2;ctx.setLineDash([10,6]);
+    STREETS.list.forEach(s=>{ctx.beginPath();s.pts.forEach((p,i)=>{const q=proj(p.E,p.N,is3d?streetZ(p.E,p.N,zf):0);i?ctx.lineTo(q[0],q[1]):ctx.moveTo(q[0],q[1]);});ctx.stroke();});ctx.setLineDash([]);}
+  const placed=[],SPACING=420,fs=Math.round(Math.max(13,Math.min(22,11+ (is3d?orbit.s:view.s)*2)));
+  ctx.font=`800 ${fs}px ui-sans-serif,system-ui,Segoe UI,Arial,sans-serif`;ctx.textAlign='center';ctx.textBaseline='middle';
+  STREETS.list.forEach(s=>{
+    const txt=s.name.toUpperCase(),tw=ctx.measureText(txt).width+16;
+    const sp=s.pts.map(p=>proj(p.E,p.N,is3d?streetZ(p.E,p.N,zf):0));
+    let run=SPACING/2;                                         // walk along the street in SCREEN space, a label every ~SPACING px
+    for(let i=0;i<sp.length-1;i++){
+      const a=sp[i],c=sp[i+1],L=Math.hypot(c[0]-a[0],c[1]-a[1]);if(L<1e-6)continue;
+      while(run<=L){
+        const t=run/L,x=a[0]+(c[0]-a[0])*t,y=a[1]+(c[1]-a[1])*t;run+=SPACING;
+        if(x<-50||y<-50||x>w+50||y>h+50||L<tw*0.6)continue;     // off screen, or this piece is too short to carry the name
+        if(placed.some(q=>q.name===s.name?Math.hypot(q.x-x,q.y-y)<SPACING*0.8:Math.hypot(q.x-x,q.y-y)<tw*0.5))continue;
+        let ang=Math.atan2(c[1]-a[1],c[0]-a[0]);if(ang>Math.PI/2)ang-=Math.PI;if(ang<-Math.PI/2)ang+=Math.PI;   // never upside-down
+        placed.push({x,y,name:s.name});
+        ctx.save();ctx.translate(x,y);ctx.rotate(ang);
+        ctx.lineJoin='round';ctx.lineWidth=5;ctx.strokeStyle='rgba(11,15,26,.9)';ctx.strokeText(txt,0,0);
+        ctx.fillStyle='#ffffff';ctx.fillText(txt,0,0);ctx.restore();
+      }
+      run-=L;
+    }
+  });
+  ctx.restore();ctx.textAlign='start';ctx.textBaseline='alphabetic';
+}
 
 /* ---------- 3D projection (ported from FBK-Checker) ---------- */
 // Returns [sx,sy,toward] — `toward` grows toward the viewer. Orthographic by default. In
@@ -1019,6 +1099,7 @@ function draw2D(){
   });
   ctx.globalAlpha=1;
   drawSlopeMeasurements((E,N)=>W2S(E,N));
+  drawStreetNames((E,N)=>W2S(E,N),false);
   drawMapError();
   drawSnapMarker();
   drawRainBrush();
@@ -1075,6 +1156,7 @@ function draw3D(){
   });
   ctx.globalAlpha=1;
   drawSlopeMeasurements((E,N,Z)=>P3(E,N,Z));
+  drawStreetNames((E,N,Z)=>P3(E,N,Z),true);
   drawPivotMarkers();
   drawViewCube();
 }
@@ -3436,7 +3518,7 @@ function importDXF(text){
     k++;   // TEXT/MTEXT/DIMENSION/INSERT/etc. — not drawn (out of scope for this pass), never counted as an error
   }
   if(!nEnt){hud('no recognized entities found (LINE / LWPOLYLINE / POLYLINE / POINT / CIRCLE / 3DFACE)');return;}
-  renderLayerPanel();updateJobPill();
+  renderLayerPanel();updateJobPill();scheduleStreetFetch();
   $('fitBtn').disabled=false;$('elevBtn').disabled=SURFACES.length===0;$('waterBtn').disabled=SURFACES.length===0;$('waterDumpBtn').disabled=SURFACES.length===0;$('surfaceDisplayBtn').disabled=SURFACES.length===0;$('elevSpotsBtn').disabled=SURFACES.length===0;$('slopeBtn').disabled=SURFACES.length===0;$('rainPaintToolBtn').disabled=SURFACES.length===0;rainTriCache=null;pipeGraphCache=null;profEGCache.clear();if(PROF.surfaces)SURFACES.forEach(sf=>PROF.surfaces.add(sf.name));renderSlopeSurfSel();
   $('orbitBtn').disabled=false;$('snapBtn').disabled=false;
   if(hadNothing)fit();else draw();
@@ -3529,7 +3611,7 @@ function importLandXML(text){
   });
   const{nAlign,nCurve,nProfile}=importAlignments(doc);
   if(!nSurf&&!nPts&&!nNet&&!nAlign){hud('no <Surface> (TIN), <CgPoint>, <PipeNetwork>, or <Alignment> data found in this file');return;}
-  renderLayerPanel();updateJobPill();
+  renderLayerPanel();updateJobPill();scheduleStreetFetch();
   $('fitBtn').disabled=false;$('elevBtn').disabled=SURFACES.length===0;$('waterBtn').disabled=SURFACES.length===0;$('waterDumpBtn').disabled=SURFACES.length===0;$('surfaceDisplayBtn').disabled=SURFACES.length===0;$('elevSpotsBtn').disabled=SURFACES.length===0;$('slopeBtn').disabled=SURFACES.length===0;$('rainPaintToolBtn').disabled=SURFACES.length===0;rainTriCache=null;pipeGraphCache=null;profEGCache.clear();if(PROF.surfaces)SURFACES.forEach(sf=>PROF.surfaces.add(sf.name));renderSlopeSurfSel();
   $('orbitBtn').disabled=false;$('snapBtn').disabled=false;
   $('geomLabelsBtn').disabled=ALIGNMENTS.length===0;$('cutSheetBtn').disabled=ALIGNMENTS.length===0;
@@ -4231,6 +4313,13 @@ function resetPanels(){
  ['view3dBox','⟲ 3D View'],['rainBox','🌧 Rain & Drainage'],['snapBox','🧲 Snap'],['legend','Legend',{collapsed:true}]]
   .forEach(([id,title,opt])=>makeFloating($(id),title||'',opt));
 $('resetPanelsBtn').onclick=resetPanels;
+$('streetBtn').onclick=e=>{
+  if(e.shiftKey){STREETS.lines=!STREETS.lines;if(!STREETS.on)STREETS.on=true;hud(STREETS.lines?'🏷 GIS street centerlines shown':'🏷 GIS street centerlines hidden');}
+  else STREETS.on=!STREETS.on;
+  try{localStorage.setItem('cstp.streets',STREETS.on?'on':'off');}catch(_){}
+  updateStreetUI();if(STREETS.on)fetchStreetNames(false);draw();};
+try{if(localStorage.getItem('cstp.streets')==='off')STREETS.on=false;}catch(_){}
+updateStreetUI();
 try{setDeutan(localStorage.getItem('cstp.cvd')!=='off',false);}catch(_){setDeutan(true,false);}
 // ↥ Import ▾ menu
 $('importMenuBtn').onclick=e=>{
@@ -4242,7 +4331,7 @@ document.addEventListener('pointerdown',e=>{if(!e.target.closest('#importMenu,#i
 
 
 /* ---------- version badge — CHANGED ON EVERY PUSH (new animal + name + build+1; see CLAUDE.md), mirroring FBK-Checker's own fruit badge ---------- */
-const VERSION={animal:'🦥',name:'SLOTH',build:36};
+const VERSION={animal:'🐿️',name:'SQUIRREL',build:37};
 function rotateAnimal(){const b=$('animalBadge');b.style.transform='rotate(360deg)';setTimeout(()=>{b.style.transform='rotate(0deg)';},200);}
 function showVersion(){const b=$('animalBadge');b.textContent=`${VERSION.animal} ${VERSION.name} · b${VERSION.build}`;
   b.title=`Build ${VERSION.build} · ${VERSION.name} — if this matches what Claude pushed, you're on the latest (no cache)`;}

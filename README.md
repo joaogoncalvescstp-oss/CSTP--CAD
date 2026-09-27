@@ -496,6 +496,16 @@ adapted to this viewer's DXF/TIN/pipe-network data model:
     shadows** ray-marched over a height grid of the visible TINs. Lighting
     and shadows use the current vertical exaggeration. Triangles are
     flat-shaded and painter-sorted back to front in 3D.
+- **🏷 Streets** (View group, on by default, remembered): whenever anything
+  is loaded, the drawing's extent (+ margin) is converted from Ramsey County
+  survey feet to lat/lon (the same projection 🗺 Map uses). Every named road
+  in that area is then pulled from GIS: OpenStreetMap's public Overpass
+  API, with a second mirror as fallback. Street names draw in big bold
+  capitals along each street, repeated along long ones, never upside-down,
+  with a dark halo so they read over anything. In 2D they follow the plan;
+  in 3D they're draped on the loaded surface. Shift-click 🏷 Streets to also
+  show the GIS street centerlines (dashed). A drawing that isn't in
+  Ramsey County survey feet gets a message instead of a request.
 - **🗺 Map** overlays aerial imagery, tiled from Ramsey County MN's own
   ArcGIS ImageServer (falls back to Esri World Imagery, then USGS NAIP) over
   a calibrated Lambert-Conformal-Conic ↔ lat/lon ↔ Web Mercator transform.
