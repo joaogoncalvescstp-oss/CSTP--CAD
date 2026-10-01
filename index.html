@@ -86,7 +86,7 @@ details.help[open]>summary{margin-bottom:4px}
 <body>
 <div class="app">
 <div class="menu" id="importMenu">
-  <label class="btn file menuitem" title="Import a DXF drawing — LINE, LWPOLYLINE, POLYLINE, POINT, CIRCLE, 3DFACE entities each become part of their own DXF layer, shown/hidden/locked from the Layers panel.">↥ Import DXF<input type="file" id="dxfInput" accept=".dxf"></label>
+  <label class="btn file menuitem" title="Import a DXF drawing — LINE, ARC, CIRCLE, ELLIPSE, SPLINE, (LW)POLYLINE with arc bulges, POINT, 3DFACE, TEXT / MTEXT, HATCH and block INSERTs each become part of their own DXF layer, shown/hidden/locked from the Layers panel.">↥ Import DXF<input type="file" id="dxfInput" accept=".dxf"></label>
   <label class="btn file menuitem" title="Import LandXML — a TIN surface (Pnts/Faces), CgPoints (COGO/survey points), Civil3D pipe networks (Structs/Pipes: manholes, catch basins, storm/sanitary pipes), and horizontal Alignments (CoordGeom Line/Curve/Spiral) are all read from the same file, each landing on its own toggleable layer. Use ⛰ Elevation to read a TIN's Z, or 📍 Label Points to label an alignment's PC/PT/MID.">↥ Import LandXML (TIN / Pipes / Alignments)<input type="file" id="landxmlInput" accept=".xml,.landxml"></label>
   <label class="btn file menuitem" title="DWG is Autodesk's proprietary binary format — this viewer has no bundled DWG parser and can't read it directly. Selecting a .dwg here just explains that and tells you how to get the same data in another way.">↥ Import DWG<input type="file" id="dwgInput" accept=".dwg"></label>
 </div>
@@ -821,7 +821,7 @@ function pickOrbitPivot(sx,sy){
   let best=null,bd=PIVOT_SNAP_PX;
   const tryV=(p,kind)=>{if(!isFinite(p.E)||!isFinite(p.N))return;const z=isFinite(p.Z)?p.Z:0,q=pr(p.E,p.N,z),d=Math.hypot(q[0]-sx,q[1]-sy);
     if(d<bd){bd=d;best={E:p.E,N:p.N,Z:z,kind};}};
-  ENTITIES.forEach(e=>{if(e.type==='point')return;const ly=LAYERS[e.layer];if(ly&&!ly.visible)return;e.pts.forEach(p=>tryV(p,e.type==='circle'?'circle center':'DXF vertex'));});
+  ENTITIES.forEach(e=>{if(e.type==='point'||e.type==='text'||e.type==='hatch')return;const ly=LAYERS[e.layer];if(ly&&!ly.visible)return;e.pts.forEach(p=>{if(!p.t)tryV(p,e.type==='circle'?'circle center':'DXF vertex');});});
   SURFACES.forEach(s=>{const ly=LAYERS[s.layer];if(ly&&!ly.visible)return;s.tris.forEach(tri=>tri.forEach(p=>tryV(p,'TIN vertex')));});
   return best||surfaceHit3D(sx,sy,pr);
 }
@@ -1071,6 +1071,8 @@ function draw2D(){
     const ly=LAYERS[e.layer];if(ly&&!ly.visible)return;
     ctx.strokeStyle=ly?ly.color:'#7fd4ff';ctx.fillStyle=ctx.strokeStyle;
     ctx.globalAlpha=ly&&ly.locked?0.5:1;ctx.lineWidth=1.2;
+    if(e.type==='text'){drawDxfText(e,(E,N)=>W2S(E,N));return;}
+    if(e.type==='hatch'){drawDxfHatch(e,(E,N)=>W2S(E,N),ly&&ly.locked);return;}
     if(e.type==='point'){const[x,y]=W2S(e.pts[0].E,e.pts[0].N);
       ctx.beginPath();ctx.moveTo(x-4,y);ctx.lineTo(x+4,y);ctx.moveTo(x,y-4);ctx.lineTo(x,y+4);ctx.stroke();
     }else if(e.type==='circle'){const c=e.pts[0];const[cx,cy]=W2S(c.E,c.N);
@@ -1112,6 +1114,7 @@ function draw3D(){
   const w=cv.width/devicePixelRatio,h=cv.height/devicePixelRatio;
   ctx.clearRect(0,0,w,h);
   labelOccupied=[];
+  const P3x=makeProj3();                                     // one projector for the many DXF text / hatch points
   drawShadedSurfaces((E,N,Z)=>P3(E,N,Z),true);
   drawSlopeShading((E,N,Z)=>P3(E,N,Z));
   if(SURFACE_DISPLAY.wireframe)SURFACES.forEach(s=>{
@@ -1128,6 +1131,8 @@ function draw3D(){
     const ly=LAYERS[e.layer];if(ly&&!ly.visible)return;
     ctx.strokeStyle=ly?ly.color:'#7fd4ff';ctx.fillStyle=ctx.strokeStyle;
     ctx.globalAlpha=ly&&ly.locked?0.5:1;ctx.lineWidth=1.2;
+    if(e.type==='text'){drawDxfText(e,P3x);return;}
+    if(e.type==='hatch'){drawDxfHatch(e,P3x,ly&&ly.locked);return;}
     if(e.type==='point'){const s3=P3(e.pts[0].E,e.pts[0].N,e.pts[0].Z);
       ctx.beginPath();ctx.moveTo(s3[0]-4,s3[1]);ctx.lineTo(s3[0]+4,s3[1]);ctx.moveTo(s3[0],s3[1]-4);ctx.lineTo(s3[0],s3[1]+4);ctx.stroke();
     }else if(e.type==='circle'){const c=e.pts[0],ST=48;ctx.beginPath();
@@ -1692,8 +1697,14 @@ function collectKeyPoints(target,extraStations){
       if(e.type==='line'&&e.pts.length===2){
         const[a,b]=e.pts;pts.push({type:'MID',E:(a.E+b.E)/2,N:(a.N+b.N)/2,Z:((a.Z||0)+(b.Z||0))/2});
       }else if(e.type==='poly'){
-        for(let i=0;i<e.pts.length-1;i++){const a=e.pts[i],b=e.pts[i+1];
-          pts.push({type:'MID',E:(a.E+b.E)/2,N:(a.N+b.N)/2,Z:((a.Z||0)+(b.Z||0))/2});}
+        // one MID per real segment: a tessellated DXF arc (interior points flagged t) gets its arc midpoint
+        let run=[e.pts[0]];
+        const flush=()=>{if(run.length<2)return;let L=0;for(let i=1;i<run.length;i++)L+=Math.hypot(run[i].E-run[i-1].E,run[i].N-run[i-1].N);
+          let acc=0,half=L/2;for(let i=1;i<run.length;i++){const a=run[i-1],b=run[i],d=Math.hypot(b.E-a.E,b.N-a.N);
+            if(acc+d>=half||i===run.length-1){const f=d?Math.min(1,(half-acc)/d):0;
+              pts.push({type:'MID',E:a.E+(b.E-a.E)*f,N:a.N+(b.N-a.N)*f,Z:(a.Z||0)+((b.Z||0)-(a.Z||0))*f});return;}acc+=d;}};
+        for(let i=1;i<e.pts.length;i++){run.push(e.pts[i]);if(!e.pts[i].t){flush();run=[e.pts[i]];}}
+        flush();
       }
     });
     assignGeomElevations(pts,null);
@@ -2576,7 +2587,7 @@ function collectSegments(){const segs=[];
     if(e.type!=='line'&&e.type!=='poly')return;
     const pts=e.pts;
     for(let k=0;k<pts.length-1;k++){const A=pts[k],B=pts[k+1],sa=W2S(A.E,A.N),sb=W2S(B.E,B.N);
-      segs.push({ax:sa[0],ay:sa[1],bx:sb[0],by:sb[1],aE:A.E,aN:A.N,aZ:A.Z,bE:B.E,bN:B.N,bZ:B.Z,label:e.layer,src:'ent|'+ENTITIES.indexOf(e)});}
+      segs.push({ax:sa[0],ay:sa[1],bx:sb[0],by:sb[1],aE:A.E,aN:A.N,aZ:A.Z,bE:B.E,bN:B.N,bZ:B.Z,label:e.layer,src:'ent|'+ENTITIES.indexOf(e),arc:!!(A.t||B.t)});}
     if(e.closed&&pts.length>2){const A=pts[pts.length-1],B=pts[0],sa=W2S(A.E,A.N),sb=W2S(B.E,B.N);
       segs.push({ax:sa[0],ay:sa[1],bx:sb[0],by:sb[1],aE:A.E,aN:A.N,aZ:A.Z,bE:B.E,bN:B.N,bZ:B.Z,label:e.layer,src:'ent|'+ENTITIES.indexOf(e)});}
   });
@@ -2611,8 +2622,8 @@ function snapPoint(sx,sy){
     SURFACES.forEach(s=>{const ly=LAYERS[s.layer];if(ly&&!ly.visible)return;
       s.tris.forEach(tri=>tri.forEach(p=>{const[x,y]=W2S(p.E,p.N);const d=Math.hypot(x-sx,y-sy);
         if(d<bd){bd=d;best={E:p.E,N:p.N,Z:p.Z,sx:x,sy:y,type:'endpoint',label:'TIN vertex · '+s.layer,tin:true};}}));});
-    ENTITIES.forEach(e=>{const ly=LAYERS[e.layer];if(ly&&!ly.visible||e.type==='circle')return;   // a circle's own center is handled below (type:'center'), not as a plain endpoint
-      e.pts.forEach(p=>{const[x,y]=W2S(p.E,p.N);const d=Math.hypot(x-sx,y-sy);
+    ENTITIES.forEach(e=>{const ly=LAYERS[e.layer];if(ly&&!ly.visible||e.type==='circle'||e.type==='text'||e.type==='hatch')return;   // a circle's own center is handled below (type:'center'), not as a plain endpoint
+      e.pts.forEach(p=>{if(p.t)return;const[x,y]=W2S(p.E,p.N);const d=Math.hypot(x-sx,y-sy);
         if(d<bd){bd=d;best={E:p.E,N:p.N,Z:p.Z,sx:x,sy:y,type:'endpoint',label:'endpoint · '+e.layer};}});});
     POINTS.forEach(p=>{const[x,y]=W2S(p.E,p.N);const d=Math.hypot(x-sx,y-sy);
       if(d<bd){bd=d;best={E:p.E,N:p.N,Z:p.Z,sx:x,sy:y,type:'endpoint',label:'pt '+p.id};}});
@@ -2644,7 +2655,8 @@ function snapPoint(sx,sy){
   }
   if(snapEnabled.midpoint){
     let bmd=TOL_MID;
-    segs.forEach(s=>{const mx=(s.ax+s.bx)/2,my=(s.ay+s.by)/2,d=Math.hypot(mx-sx,my-sy);
+    segs.forEach(s=>{if(s.arc)return;                       // a chord of a tessellated DXF curve has no meaningful midpoint
+      const mx=(s.ax+s.bx)/2,my=(s.ay+s.by)/2,d=Math.hypot(mx-sx,my-sy);
       if(d<bmd){bmd=d;best={E:(s.aE+s.bE)/2,N:(s.aN+s.bN)/2,Z:(s.aZ+s.bZ)/2,sx:mx,sy:my,type:'midpoint',label:'midpoint',tin:s.src.startsWith('tin')};}});
     if(best)return best;
   }
@@ -3443,86 +3455,348 @@ function waterTick(ts){
   waterAnimHandle=requestAnimationFrame(waterTick);
 }
 
-/* ---------- DXF import ---------- */
+/* ---------- DXF import ----------
+   Curves are kept as curves: ARC / ELLIPSE / SPLINE entities and polyline bulges (code 42)
+   are tessellated into fine polylines (interior points carry t:1, so OSNAP endpoint /
+   pivot snap / Label Points only see the real vertices). TEXT / MTEXT / ATTRIB become 'text'
+   entities drawn at true world height; HATCH (boundary + pattern lines) and SOLID become
+   'hatch' entities. INSERT / DIMENSION expand their BLOCKS definitions (nested, scaled,
+   rotated, arrayed). Entity OCS (extrusion 210/220/230, e.g. mirrored arcs) is honored. */
+const DXF_ARC_STEP=Math.PI/180;                              // 1° per tessellated chord (R=1000 → ~0.04 chord error)
+function dxfArcPts(cx,cy,r,a0,sweep,z){
+  const n=Math.max(4,Math.min(720,Math.ceil(Math.abs(sweep)/DXF_ARC_STEP))),out=[];
+  for(let i=0;i<=n;i++){const a=a0+sweep*i/n;out.push({E:cx+r*Math.cos(a),N:cy+r*Math.sin(a),Z:z,t:(i>0&&i<n)?1:0});}
+  return out;
+}
+// one polyline segment p→q with bulge b (tan of ¼ the included angle, + = CCW): the points after p, up to and incl. q
+function dxfBulgeSeg(p,q,b){
+  if(!b||Math.abs(b)<1e-9)return [{E:q.E,N:q.N,Z:q.Z}];
+  const dx=q.E-p.E,dy=q.N-p.N,d=Math.hypot(dx,dy);if(d<1e-12)return [{E:q.E,N:q.N,Z:q.Z}];
+  const off=(d/2)*(1-b*b)/(2*b),cx=(p.E+q.E)/2-dy/d*off,cy=(p.N+q.N)/2+dx/d*off;
+  const r=Math.hypot(p.E-cx,p.N-cy),a0=Math.atan2(p.N-cy,p.E-cx),sweep=4*Math.atan(b);
+  const arc=dxfArcPts(cx,cy,r,a0,sweep,0);arc.shift();
+  arc.forEach((a,i)=>{a.Z=p.Z+(q.Z-p.Z)*(i+1)/arc.length;});
+  arc[arc.length-1].E=q.E;arc[arc.length-1].N=q.N;
+  return arc;
+}
+function dxfBulgePoly(verts,closed){                       // verts: [{E,N,Z,b}]
+  if(!verts.length)return [];
+  const out=[{E:verts[0].E,N:verts[0].N,Z:verts[0].Z}],n=verts.length;
+  for(let i=0;i<n-1+(closed?1:0);i++){const p=verts[i],q=verts[(i+1)%n];out.push(...dxfBulgeSeg(p,q,p.b||0));}
+  if(closed&&out.length>1){const a=out[0],z=out[out.length-1];if(Math.hypot(a.E-z.E,a.N-z.N)<1e-9)out.pop();}
+  return out;
+}
+function dxfEllipsePts(cx,cy,cz,mx,my,ratio,p0,p1){
+  let sw=p1-p0;while(sw<=0)sw+=Math.PI*2;if(sw>Math.PI*2+1e-9)sw=Math.PI*2;
+  const n=Math.max(8,Math.min(720,Math.ceil(sw/DXF_ARC_STEP))),bx=-my*ratio,by=mx*ratio,out=[];
+  for(let i=0;i<=n;i++){const a=p0+sw*i/n,c=Math.cos(a),s=Math.sin(a);
+    out.push({E:cx+mx*c+bx*s,N:cy+my*c+by*s,Z:cz,t:(i>0&&i<n)?1:0});}
+  return out;
+}
+// NURBS curve (de Boor). ctrl:[{E,N,Z}], knots[], weights[]|null
+function dxfSplinePts(deg,knots,ctrl,weights,fit){
+  const nc=ctrl.length;
+  if(nc<2||knots.length!==nc+deg+1||deg<1){                 // no usable control net → fall back to fit points / control polygon
+    const src=fit&&fit.length>=2?fit:ctrl;return src.map((p,i)=>({E:p.E,N:p.N,Z:p.Z||0,t:(i>0&&i<src.length-1)?1:0}));
+  }
+  const w=weights&&weights.length===nc?weights:ctrl.map(()=>1);
+  const u0=knots[deg],u1=knots[nc],N=Math.max(16,Math.min(2000,nc*12)),out=[];
+  for(let s=0;s<=N;s++){
+    let u=u0+(u1-u0)*s/N;if(s===N)u=u1-1e-10*(u1-u0||1);
+    let k=deg;while(k<nc-1&&u>=knots[k+1])k++;
+    const d=[];for(let j=0;j<=deg;j++){const P=ctrl[k-deg+j],ww=w[k-deg+j];d.push([P.E*ww,P.N*ww,(P.Z||0)*ww,ww]);}
+    for(let r=1;r<=deg;r++)for(let j=deg;j>=r;j--){const i=k-deg+j,den=knots[i+deg-r+1]-knots[i],a=den?(u-knots[i])/den:0;
+      for(let c=0;c<4;c++)d[j][c]=(1-a)*d[j-1][c]+a*d[j][c];}
+    const q=d[deg];out.push({E:q[0]/q[3],N:q[1]/q[3],Z:q[2]/q[3],t:(s>0&&s<N)?1:0});
+  }
+  return out;
+}
+// Arbitrary Axis Algorithm: OCS (x,y,z) → WCS for an entity with extrusion (nx,ny,nz)
+function dxfOCS(items){
+  const g=c=>{const e=items.find(p=>p[0]===c);return e?+e[1]:undefined;};
+  let nx=g(210)||0,ny=g(220)||0,nz=g(230);if(nz===undefined)nz=1;
+  const L=Math.hypot(nx,ny,nz)||1;nx/=L;ny/=L;nz/=L;
+  if(Math.abs(nx)<1e-12&&Math.abs(ny)<1e-12&&nz>0)return null;   // plain WCS
+  let ax,ay,az;
+  if(Math.abs(nx)<1/64&&Math.abs(ny)<1/64){ax=nz;ay=0;az=-nx;}       // Wy × N
+  else{ax=-ny;ay=nx;az=0;}                                          // Wz × N
+  const la=Math.hypot(ax,ay,az);ax/=la;ay/=la;az/=la;
+  const bx=ny*az-nz*ay,by=nz*ax-nx*az,bz=nx*ay-ny*ax;               // N × Ax
+  return (x,y,z)=>({E:x*ax+y*bx+z*nx,N:x*ay+y*by+z*ny,Z:x*az+y*bz+z*nz});
+}
+// MTEXT inline formatting → plain text with \n line breaks
+function dxfPlainText(s,mtext){
+  s=String(s).replace(/%%[dD]/g,'°').replace(/%%[cC]/g,'Ø').replace(/%%[pP]/g,'±').replace(/%%[uUoO]/g,'').replace(/%%%/g,'%');
+  s=s.replace(/\\U\+([0-9A-Fa-f]{4})/g,(_,h)=>String.fromCharCode(parseInt(h,16)));
+  if(!mtext)return s;
+  return s.replace(/\\P/g,'\n').replace(/\\~/g,' ')
+    .replace(/\\S([^;]*?)[\^\/#]([^;]*);/g,'$1/$2')
+    .replace(/\\[fFHWQTACcp][^;\\]*;/g,'').replace(/\\[LlOoKkNX]/g,'')
+    .replace(/\\([\\{}])/g,'\u0001$1').replace(/[{}]/g,'').replace(/\u0001(.)/g,'$1').trim();
+}
+function parseDXFBlocks(blocks){
+  // blocks: [{type,items}] in file order → raw entity list (POLYLINE/VERTEX/SEQEND and INSERT/ATTRIB folded)
+  const out=[];let k=0;
+  while(k<blocks.length){const b=blocks[k];
+    if(b.type==='POLYLINE'){const verts=[];let k2=k+1;
+      while(k2<blocks.length&&blocks[k2].type==='VERTEX'){verts.push(blocks[k2]);k2++;}
+      if(k2<blocks.length&&blocks[k2].type==='SEQEND')k2++;
+      out.push({type:'POLYLINE',items:b.items,verts});k=k2;continue;}
+    if(b.type==='INSERT'){const attribs=[];let k2=k+1;
+      while(k2<blocks.length&&blocks[k2].type==='ATTRIB'){attribs.push(blocks[k2]);k2++;}
+      if(k2<blocks.length&&blocks[k2].type==='SEQEND'&&attribs.length)k2++;
+      out.push({type:'INSERT',items:b.items,attribs});k=k2;continue;}
+    out.push(b);k++;}
+  return out;
+}
 function importDXF(text){
   const hadNothing=!ENTITIES.length&&!SURFACES.length&&!POINTS.length;
-  const raw=text.split(/\r?\n/).map(l=>l.trim());
+  const raw=text.split(/\r?\n/);
   const pairs=[];
-  for(let i=0;i+1<raw.length;i+=2)pairs.push([parseInt(raw[i],10),raw[i+1]]);
-  let start=-1;
-  for(let i=0;i<pairs.length;i++){if(pairs[i][0]===2&&pairs[i][1]==='ENTITIES'){start=i+1;break;}}
-  if(start<0){hud('no ENTITIES section found in this DXF file');return;}
-  let end=pairs.length;
-  for(let i=start;i<pairs.length;i++){if(pairs[i][0]===0&&pairs[i][1]==='ENDSEC'){end=i;break;}}
-  // split the ENTITIES section into per-entity blocks at every (0,<TYPE>) group code
-  const blocks=[];let cur=null;
-  pairs.slice(start,end).forEach(([code,val])=>{
-    if(code===0){if(cur)blocks.push(cur);cur={type:val,items:[]};}
-    else if(cur)cur.items.push([code,val]);
-  });
-  if(cur)blocks.push(cur);
-  const get=(items,code)=>{const e=items.find(p=>p[0]===code);return e?e[1]:undefined;};
-  let nEnt=0,k=0;
-  while(k<blocks.length){
-    const b=blocks[k],layer=get(b.items,8)||'0';
-    if(b.type==='LINE'){
-      ensureLayer(layer);
-      ENTITIES.push({type:'line',layer,pts:[
-        {E:+get(b.items,10),N:+get(b.items,20),Z:+(get(b.items,30)||0)},
-        {E:+get(b.items,11),N:+get(b.items,21),Z:+(get(b.items,31)||0)}]});
-      nEnt++;k++;continue;
-    }
-    if(b.type==='POINT'){
-      ensureLayer(layer);
-      ENTITIES.push({type:'point',layer,pts:[{E:+get(b.items,10),N:+get(b.items,20),Z:+(get(b.items,30)||0)}]});
-      nEnt++;k++;continue;
-    }
-    if(b.type==='CIRCLE'){
-      ensureLayer(layer);
-      ENTITIES.push({type:'circle',layer,pts:[{E:+get(b.items,10),N:+get(b.items,20),Z:+(get(b.items,30)||0)}],r:+get(b.items,40)});
-      nEnt++;k++;continue;
-    }
-    if(b.type==='3DFACE'){
-      ensureLayer(layer);
-      const c1={E:+get(b.items,10),N:+get(b.items,20),Z:+(get(b.items,30)||0)};
-      const c2={E:+get(b.items,11),N:+get(b.items,21),Z:+(get(b.items,31)||0)};
-      const c3={E:+get(b.items,12),N:+get(b.items,22),Z:+(get(b.items,32)||0)};
-      const c4E=get(b.items,13),c4N=get(b.items,23),c4Z=get(b.items,33);
-      const pts=[c1,c2,c3];
-      if(c4E!==undefined&&(+c4E!==c3.E||+c4N!==c3.N))pts.push({E:+c4E,N:+c4N,Z:+(c4Z||0)});
-      ENTITIES.push({type:'poly',layer,pts,closed:true});
-      nEnt++;k++;continue;
-    }
-    if(b.type==='LWPOLYLINE'){
-      ensureLayer(layer);
-      const z=+(get(b.items,38)||0);const pts=[];let vert=null;
-      b.items.forEach(([code,val])=>{
-        if(code===10){vert={E:+val,N:0,Z:z};pts.push(vert);}
-        else if(code===20&&vert)vert.N=+val;
-      });
-      const flags=parseInt(get(b.items,70)||'0',10);
-      if(pts.length>=2){ENTITIES.push({type:'poly',layer,pts,closed:!!(flags&1)});nEnt++;}
-      k++;continue;
-    }
-    if(b.type==='POLYLINE'){
-      ensureLayer(layer);
-      const flags=parseInt(get(b.items,70)||'0',10);
-      const pts=[];let k2=k+1;
-      while(k2<blocks.length&&blocks[k2].type==='VERTEX'){
-        const vb=blocks[k2];pts.push({E:+get(vb.items,10),N:+get(vb.items,20),Z:+(get(vb.items,30)||0)});k2++;
-      }
-      if(k2<blocks.length&&blocks[k2].type==='SEQEND')k2++;
-      if(pts.length>=2){ENTITIES.push({type:'poly',layer,pts,closed:!!(flags&1)});nEnt++;}
-      k=k2;continue;
-    }
-    k++;   // TEXT/MTEXT/DIMENSION/INSERT/etc. — not drawn (out of scope for this pass), never counted as an error
+  for(let i=0;i+1<raw.length;i+=2)pairs.push([parseInt(raw[i].trim(),10),raw[i+1].replace(/^\s+|\s+$/g,'')]);
+  const sections={};
+  for(let i=0;i<pairs.length;i++){
+    if(pairs[i][0]===0&&pairs[i][1]==='SECTION'&&pairs[i+1]&&pairs[i+1][0]===2){
+      const name=pairs[i+1][1];let j=i+2;while(j<pairs.length&&!(pairs[j][0]===0&&pairs[j][1]==='ENDSEC'))j++;
+      sections[name]=pairs.slice(i+2,j);i=j;}
   }
-  if(!nEnt){hud('no recognized entities found (LINE / LWPOLYLINE / POLYLINE / POINT / CIRCLE / 3DFACE)');return;}
+  if(!sections.ENTITIES){hud('no ENTITIES section found in this DXF file');return;}
+  const split=list=>{const bl=[];let cur=null;
+    list.forEach(([code,val])=>{if(code===0){if(cur)bl.push(cur);cur={type:val,items:[]};}else if(cur)cur.items.push([code,val]);});
+    if(cur)bl.push(cur);return bl;};
+  const get=(items,code)=>{const e=items.find(p=>p[0]===code);return e?e[1]:undefined;};
+  const num=(items,code,d=0)=>{const v=get(items,code);return v===undefined||!isFinite(+v)?d:+v;};
+  // BLOCKS section → name → {base, ents}
+  const BLK={};
+  if(sections.BLOCKS){let curB=null;
+    split(sections.BLOCKS).forEach(b=>{
+      if(b.type==='BLOCK'){curB={base:{E:num(b.items,10),N:num(b.items,20),Z:num(b.items,30)},raw:[]};BLK[get(b.items,2)||'']=curB;}
+      else if(b.type==='ENDBLK')curB=null;
+      else if(curB)curB.raw.push(b);});
+    Object.values(BLK).forEach(B=>{B.ents=parseDXFBlocks(B.raw);});
+  }
+  // geometry of one raw entity in its own (block-local) coordinates → [{type,...,pts}] (no layer yet)
+  function geom(b){
+    const it=b.items,o=dxfOCS(it),W=(x,y,z)=>o?o(x,y,z):{E:x,N:y,Z:z};
+    const map=pts=>pts.map(p=>{const q=W(p.E,p.N,p.Z||0);if(p.t)q.t=1;return q;});
+    const dirAng=(x,y,ang)=>{if(!o)return ang;const a=W(x,y,0),c=W(x+Math.cos(ang),y+Math.sin(ang),0);return Math.atan2(c.N-a.N,c.E-a.E);};
+    switch(b.type){
+      case 'LINE':return [{type:'line',pts:[{E:num(it,10),N:num(it,20),Z:num(it,30)},{E:num(it,11),N:num(it,21),Z:num(it,31)}]}];
+      case 'POINT':return [{type:'point',pts:[{E:num(it,10),N:num(it,20),Z:num(it,30)}]}];
+      case 'CIRCLE':{const c=W(num(it,10),num(it,20),num(it,30));return [{type:'circle',pts:[c],r:num(it,40)}];}
+      case 'ARC':{const a0=num(it,50)*Math.PI/180;let sw=num(it,51)*Math.PI/180-a0;while(sw<=0)sw+=Math.PI*2;
+        return [{type:'poly',pts:map(dxfArcPts(num(it,10),num(it,20),num(it,40),a0,sw,num(it,30))),closed:false}];}
+      case 'ELLIPSE':{const cx=num(it,10),cy=num(it,20),cz=num(it,30);
+        return [{type:'poly',pts:dxfEllipsePts(cx,cy,cz,num(it,11),num(it,21),num(it,40,1),num(it,41),num(it,42,Math.PI*2)),closed:false}];}
+      case 'SPLINE':{const deg=num(it,71,3),knots=[],ctrl=[],w=[],fit=[];let last=null;
+        it.forEach(([c,v])=>{v=+v;
+          if(c===40)knots.push(v);else if(c===41)w.push(v);
+          else if(c===10){last={E:v,N:0,Z:0};ctrl.push(last);}else if(c===20&&last)last.N=v;else if(c===30&&last)last.Z=v;
+          else if(c===11){last={E:v,N:0,Z:0};fit.push(last);}else if(c===21&&last)last.N=v;else if(c===31&&last)last.Z=v;});
+        const pts=dxfSplinePts(deg,knots,ctrl,w.length?w:null,fit);
+        return pts.length>=2?[{type:'poly',pts,closed:!!(num(it,70)&1)}]:[];}
+      case 'LWPOLYLINE':{const z=num(it,38);const verts=[];let v=null;
+        it.forEach(([c,val])=>{if(c===10){v={E:+val,N:0,Z:z,b:0};verts.push(v);}else if(c===20&&v)v.N=+val;else if(c===42&&v)v.b=+val;});
+        const closed=!!(num(it,70)&1);const pts=map(dxfBulgePoly(verts,closed));
+        return pts.length>=2?[{type:'poly',pts,closed}]:[];}
+      case 'POLYLINE':{const flags=num(it,70);
+        if(flags&64){                                    // polygon / polyface mesh: just draw its vertices' faces as an outline net
+          const vs=b.verts.filter(vb=>num(vb.items,70)&64).map(vb=>({E:num(vb.items,10),N:num(vb.items,20),Z:num(vb.items,30)}));
+          const out=[];b.verts.forEach(vb=>{const f=num(vb.items,70);if(!(f&128)||(f&64))return;
+            const idx=[71,72,73,74].map(c=>Math.abs(num(vb.items,c))).filter(i=>i>0&&i<=vs.length);
+            if(idx.length>=3)out.push({type:'poly',pts:idx.map(i=>({...vs[i-1]})),closed:true});});
+          return out;}
+        const verts=b.verts.filter(vb=>!(num(vb.items,70)&16)).map(vb=>({E:num(vb.items,10),N:num(vb.items,20),Z:(flags&8)?num(vb.items,30):num(it,30),b:num(vb.items,42)}));
+        const closed=!!(flags&1);let pts=dxfBulgePoly(verts,closed);if(!(flags&8))pts=map(pts);
+        return pts.length>=2?[{type:'poly',pts,closed}]:[];}
+      case '3DFACE':{const c=[0,1,2,3].map(i=>({E:num(it,10+i),N:num(it,20+i),Z:num(it,30+i)}));
+        const pts=c.slice(0,3);if(get(it,13)!==undefined&&(c[3].E!==c[2].E||c[3].N!==c[2].N))pts.push(c[3]);
+        return [{type:'poly',pts,closed:true}];}
+      case 'SOLID':case 'TRACE':{const c=[0,1,2,3].map(i=>W(num(it,10+i),num(it,20+i),num(it,30+i)));
+        const loop=[c[0],c[1],c[3],c[2]];if(c[3].E===c[2].E&&c[3].N===c[2].N)loop.pop();
+        return [{type:'hatch',loops:[loop],pts:loop.slice(),solid:true}];}
+      case 'TEXT':case 'ATTRIB':{
+        if(b.type==='ATTRIB'&&(num(it,70)&1))return [];
+        const s=dxfPlainText(get(it,1)||'',false);if(!s.trim())return [];
+        const hj=num(it,72),vj=b.type==='ATTRIB'?num(it,74):num(it,73);
+        const useAlign=(hj||vj)&&hj!==3&&hj!==5&&get(it,11)!==undefined;   // aligned / fit text runs from the first point
+        const x=useAlign?num(it,11):num(it,10),y=useAlign?num(it,21):num(it,20),z=useAlign?num(it,31):num(it,30);
+        const rot=dirAng(x,y,num(it,50)*Math.PI/180);
+        return [{type:'text',pts:[W(x,y,z)],text:s,h:num(it,40,1),rot,ha:!useAlign?'left':hj===1||hj===4?'center':hj===2?'right':'left',
+          va:!useAlign?'alphabetic':hj===4?'middle':vj===1?'bottom':vj===2?'middle':vj===3?'top':'alphabetic'}];}
+      case 'MTEXT':{
+        const body=it.filter(p=>p[0]===3).map(p=>p[1]).join('')+(get(it,1)||'');const s=dxfPlainText(body,true);if(!s.trim())return [];
+        const x=num(it,10),y=num(it,20),z=num(it,30);
+        let rot=num(it,50)*Math.PI/180;
+        if(get(it,11)!==undefined)rot=Math.atan2(num(it,21),num(it,11));      // direction vector is already WCS
+        else rot=dirAng(x,y,rot);
+        const ap=num(it,71,1),col=(ap-1)%3,row=Math.floor((ap-1)/3);
+        return [{type:'text',pts:[W(x,y,z)],text:s,h:num(it,40,1),rot,ls:num(it,44,1),ha:['left','center','right'][col]||'left',va:['top','middle','bottom'][row]||'top',ml:true}];}
+      case 'HATCH':return hatchGeom(it,W);
+    }
+    return null;                                              // unsupported
+  }
+  function hatchGeom(it,W){
+    let i=it.findIndex(p=>p[0]===91);if(i<0)return [];
+    const z=num(it,30),solid=num(it,70)===1;
+    const nPaths=+it[i][1];i++;const loops=[];
+    const at=c=>i<it.length&&it[i][0]===c;
+    const rd=c=>{while(i<it.length&&it[i][0]!==c)i++;return i<it.length?+it[i++][1]:0;};
+    for(let p=0;p<nPaths&&i<it.length;p++){
+      const flag=rd(92);let loop=[];
+      if(flag&2){                                             // polyline path
+        const hasB=rd(72),closed=rd(73),nv=rd(93),verts=[];
+        for(let v=0;v<nv;v++){const E=rd(10),N=rd(20);let b=0;if(hasB&&at(42))b=+it[i++][1];verts.push({E,N,Z:z,b});}
+        loop=dxfBulgePoly(verts,true);void closed;
+      }else{
+        const ne=rd(93);
+        for(let e=0;e<ne&&i<it.length;e++){
+          const et=rd(72);let seg=[];
+          if(et===1){const a={E:rd(10),N:rd(20),Z:z},b2={E:rd(11),N:rd(21),Z:z};seg=[a,b2];}
+          else if(et===2){const cx=rd(10),cy=rd(20),r=rd(40),s=rd(50)*Math.PI/180,en=rd(51)*Math.PI/180,ccw=rd(73);
+            let sw=en-s;while(sw<=0)sw+=Math.PI*2;if(sw>Math.PI*2)sw=Math.PI*2;
+            seg=ccw?dxfArcPts(cx,cy,r,s,sw,z):dxfArcPts(cx,cy,r,-s,-sw,z);}
+          else if(et===3){const cx=rd(10),cy=rd(20),mx=rd(11),my=rd(21),ratio=rd(40),s=rd(50)*Math.PI/180,en=rd(51)*Math.PI/180,ccw=rd(73);
+            seg=ccw?dxfEllipsePts(cx,cy,z,mx,my,ratio,s,en):dxfEllipsePts(cx,cy,z,mx,my,ratio,-en,-s).reverse();   // CW edges store negated angles
+          }
+          else if(et===4){const deg=rd(94),rat=rd(73);rd(74);const nk=rd(95),nc=rd(96),knots=[],ctrl=[],w=[];
+            for(let q=0;q<nk;q++)knots.push(rd(40));
+            for(let q=0;q<nc;q++){ctrl.push({E:rd(10),N:rd(20),Z:z});if(rat&&at(42))w.push(+it[i++][1]);}
+            const fit=[];if(at(97)){const nf=+it[i++][1];for(let q=0;q<nf;q++)fit.push({E:rd(11),N:rd(21),Z:z});
+              while(at(12)||at(22)||at(13)||at(23))i++;}
+            seg=dxfSplinePts(deg,knots,ctrl,w.length?w:null,fit);}
+          if(seg.length){if(loop.length){const L=loop[loop.length-1];if(Math.hypot(L.E-seg[0].E,L.N-seg[0].N)<1e-6)seg=seg.slice(1);}loop.push(...seg);}
+        }
+      }
+      if(at(97)){const ns=+it[i++][1];for(let q=0;q<ns&&at(330);q++)i++;}
+      if(loop.length>=3)loops.push(loop);
+    }
+    if(!loops.length)return [];
+    // pattern definition lines (already scaled/rotated in the entity)
+    const fam=[];
+    if(!solid){let j=it.findIndex((p,ix)=>ix>=i&&p[0]===78);
+      if(j>=0){const nl=+it[j][1];j++;
+        const atj=c=>j<it.length&&it[j][0]===c,rj=c=>{while(j<it.length&&it[j][0]!==c)j++;return j<it.length?+it[j++][1]:0;};
+        for(let l=0;l<nl&&j<it.length;l++){const ang=rj(53)*Math.PI/180,bx=rj(43),by=rj(44),ox=rj(45),oy=rj(46),nd=rj(79),dash=[];
+          for(let d=0;d<nd&&atj(49);d++)dash.push(+it[j++][1]);
+          fam.push({ang,bx,by,ox,oy,dash});}}}
+    let pat=fam.length?hatchPatternLines(loops,fam):null;   // built in OCS, then mapped to WCS like the boundary
+    if(pat)pat=pat.map(sg=>{const a=W(sg[0],sg[1],z),b=W(sg[2],sg[3],z);return [a.E,a.N,b.E,b.N,sg[4]];});
+    const wl=loops.map(L=>L.map(q=>W(q.E,q.N,q.Z)));
+    return [{type:'hatch',loops:wl,pts:[].concat(...wl),solid,pat,pname:get(it,2)||''}];
+  }
+  // nested INSERT expansion: a 2D affine (scale/rotate/translate) applied to every point of the block
+  const xfPt=(T,p)=>{const x=p.E*T.a+p.N*T.c+T.e,y=p.E*T.b+p.N*T.d+T.f;const q={E:x,N:y,Z:(p.Z||0)*T.sz+T.g};if(p.t)q.t=1;return q;};
+  const mul=(A,B)=>({a:A.a*B.a+A.c*B.b,b:A.b*B.a+A.d*B.b,c:A.a*B.c+A.c*B.d,d:A.b*B.c+A.d*B.d,
+    e:A.a*B.e+A.c*B.f+A.e,f:A.b*B.e+A.d*B.f+A.f,sz:A.sz*B.sz,g:A.sz*B.g+A.g});
+  const I={a:1,b:0,c:0,d:1,e:0,f:0,sz:1,g:0};
+  function xfEnt(T,g){
+    if(T===I)return g;
+    const pts=g.pts.map(p=>xfPt(T,p));
+    if(g.type==='circle'){const sx=Math.hypot(T.a,T.b),sy=Math.hypot(T.c,T.d);
+      if(Math.abs(sx-sy)<1e-9*Math.max(sx,1))return {...g,pts,r:g.r*sx};
+      const c=g.pts[0];return {type:'poly',pts:dxfArcPts(c.E,c.N,g.r,0,Math.PI*2,c.Z).map(p=>xfPt(T,p)),closed:true};}
+    if(g.type==='text'){const ux=T.a*Math.cos(g.rot)+T.c*Math.sin(g.rot),uy=T.b*Math.cos(g.rot)+T.d*Math.sin(g.rot);
+      return {...g,pts,rot:Math.atan2(uy,ux),h:g.h*Math.hypot(T.c,T.d)};}
+    if(g.type==='hatch')return {...g,pts,loops:g.loops.map(L=>L.map(p=>xfPt(T,p))),pat:g.pat?g.pat.map(s=>{const a=xfPt(T,{E:s[0],N:s[1]}),b=xfPt(T,{E:s[2],N:s[3]});return [a.E,a.N,b.E,b.N,s[4]?s[4].map(d=>d*Math.hypot(T.a,T.b)):null];}):null};
+    return {...g,pts};
+  }
+  let nEnt=0,nSkip=0;const skipped={};
+  function emit(b,T,layerIn,depth){
+    let layer=get(b.items,8)||'0';if(layer==='0'&&layerIn)layer=layerIn;   // layer-0 block content takes the INSERT's layer
+    if(b.type==='INSERT'||b.type==='DIMENSION'){
+      const B=BLK[get(b.items,2)||''];
+      if(B&&depth<12){
+        let T2=I;
+        if(b.type==='INSERT'){
+          const o=dxfOCS(b.items),ip={E:num(b.items,10),N:num(b.items,20),Z:num(b.items,30)};   // ip in OCS
+          const sx=num(b.items,41,1),sy=num(b.items,42,1),sz=num(b.items,43,1),rot=num(b.items,50)*Math.PI/180;
+          const cr=Math.cos(rot),sr=Math.sin(rot);
+          const cols=Math.max(1,num(b.items,70,1)),rows=Math.max(1,num(b.items,71,1)),cs=num(b.items,44),rs=num(b.items,45);
+          for(let ci=0;ci<cols;ci++)for(let ri=0;ri<rows;ri++){
+            const ox=ci*cs,oy=ri*rs;
+            // p_ocs = ip + R·S·(p - base) + R·(ox,oy), then OCS → WCS
+            const a=cr*sx,bb=sr*sx,c=-sr*sy,d=cr*sy;
+            const e=ip.E+cr*ox-sr*oy-(a*B.base.E+c*B.base.N),f=ip.N+sr*ox+cr*oy-(bb*B.base.E+d*B.base.N);
+            let L={a,b:bb,c,d,e,f,sz,g:ip.Z-sz*B.base.Z};
+            if(o){const A=o(a,bb,0),C=o(c,d,0),P=o(e,f,L.g);L={a:A.E,b:A.N,c:C.E,d:C.N,e:P.E,f:P.N,sz:sz*o(0,0,1).Z,g:P.Z};}
+            const T3=mul(T,L);B.ents.forEach(ch=>emit(ch,T3,layer,depth+1));
+          }
+          (b.attribs||[]).forEach(ab=>emit(ab,T,layerIn,depth));   // ATTRIBs are already in the INSERT's space
+          return;
+        }
+        B.ents.forEach(ch=>emit(ch,T,layer,depth+1));return;
+      }
+      (b.attribs||[]).forEach(ab=>emit(ab,T,layerIn,depth));
+      return;
+    }
+    if(b.type==='ATTDEF')return;
+    let gs;try{gs=geom(b);}catch(err){gs=[];}
+    if(gs===null){skipped[b.type]=(skipped[b.type]||0)+1;nSkip++;return;}
+    gs.forEach(g=>{
+      const ok=g.pts.every(p=>isFinite(p.E)&&isFinite(p.N));if(!ok)return;
+      ensureLayer(layer);ENTITIES.push({...xfEnt(T,g),layer});nEnt++;});
+  }
+  parseDXFBlocks(split(sections.ENTITIES)).forEach(b=>emit(b,I,null,0));
+  if(!nEnt){hud('no recognized entities found (LINE / ARC / (LW)POLYLINE / SPLINE / ELLIPSE / CIRCLE / POINT / TEXT / MTEXT / HATCH / INSERT / 3DFACE)');return;}
   renderLayerPanel();updateJobPill();scheduleStreetFetch();
   $('fitBtn').disabled=false;$('elevBtn').disabled=SURFACES.length===0;$('waterBtn').disabled=SURFACES.length===0;$('waterDumpBtn').disabled=SURFACES.length===0;$('surfaceDisplayBtn').disabled=SURFACES.length===0;$('elevSpotsBtn').disabled=SURFACES.length===0;$('slopeBtn').disabled=SURFACES.length===0;$('rainPaintToolBtn').disabled=SURFACES.length===0;rainTriCache=null;pipeGraphCache=null;profEGCache.clear();if(PROF.surfaces)SURFACES.forEach(sf=>PROF.surfaces.add(sf.name));renderSlopeSurfSel();
   $('orbitBtn').disabled=false;$('snapBtn').disabled=false;
   if(hadNothing)fit();else draw();
-  hud(`imported ${nEnt} DXF entit${nEnt===1?'y':'ies'} across ${Object.keys(LAYERS).length} layer(s)`);
+  const sk=Object.keys(skipped).filter(t=>!['VIEWPORT','SEQEND','VERTEX','ENDBLK'].includes(t));
+  hud(`imported ${nEnt} DXF entit${nEnt===1?'y':'ies'} across ${Object.keys(LAYERS).length} layer(s)`+(sk.length?` · not drawn: ${sk.map(t=>skipped[t]+' '+t).join(', ')}`:''));
+}
+// HATCH pattern families → world line segments [E1,N1,E2,N2,dashScale] clipped later on canvas to the boundary
+function hatchPatternLines(loops,fam){
+  let minE=1e15,maxE=-1e15,minN=1e15,maxN=-1e15;
+  loops.forEach(L=>L.forEach(p=>{minE=Math.min(minE,p.E);maxE=Math.max(maxE,p.E);minN=Math.min(minN,p.N);maxN=Math.max(maxN,p.N);}));
+  const corners=[[minE,minN],[maxE,minN],[maxE,maxN],[minE,maxN]],out=[];let budget=3000;
+  for(const f of fam){
+    const dx=Math.cos(f.ang),dy=Math.sin(f.ang),nx=-dy,ny=dx,sp=f.ox*nx+f.oy*ny;
+    if(Math.abs(sp)<1e-9)continue;
+    const tn=corners.map(([E,N])=>((E-f.bx)*nx+(N-f.by)*ny)/sp);
+    const k0=Math.floor(Math.min(...tn)),k1=Math.ceil(Math.max(...tn));
+    if(k1-k0>budget)return null;                              // pattern too dense for the area → translucent fill only
+    budget-=k1-k0;
+    for(let k=k0;k<=k1;k++){const px=f.bx+k*f.ox,py=f.by+k*f.oy;
+      const td=corners.map(([E,N])=>(E-px)*dx+(N-py)*dy),s0=Math.min(...td),s1=Math.max(...td);
+      out.push([px+dx*s0,py+dy*s0,px+dx*s1,py+dy*s1,f.dash.length?f.dash:null]);}
+  }
+  return out;
+}
+// draw one DXF 'text' entity through a projection proj(E,N,Z)→[x,y] (2D map or 3D orbit)
+function drawDxfText(e,proj){
+  const p=e.pts[0],h=e.h||1,c=Math.cos(e.rot||0),s=Math.sin(e.rot||0);
+  const o=proj(p.E,p.N,p.Z||0),u=proj(p.E+c*h,p.N+s*h,p.Z||0),v=proj(p.E-s*h,p.N+c*h,p.Z||0);
+  const ux=u[0]-o[0],uy=u[1]-o[1],vx=v[0]-o[0],vy=v[1]-o[1];
+  const px=Math.hypot(vx,vy);if(px<2.5||px>4000)return;       // too small to read / absurdly large
+  const F=64;
+  ctx.save();ctx.transform(ux/F,uy/F,-vx/F,-vy/F,o[0],o[1]);
+  ctx.font=`${(F/0.72).toFixed(1)}px Arial,Helvetica,sans-serif`;ctx.textAlign=e.ha||'left';
+  const lines=e.ml?e.text.split('\n'):[e.text];
+  if(lines.length===1){ctx.textBaseline=e.va||'alphabetic';ctx.fillText(lines[0],0,0);}
+  else{const lh=F*(e.ls||1)*5/3,tot=lh*(lines.length-1);
+    const y0=e.va==='middle'?-tot/2:e.va==='bottom'?-tot:0;
+    ctx.textBaseline=e.va==='middle'?'middle':e.va==='bottom'?'alphabetic':'top';
+    lines.forEach((ln,i)=>ctx.fillText(ln,0,y0+i*lh));}
+  ctx.restore();
+}
+function drawDxfHatch(e,proj,locked){
+  ctx.beginPath();
+  e.loops.forEach(L=>{L.forEach((p,i)=>{const q=proj(p.E,p.N,p.Z||0);i?ctx.lineTo(q[0],q[1]):ctx.moveTo(q[0],q[1]);});ctx.closePath();});
+  const a0=ctx.globalAlpha;
+  if(e.solid){ctx.globalAlpha=a0*(locked?0.5:0.85);ctx.fill('evenodd');ctx.globalAlpha=a0;return;}
+  ctx.globalAlpha=a0*0.12;ctx.fill('evenodd');ctx.globalAlpha=a0;
+  if(!e.pat)return;
+  const z=e.pts[0].Z||0;ctx.save();ctx.clip('evenodd');ctx.lineWidth=0.8;ctx.beginPath();
+  let dashed=false;
+  e.pat.forEach(sg=>{if(sg[4]){dashed=true;return;}const a=proj(sg[0],sg[1],z),b=proj(sg[2],sg[3],z);ctx.moveTo(a[0],a[1]);ctx.lineTo(b[0],b[1]);});
+  ctx.stroke();
+  if(dashed)e.pat.forEach(sg=>{if(!sg[4])return;const a=proj(sg[0],sg[1],z),b=proj(sg[2],sg[3],z);
+    const wl=Math.hypot(sg[2]-sg[0],sg[3]-sg[1])||1,k=Math.hypot(b[0]-a[0],b[1]-a[1])/wl;
+    const ds=sg[4].map(d=>Math.max(Math.abs(d)*k,d===0?1:0.5));if(ds.length%2)ds.push(...ds);
+    ctx.setLineDash(ds);ctx.beginPath();ctx.moveTo(a[0],a[1]);ctx.lineTo(b[0],b[1]);ctx.stroke();});
+  ctx.setLineDash([]);ctx.restore();
 }
 
 /* ---------- LandXML (TIN surface + CgPoints) import ---------- */
@@ -4331,7 +4605,7 @@ document.addEventListener('pointerdown',e=>{if(!e.target.closest('#importMenu,#i
 
 
 /* ---------- version badge — CHANGED ON EVERY PUSH (new animal + name + build+1; see CLAUDE.md), mirroring FBK-Checker's own fruit badge ---------- */
-const VERSION={animal:'🐿️',name:'SQUIRREL',build:37};
+const VERSION={animal:'🦎',name:'GECKO',build:38};
 function rotateAnimal(){const b=$('animalBadge');b.style.transform='rotate(360deg)';setTimeout(()=>{b.style.transform='rotate(0deg)';},200);}
 function showVersion(){const b=$('animalBadge');b.textContent=`${VERSION.animal} ${VERSION.name} · b${VERSION.build}`;
   b.title=`Build ${VERSION.build} · ${VERSION.name} — if this matches what Claude pushed, you're on the latest (no cache)`;}

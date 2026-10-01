@@ -6,9 +6,27 @@ dependencies, and nothing to install.
 
 ## What it does
 
-- **↥ Import DXF** — reads `LINE`, `LWPOLYLINE`, `POLYLINE`/`VERTEX`, `POINT`,
-  `CIRCLE`, and `3DFACE` entities out of a plain ASCII DXF file. Each
-  entity's own DXF layer becomes a layer in the viewer.
+- **↥ Import DXF** — reads `LINE`, `ARC`, `CIRCLE`, `ELLIPSE`, `SPLINE`,
+  `LWPOLYLINE`, `POLYLINE`/`VERTEX` (incl. polyface meshes), `POINT`, `3DFACE`,
+  `TEXT`, `MTEXT`, `ATTRIB`, `HATCH`, `SOLID` and block `INSERT`s / `DIMENSION`s
+  out of a plain ASCII DXF file. Each entity's own DXF layer becomes a layer in
+  the viewer.
+  - **Curves stay curves**: arcs, ellipses, splines (NURBS) and polyline
+    bulges (group code 42 — how AutoCAD stores arc segments in a polyline) are
+    tessellated at 1° per chord. Only the real vertices count as OSNAP
+    endpoints / pivot snaps, and 📍 Label Points puts one MID per real segment
+    (an arc segment gets its arc midpoint).
+  - **Text**: `TEXT` / `MTEXT` / `ATTRIB` drawn at true world height and
+    rotation, with justification, multi-line MTEXT (`\P`) and inline
+    formatting codes stripped; `%%d` `%%c` `%%p` → ° Ø ±. Text too small to read
+    at the current zoom is skipped.
+  - **Hatch**: polyline and edge boundaries (line / arc / ellipse / spline,
+    islands even-odd), solid fills, and pattern lines (incl. dashes) clipped to
+    the boundary; very dense patterns fall back to a light tint.
+  - **Blocks**: `INSERT` expands the BLOCKS definition (base point, X/Y/Z
+    scale, rotation, column/row arrays, nesting); block content on layer `0`
+    takes the INSERT's layer. Entity OCS / extrusion (e.g. mirrored arcs,
+    extrusion 0,0,-1) is honored.
 - **↥ Import LandXML (TIN)** — reads a LandXML `<Surface>` (TIN: `Pnts` +
   `Faces`) as a triangulated surface layer, and any `<CgPoint>` records as
   plotted survey/COGO points. Multiple imports layer onto whatever's already

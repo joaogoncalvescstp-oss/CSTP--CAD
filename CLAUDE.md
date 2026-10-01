@@ -39,6 +39,7 @@ The badge renders as `<emoji> <NAME> · b<build>`.
 | 35 | 🦡 BADGER | 📋 cut sheet: streets (main + LT/RT curb checkboxes, one sheet per street), CB rows from pipe XML, O/S = hub from curb |
 | 36 | 🦥 SLOTH | 📋 cut sheet MID + AP stations (CL and curbs' own key points); ✂ Declutter: click a stake / label on the map to remove it, ↺ restore |
 | 37 | 🐿️ SQUIRREL | 🏷 GIS street names (OpenStreetMap / Overpass) auto-loaded for anything imported, big labels along streets in 2D + 3D |
+| 38 | 🦎 GECKO | ↥ DXF: arcs / polyline bulges / splines / ellipses come in as true curves; TEXT / MTEXT, HATCH, SOLID and block INSERTs now imported |
 
 ## Workflow
 
