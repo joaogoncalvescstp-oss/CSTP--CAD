@@ -462,7 +462,7 @@ dependencies, and nothing to install.
 
 ## Measure
 
-- **🧭 Measure** (Surface group, 2D plan) measures with object snaps. Click
+- **🧭 Measure** (Surface group, 2D plan and ⟲ 3D) measures with object snaps. Click
   points; each one snaps to an endpoint, intersection, midpoint or nearest
   point (the 🧲 Snap box toggles which), else it uses the raw cursor spot.
   Double-click or **Enter** finishes a run, **Backspace** undoes the last
@@ -475,6 +475,11 @@ dependencies, and nothing to install.
   slope distance, net vertical distance (with total rise and fall), and the
   start→end distance and bearing. Every run is listed in a table and can be
   exported as CSV.
+- In ⟲ 3D a click adds a point and a drag still orbits. Points snap to what
+  you see: CgPoints, manholes, DXF and TIN vertices, then edge midpoints, then
+  the nearest point on a line / pipe / TIN edge, else the front-most surface
+  under the cursor (intersections are 2D only). Runs stay on screen when you
+  switch between 2D and 3D.
 - Z for each point comes from the snapped object's own Z, else the topmost
   visible surface (or the reverse, or none for 2D-only), set in the panel.
 

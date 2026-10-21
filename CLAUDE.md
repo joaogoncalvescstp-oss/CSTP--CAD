@@ -41,6 +41,7 @@ The badge renders as `<emoji> <NAME> · b<build>`.
 | 37 | 🐿️ SQUIRREL | 🏷 GIS street names (OpenStreetMap / Overpass) auto-loaded for anything imported, big labels along streets in 2D + 3D |
 | 38 | 🦎 GECKO | ↥ DXF: arcs / polyline bulges / splines / ellipses come in as true curves; TEXT / MTEXT, HATCH, SOLID and block INSERTs now imported |
 | 39 | 🦌 DEER | 🧭 Measure tool: snapped multi-point total / slope / vertical distance, grade, survey bearings, vertex angles (interior + deflection), CSV |
+| 40 | 🦭 SEAL | 🧭 Measure works in 3D orbit view too (snaps to points / vertices / edge midpoints / nearest on edges, else the surface under the cursor) |
 
 ## Workflow
 
