@@ -88,7 +88,7 @@ details.help[open]>summary{margin-bottom:4px}
 <div class="menu" id="importMenu">
   <label class="btn file menuitem" title="Import a DXF drawing — LINE, ARC, CIRCLE, ELLIPSE, SPLINE, (LW)POLYLINE with arc bulges, POINT, 3DFACE, TEXT / MTEXT, HATCH and block INSERTs each become part of their own DXF layer, shown/hidden/locked from the Layers panel.">↥ Import DXF<input type="file" id="dxfInput" accept=".dxf"></label>
   <label class="btn file menuitem" title="Import LandXML — a TIN surface (Pnts/Faces), CgPoints (COGO/survey points), Civil3D pipe networks (Structs/Pipes: manholes, catch basins, storm/sanitary pipes), and horizontal Alignments (CoordGeom Line/Curve/Spiral) are all read from the same file, each landing on its own toggleable layer. Use ⛰ Elevation to read a TIN's Z, or 📍 Label Points to label an alignment's PC/PT/MID.">↥ Import LandXML (TIN / Pipes / Alignments)<input type="file" id="landxmlInput" accept=".xml,.landxml"></label>
-  <label class="btn file menuitem" title="DWG is Autodesk's proprietary binary format — this viewer has no bundled DWG parser and can't read it directly. Selecting a .dwg here just explains that and tells you how to get the same data in another way.">↥ Import DWG<input type="file" id="dwgInput" accept=".dwg"></label>
+  <label class="btn file menuitem" title="Import an AutoCAD DWG (R13 through 2018+ formats). It's converted to DXF right in the browser by LibreDWG (WebAssembly, ~9 MB, downloaded once from cdn.jsdelivr.net the first time you open a DWG, then cached) and loaded exactly like ↥ Import DXF — lines, arcs, polylines, circles, splines, text, hatches and blocks on their own layers. Civil 3D objects (surfaces, COGO points, alignments, pipe networks) are not plain DWG geometry — export those as LandXML.">↥ Import DWG<input type="file" id="dwgInput" accept=".dwg"></label>
 </div>
 
   <div class="bar">
@@ -4257,17 +4257,47 @@ $('glAll').onchange=()=>{
   GEOM_LABEL_SHOW={horizontal:v,spiral:v,vertical:v,reference:v,custom:v};draw();
 };
 
+/* ---------- DWG import ----------
+   DWG is converted to DXF text in the browser by LibreDWG compiled to WebAssembly
+   (@mlightcad/libredwg-web, GPL-3.0), then fed to importDXF — so a DWG gets every curve /
+   text / hatch / block feature the DXF importer has. The ~9 MB module is only fetched the
+   first time a DWG is opened (the browser caches it after that); its glue code finds the
+   .wasm next to itself via import.meta.url. Civil 3D custom objects (TIN surfaces, COGO
+   points, alignments, pipe networks) are AEC object-enabler data LibreDWG can't decode —
+   those still come in through LandXML. */
+const LIBREDWG_URL='https://cdn.jsdelivr.net/npm/@mlightcad/libredwg-web@0.7.14/wasm/libredwg-web.js';
+let libredwgPromise=null;
+function loadLibreDWG(){
+  return libredwgPromise||(libredwgPromise=import(LIBREDWG_URL).then(m=>m.default()).catch(err=>{libredwgPromise=null;throw err;}));   // a failed load (offline) can be retried
+}
+async function importDWG(file){
+  hud(`reading "${file.name}" — loading the DWG reader (LibreDWG, ~9 MB the first time)…`);
+  let lib;
+  try{lib=await loadLibreDWG();}
+  catch(err){hud(`couldn't load the DWG reader from cdn.jsdelivr.net (${err&&err.message||err}) — check the internet connection, or SAVEAS → DXF in AutoCAD and use ↥ Import DXF`);return;}
+  const bytes=new Uint8Array(await file.arrayBuffer());
+  hud(`converting "${file.name}" (${(bytes.length/1048576).toFixed(1)} MB) DWG → DXF…`);
+  await new Promise(r=>requestAnimationFrame(()=>setTimeout(r,0)));   // let the hud paint before the synchronous conversion
+  const IN='in.dwg',OUT='out.dxf';let dxf=null,code=-1;
+  try{
+    lib.FS.writeFile(IN,bytes);
+    code=lib.dwg_write_dxf(IN,OUT);
+    if(lib.FS.analyzePath(OUT,false).exists)dxf=lib.FS.readFile(OUT);
+  }catch(err){console.error(err);}
+  finally{[IN,OUT].forEach(n=>{try{if(lib.FS.analyzePath(n,false).exists)lib.FS.unlink(n);}catch(_){}});}
+  // LibreDWG's error code is a bit mask; anything below 128 (DWG_ERR_CRITICAL) is a recoverable
+  // warning (unknown class, skipped object…) and the DXF it wrote is still usable
+  if(!dxf||!dxf.length||code>=128){hud(`couldn't read "${file.name}" as DWG (LibreDWG error ${code}) — it may be a newer/unsupported version or damaged; SAVEAS → DXF in AutoCAD and use ↥ Import DXF instead`);return;}
+  importDXF(new TextDecoder('utf-8').decode(dxf));
+  if(code)console.warn(`LibreDWG converted ${file.name} with warnings (code ${code})`);
+}
+
 /* ---------- toolbar wiring ---------- */
 $('dxfInput').onchange=e=>{const f=e.target.files[0];if(!f)return;const rd=new FileReader();
   rd.onload=()=>{importDXF(rd.result);e.target.value='';};rd.readAsText(f);};
 $('landxmlInput').onchange=e=>{const f=e.target.files[0];if(!f)return;const rd=new FileReader();
   rd.onload=()=>{importLandXML(rd.result);e.target.value='';};rd.readAsText(f);};
-$('dwgInput').onchange=e=>{const f=e.target.files[0];if(!f)return;e.target.value='';
-  // DWG is a proprietary binary format — reading it needs a real parser (LibreDWG or Autodesk's own object
-  // enablers for Civil3D-specific objects like surfaces/COGO points), which this single-file viewer doesn't
-  // bundle. Rather than pretend to support it, tell the user how to get the same data in a format that works.
-  hud(`"${f.name}" is a DWG file — this viewer can't parse binary DWG directly. In Civil3D/AutoCAD: SAVEAS → DXF for linework, or export the surface as LandXML, then use ↥ Import DXF / ↥ Import LandXML instead.`);
-};
+$('dwgInput').onchange=e=>{const f=e.target.files[0];if(!f)return;e.target.value='';importDWG(f);};
 $('fitBtn').onclick=fit;
 $('elevBtn').onclick=()=>{
   if($('elevBtn').disabled)return;
@@ -4839,7 +4869,7 @@ document.addEventListener('pointerdown',e=>{if(!e.target.closest('#importMenu,#i
 
 
 /* ---------- version badge — CHANGED ON EVERY PUSH (new animal + name + build+1; see CLAUDE.md), mirroring FBK-Checker's own fruit badge ---------- */
-const VERSION={animal:'🦭',name:'SEAL',build:40};
+const VERSION={animal:'🦁',name:'LION',build:41};
 function rotateAnimal(){const b=$('animalBadge');b.style.transform='rotate(360deg)';setTimeout(()=>{b.style.transform='rotate(0deg)';},200);}
 function showVersion(){const b=$('animalBadge');b.textContent=`${VERSION.animal} ${VERSION.name} · b${VERSION.build}`;
   b.title=`Build ${VERSION.build} · ${VERSION.name} — if this matches what Claude pushed, you're on the latest (no cache)`;}

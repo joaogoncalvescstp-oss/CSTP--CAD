@@ -651,24 +651,24 @@ existing regression battery (FLIP/water-flow, surface-collision, DXF/
 LandXML/pipe-network import, elevation query, snap, aerial map) — all pass
 unchanged. `index.html`'s inline script still parses clean (`node --check`).
 
-## DWG — why it isn't supported directly
+## DWG import
 
-DWG is Autodesk's proprietary binary format. Reading it in a browser with no
-bundled parser isn't practical: the open-source option (LibreDWG) is GPL-3.0
-and still has real entity-coverage gaps, and a Civil3D **surface** or **COGO
-point** object specifically is not a plain DWG entity at all — it's a
-proprietary "object enabler" payload that even most third-party DWG readers
-can't decode without Autodesk's own SDK for it.
+**↥ Import DWG** reads AutoCAD DWG files (R13 through the 2018 format) right
+in the browser:
 
-Picking a `.dwg` file in the **↥ Import DWG** button doesn't silently fail or
-pretend to work — it just tells you, in the status bar, to do one of these
-instead (both are a couple of clicks in Civil3D/AutoCAD):
-
-- **SAVEAS → DXF** for ordinary drawing linework, then **↥ Import DXF**.
-- **Export → LandXML** for a Civil3D surface (and/or its COGO points), then
-  **↥ Import LandXML (TIN)** — this is the actual bridge format Civil3D
-  itself uses for exactly this kind of interop, and it's already a plain,
-  regular XML structure — nothing proprietary to decode.
+- The file is converted to DXF by **LibreDWG** compiled to WebAssembly
+  (`@mlightcad/libredwg-web@0.7.14`, GPL-3.0), then loaded by the same
+  importer as **↥ Import DXF**, so lines, arcs, polylines with bulges,
+  circles, ellipses, splines, TEXT / MTEXT, hatches and block INSERTs all
+  come in on their own layers. The file never leaves your computer.
+- The converter (~9 MB) is downloaded from `cdn.jsdelivr.net` the first time
+  you open a DWG and cached by the browser after that, so DWG import needs an
+  internet connection the first time. If it can't be loaded, or the file is
+  damaged / unsupported, the status bar says so; then use **SAVEAS → DXF** in
+  AutoCAD and **↥ Import DXF**.
+- Civil 3D **surfaces, COGO points, alignments and pipe networks** are
+  Autodesk "object enabler" data, not plain DWG geometry, and LibreDWG can't
+  decode them. Export those as **LandXML** and use **↥ Import LandXML**.
 
 ## Notes on the LandXML parser
 
