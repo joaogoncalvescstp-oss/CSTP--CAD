@@ -115,6 +115,7 @@ details.help[open]>summary{margin-bottom:4px}
       <button class="btn" id="elevBtn" disabled title="Click a visible, unlocked TIN surface to save its interpolated elevation there — snaps to a nearby TIN vertex/wireframe edge, CAD line, or point first, when one's in range. Stays armed so you can save several spots in a row (Esc or click again to stop) — 2D only. View saved spots in 📐 Elevation Spots">⛰ Elevation</button>
       <button class="btn" id="elevSpotsBtn" disabled title="View every saved ⛰ Elevation spot as a table (northing/easting/elevation, and what it snapped to) — with CSV export">📐 Elevation Spots</button>
       <button class="btn" id="slopeBtn" disabled title="Slope between two points — pick a target surface, then click point A and point B (snaps to vertices/edges/CAD points). Reports each point's elevation on that surface, rise, horizontal & slope distance, grade %, and H:V ratio. Stays armed for more; Esc stops — 2D only">📏 Slope 2-Pt</button>
+      <button class="btn" id="measureBtn" disabled title="🧭 Measure — click points (snaps to endpoints / intersections / midpoints / nearest) for total horizontal distance, slope distance, vertical distance (ΔZ), grade, survey bearing of each leg and the angle at each vertex (interior + deflection L/R). Double-click or Enter finishes a run, Backspace undoes the last point, Esc stops — 2D only">🧭 Measure</button>
       <button class="btn" id="snapBtn" disabled title="CAD object snap — hover to snap onto an endpoint, a genuine crossing of two lines, a midpoint, a circle's center/quadrant, or the nearest point on a line, and read its exact E/N/Z off the hud (Esc cancels) — 2D only">🧲 Snap</button>
     </div>
     <div class="tg" data-name="Water">
@@ -297,6 +298,27 @@ details.help[open]>summary{margin-bottom:4px}
       </div>
       <div style="overflow:auto;max-height:min(45vh,360px)">
         <table id="slopeTable" style="width:100%;border-collapse:collapse;font-size:11px;white-space:nowrap"></table>
+      </div>
+    </div>
+    <div class="panel" id="measurePanel" style="width:470px;left:auto;right:12px;z-index:2">
+      <h4><span>🧭 Measure</span><button id="measureCloseBtn" title="Close">✕</button></h4>
+      <details class="help"><summary>ℹ How this works</summary><p class="note">Click points in 2D plan — each one snaps (🧲 endpoint / intersection / midpoint / nearest) when it's in range, else it's the raw cursor spot. Double-click (or Enter) finishes the run; Backspace undoes the last point; Esc ends the current run, then stops the tool. Each leg lists horizontal, slope and vertical (ΔZ) distance, grade and its survey (quadrant) bearing; each interior vertex lists the angle between its two legs and the deflection (L/R). Elevations come from the snapped object's own Z or the topmost visible surface, as chosen below — a point with neither has no Z, so its legs show horizontal distance only.</p></details>
+      <label style="display:block;margin-bottom:4px;font-size:11px;color:var(--mut)">Elevation (Z) from</label>
+      <select id="measureZSel" style="width:100%;margin-bottom:8px;background:var(--panel2);color:var(--text);border:1px solid var(--rule);border-radius:5px;padding:5px">
+        <option value="snap">Snapped object's Z, else topmost visible surface</option>
+        <option value="surf">Topmost visible surface, else snapped object's Z</option>
+        <option value="none">None — 2D (horizontal only)</option>
+      </select>
+      <div style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap">
+        <button class="btn gold" id="measurePickBtn" style="flex:1">▶ Measure</button>
+        <button class="btn" id="measureFinishBtn" style="flex:1" title="Finish the current run (Enter / double-click)">✔ Finish</button>
+        <button class="btn" id="measureUndoBtn" style="flex:1" title="Remove the last point (Backspace)">↶ Undo pt</button>
+        <button class="btn" id="measureExportBtn" style="flex:1">⬇ CSV</button>
+        <button class="btn" id="measureClearBtn" style="flex:1">Clear all</button>
+      </div>
+      <div id="measureTotals" style="font:12px ui-monospace,monospace;margin-bottom:8px;line-height:1.5"></div>
+      <div style="overflow:auto;max-height:min(40vh,320px)">
+        <table id="measureTable" style="width:100%;border-collapse:collapse;font-size:11px;white-space:nowrap"></table>
       </div>
     </div>
     <div class="panel" id="cutPanel" style="width:560px">
@@ -1101,6 +1123,7 @@ function draw2D(){
   });
   ctx.globalAlpha=1;
   drawSlopeMeasurements((E,N)=>W2S(E,N));
+  drawMeasurements((E,N)=>W2S(E,N));
   drawStreetNames((E,N)=>W2S(E,N),false);
   drawMapError();
   drawSnapMarker();
@@ -1161,6 +1184,7 @@ function draw3D(){
   });
   ctx.globalAlpha=1;
   drawSlopeMeasurements((E,N,Z)=>P3(E,N,Z));
+  drawMeasurements((E,N,Z)=>P3(E,N,Z));
   drawStreetNames((E,N,Z)=>P3(E,N,Z),true);
   drawPivotMarkers();
   drawViewCube();
@@ -1847,7 +1871,7 @@ function setDeclutter(on){
   if(on){
     if(is3D||profileOn){declutterOn=false;hud('✂ Declutter works in 2D plan — press O / P to switch back first');updateDeclutterUI();return;}
     elevPick=false;$('elevBtn').classList.remove('on');snapOn=false;$('snapBtn').classList.remove('on');liveSnap=null;
-    if(slopePick)setSlopePick(false);if(rainPaintOn)setRainPaint(false);if(basinPlaceOn)setBasinPlace(false);
+    if(MEASURE.on)setMeasure(false);if(slopePick)setSlopePick(false);if(rainPaintOn)setRainPaint(false);if(basinPlaceOn)setBasinPlace(false);
     hud('✂ click a cut-sheet stake (station dot = whole row, curb / hub = that side) or a 📍 label to remove it · Esc to stop');
   }
   cv.style.cursor='crosshair';updateDeclutterUI();draw();
@@ -2441,7 +2465,7 @@ function slopeCSV(){const lines=[SLOPE_HEADS.join(',')];SLOPE_MEAS.forEach((m,i)
 function setSlopePick(on){
   slopePick=on;slopeA=null;slopeHover=null;liveSnap=null;
   $('slopeBtn').classList.toggle('on',on);$('slopePickBtn').textContent=on?'■ Stop picking':'▶ Pick points';
-  if(on){elevPick=false;$('elevBtn').classList.remove('on');snapOn=false;$('snapBtn').classList.remove('on');waterDumpOn=false;$('waterDumpBtn').classList.remove('on');}
+  if(on){elevPick=false;$('elevBtn').classList.remove('on');snapOn=false;$('snapBtn').classList.remove('on');waterDumpOn=false;$('waterDumpBtn').classList.remove('on');if(MEASURE.on)setMeasure(false);}
 }
 // one measured line: A→B with a downhill arrowhead at its midpoint and the grade label
 function drawSlopeLine(pa,pb,m,alpha,color){
@@ -2483,6 +2507,146 @@ function slopeClick(sx,sy){
     renderSlopeTable();
     hud(`slope #${SLOPE_MEAS.length}: ${slopeLabel(m)} · slope dist ${m.d.toFixed(3)} · ${m.bearing} — click a new point A, Esc to stop`);}
   draw();
+}
+
+/* ---------- 🧭 Measure: snapped multi-point distance / bearing / angle ----------
+   Click points in 2D plan (each snaps through snapPoint, same engine as 🧲 Snap). A run is a
+   chain of points; each leg reports horizontal, slope and vertical (ΔZ) distance, grade and
+   survey bearing, each interior vertex the angle between its legs (and the deflection L/R).
+   MEASURE.runs holds finished runs, MEASURE.pts the one being picked. */
+const MEASURE={on:false,runs:[],pts:[],hover:null,zMode:'snap',lastClick:null};
+function measureZ(E,N,snapped){
+  if(MEASURE.zMode==='none')return{z:null,src:'—'};
+  const sz=snapped&&isFinite(snapped.Z)?{z:snapped.Z,src:snapped.label}:null;
+  const t=tinElevationAt(E,N),tz=t?{z:t.z,src:t.name}:null;
+  return(MEASURE.zMode==='surf'?(tz||sz):(sz||tz))||{z:null,src:'no Z'};
+}
+function measureAz(a,b){let az=Math.atan2(b.E-a.E,b.N-a.N)*180/Math.PI;return az<0?az+360:az;}
+function measureLeg(a,b){
+  const dE=b.E-a.E,dN=b.N-a.N,h=Math.hypot(dE,dN),hasZ=a.z!=null&&b.z!=null,dz=hasZ?b.z-a.z:null;
+  return{a,b,h,dz,d:hasZ?Math.hypot(h,dz):null,grade:hasZ&&h>0?dz/h*100:null,az:measureAz(a,b),bearing:bearingOf(dE,dN)};
+}
+// angle at vertex b between legs a→b and b→c: interior (0–180°) and deflection (signed, + = right)
+function measureAngle(a,b,c){
+  let defl=measureAz(b,c)-measureAz(a,b);if(defl>180)defl-=360;if(defl<=-180)defl+=360;
+  return{interior:180-Math.abs(defl),defl,side:Math.abs(defl)<1e-9?'':defl>0?'R':'L'};
+}
+function measureStats(pts){
+  const legs=[];for(let i=1;i<pts.length;i++)legs.push(measureLeg(pts[i-1],pts[i]));
+  const angles=[];for(let i=1;i<pts.length-1;i++)angles.push(measureAngle(pts[i-1],pts[i],pts[i+1]));
+  const allZ=legs.length&&legs.every(l=>l.dz!=null),first=pts[0],last=pts[pts.length-1];
+  const sum=f=>legs.reduce((s,l)=>s+f(l),0);
+  return{legs,angles,h:sum(l=>l.h),d:allZ?sum(l=>l.d):null,dz:allZ?last.z-first.z:null,
+    rise:allZ?sum(l=>Math.max(0,l.dz)):null,fall:allZ?sum(l=>Math.min(0,l.dz)):null,
+    direct:pts.length>1?measureLeg(first,last):null};
+}
+const fmt3=v=>v==null?'—':v.toFixed(3),fmtSigned=v=>v==null?'—':(v>=0?'+':'')+v.toFixed(3);
+function measureLegLabel(l){return `${l.h.toFixed(2)}  ${l.bearing}${l.dz!=null?`  ΔZ ${l.dz>=0?'+':''}${l.dz.toFixed(2)} (${l.grade!=null?(l.grade>=0?'+':'')+l.grade.toFixed(2)+'%':'—'})`:''}`;}
+function measureTotalsText(st){
+  if(!st.legs.length)return'';
+  return `Total horiz ${st.h.toFixed(3)} · slope ${fmt3(st.d)} · vert ${fmtSigned(st.dz)}`+(st.legs.length>1?` · ${st.legs.length} legs`:'');
+}
+function renderMeasurePanel(){
+  const all=[...MEASURE.runs.map((pts,i)=>({pts,name:'Run '+(i+1)})),...(MEASURE.pts.length?[{pts:MEASURE.pts,name:'Current',live:true}]:[])];
+  const cur=all[all.length-1];
+  if(!cur){$('measureTotals').innerHTML='<span class="note">click ▶ Measure, then click points on the drawing</span>';$('measureTable').innerHTML='';return;}
+  const st=measureStats(cur.pts);
+  $('measureTotals').innerHTML=`<b>${cur.name}</b> (${cur.pts.length} pts)<br>`+
+    `Total horizontal dist <b>${st.h.toFixed(3)}</b><br>Total slope dist <b>${fmt3(st.d)}</b><br>`+
+    `Vertical dist (net ΔZ) <b>${fmtSigned(st.dz)}</b>${st.rise!=null?` · rise ${st.rise.toFixed(3)} · fall ${st.fall.toFixed(3)}`:''}<br>`+
+    (st.direct&&st.legs.length>1?`Start→end: ${st.direct.h.toFixed(3)} @ ${st.direct.bearing}`:st.direct?`Bearing ${st.direct.bearing} · grade ${st.direct.grade!=null?st.direct.grade.toFixed(2)+'%':'—'}`:'');
+  const heads=['Run','Leg / Pt','From','To','Horiz','Slope','ΔZ (vert)','Grade %','Bearing','Angle at end pt'];
+  let html='<thead><tr>'+heads.map(h=>`<th style="text-align:left;padding:3px 8px;border-bottom:1px solid var(--rule);position:sticky;top:0;background:var(--panel)">${h}</th>`).join('')+'</tr></thead><tbody>';
+  const td=(v,x='')=>`<td style="padding:3px 8px;border-bottom:1px solid var(--rule)${x}">${v}</td>`;
+  all.forEach(r=>{const s=measureStats(r.pts);
+    s.legs.forEach((l,i)=>{const an=s.angles[i];
+      html+='<tr>'+[r.name,i+1,i+1,i+2,l.h.toFixed(3),fmt3(l.d),fmtSigned(l.dz),l.grade!=null?l.grade.toFixed(2):'—',l.bearing,
+        an?`${dms(an.interior)} (defl ${dms(an.defl)} ${an.side})`:''].map(v=>td(v)).join('')+'</tr>';});
+    if(s.legs.length)html+='<tr>'+[r.name,'Total','1',r.pts.length,s.h.toFixed(3),fmt3(s.d),fmtSigned(s.dz),'',s.direct.bearing+' (1→'+r.pts.length+')',''].map(v=>td(v,';font-weight:700')).join('')+'</tr>';});
+  $('measureTable').innerHTML=html+'</tbody>';
+}
+function measureCSV(){
+  const lines=[['Run','Point','Northing','Easting','Elevation','Z from','Leg horiz','Leg slope','Leg dZ','Leg grade %','Leg bearing','Interior angle','Deflection'].join(',')];
+  [...MEASURE.runs,...(MEASURE.pts.length?[MEASURE.pts]:[])].forEach((pts,ri)=>{const s=measureStats(pts);
+    pts.forEach((p,i)=>{const l=i?s.legs[i-1]:null,an=s.angles[i-1];
+      lines.push([ri+1,i+1,p.N.toFixed(3),p.E.toFixed(3),p.z!=null?p.z.toFixed(3):'',p.src,l?l.h.toFixed(3):'',l&&l.d!=null?l.d.toFixed(3):'',l&&l.dz!=null?l.dz.toFixed(3):'',
+        l&&l.grade!=null?l.grade.toFixed(2):'',l?l.bearing:'',an?dms(an.interior):'',an?dms(an.defl)+' '+an.side:''].map(geomCSVField).join(','));});
+    if(s.legs.length)lines.push([ri+1,'TOTAL','','','','',s.h.toFixed(3),s.d!=null?s.d.toFixed(3):'',s.dz!=null?s.dz.toFixed(3):'','',s.direct.bearing,'',''].map(geomCSVField).join(','));});
+  return lines.join('\r\n');
+}
+function disarmOtherPickTools(){
+  elevPick=false;$('elevBtn').classList.remove('on');snapOn=false;$('snapBtn').classList.remove('on');
+  waterDumpOn=false;$('waterDumpBtn').classList.remove('on');
+  if(slopePick)setSlopePick(false);if(declutterOn)setDeclutter(false);if(rainPaintOn)setRainPaint(false);if(basinPlaceOn)setBasinPlace(false);
+}
+function setMeasure(on){
+  if(on&&(is3D||profileOn)){hud('🧭 Measure is 2D plan only — switch back with O / P first');on=false;}
+  if(on)disarmOtherPickTools();
+  if(!on)measureFinish(true);
+  MEASURE.on=on;MEASURE.hover=null;liveSnap=null;
+  $('measureBtn').classList.toggle('on',on);$('measurePickBtn').textContent=on?'■ Stop':'▶ Measure';
+  if(on){$('measurePanel').classList.add('show');hud('🧭 click the first point (snaps on) · double-click / Enter finishes · Backspace undoes · Esc stops');}
+  renderMeasurePanel();draw();
+}
+function measureFinish(quiet){
+  if(MEASURE.pts.length>1){MEASURE.runs.push(MEASURE.pts);if(MEASURE.runs.length>200)MEASURE.runs.shift();
+    if(!quiet)hud(`🧭 run ${MEASURE.runs.length}: ${measureTotalsText(measureStats(MEASURE.pts))} — click to start a new run, Esc to stop`);}
+  MEASURE.pts=[];MEASURE.lastClick=null;renderMeasurePanel();
+}
+function measureUndo(){MEASURE.lastClick=null;if(MEASURE.pts.length)MEASURE.pts.pop();else if(MEASURE.runs.length)MEASURE.pts=MEASURE.runs.pop();renderMeasurePanel();draw();}
+function measurePointAt(sx,sy){
+  const s=snapPoint(sx,sy),[E,N]=s?[s.E,s.N]:S2W(sx,sy),zz=measureZ(E,N,s);
+  return{E,N,z:zz.z,src:zz.src,snapLabel:s?s.label:null,snap:s};
+}
+function measureClick(sx,sy){
+  const now=performance.now(),lc=MEASURE.lastClick;
+  if(lc&&now-lc.t<350&&Math.hypot(sx-lc.sx,sy-lc.sy)<6){measureFinish(false);draw();return;}   // 2nd click of a double-click = finish
+  const p=measurePointAt(sx,sy);delete p.snap;
+  const prev=MEASURE.pts[MEASURE.pts.length-1];
+  if(prev&&Math.hypot(p.E-prev.E,p.N-prev.N)<1e-9){MEASURE.lastClick={t:now,sx,sy};return;}
+  MEASURE.pts.push(p);MEASURE.lastClick={t:now,sx,sy};
+  const st=measureStats(MEASURE.pts),l=st.legs[st.legs.length-1],an=st.angles[st.angles.length-1];
+  hud(l?`🧭 leg ${st.legs.length}: ${measureLegLabel(l)}${an?` · angle ${dms(an.interior)} (defl ${dms(an.defl)} ${an.side})`:''} · ${measureTotalsText(st)}`
+       :`🧭 point 1: ${p.snapLabel?p.snapLabel+' · ':''}E ${p.E.toFixed(3)} N ${p.N.toFixed(3)}${p.z!=null?' Z '+p.z.toFixed(3):''} — click the next point`);
+  renderMeasurePanel();draw();
+}
+function measureHover(sx,sy){
+  const p=measurePointAt(sx,sy);liveSnap=p.snap;MEASURE.hover=p;
+  const last=MEASURE.pts[MEASURE.pts.length-1];
+  if(last){const st=measureStats([...MEASURE.pts,p]),l=st.legs[st.legs.length-1],an=st.angles[st.angles.length-1];
+    hud(`${p.snapLabel?p.snapLabel+' · ':''}${measureLegLabel(l)}${an?` · angle ${dms(an.interior)}`:''} · ${measureTotalsText(st)}`);}
+  else hud(`${p.snapLabel?p.snapLabel+' · ':'free · '}E ${p.E.toFixed(3)} N ${p.N.toFixed(3)}${p.z!=null?' Z '+p.z.toFixed(3)+' ('+p.src+')':''} · click to start measuring`);
+  draw();
+}
+function drawMeasureRun(pts,proj,color){
+  if(!pts.length)return;
+  const sp=pts.map(p=>proj(p.E,p.N,p.z??0)),st=measureStats(pts);
+  ctx.save();ctx.strokeStyle=ctx.fillStyle=color;ctx.lineWidth=2;
+  ctx.beginPath();sp.forEach((q,i)=>i?ctx.lineTo(q[0],q[1]):ctx.moveTo(q[0],q[1]));ctx.stroke();
+  ctx.font='700 11px ui-monospace,monospace';
+  sp.forEach((q,i)=>{ctx.beginPath();ctx.arc(q[0],q[1],3.5,0,Math.PI*2);ctx.fill();drawLabel(String(i+1),q[0]+6,q[1]+14,color);});
+  st.legs.forEach((l,i)=>{const a=sp[i],b=sp[i+1];if(Math.hypot(b[0]-a[0],b[1]-a[1])<40)return;
+    drawLabel(measureLegLabel(l),(a[0]+b[0])/2+6,(a[1]+b[1])/2-6,color);});
+  st.angles.forEach((an,i)=>{const p=sp[i+1],a=sp[i],c=sp[i+2],R=18;
+    const a1=Math.atan2(a[1]-p[1],a[0]-p[0]),a2=Math.atan2(c[1]-p[1],c[0]-p[0]);
+    let d=a2-a1;while(d>Math.PI)d-=2*Math.PI;while(d<=-Math.PI)d+=2*Math.PI;
+    ctx.lineWidth=1.2;ctx.beginPath();ctx.arc(p[0],p[1],R,a1,a1+d,d<0);ctx.stroke();
+    const m=a1+d/2,t=dms(an.interior),w=ctx.measureText(t).width;   // centered on the bisector, inside the angle
+    drawLabel(t,p[0]+Math.cos(m)*(R+22)-w/2,p[1]+Math.sin(m)*(R+22)+4,color);});
+  if(st.legs.length>1){const q=sp[sp.length-1],t=`Σ ${measureTotalsText(st)}`,w=ctx.measureText(t).width;
+    drawLabel(t,Math.max(8,Math.min(q[0]+8,cv.clientWidth-w-12)),q[1]+30,color);}
+  ctx.restore();
+}
+function drawMeasurements(proj){
+  MEASURE.runs.forEach(pts=>drawMeasureRun(pts,proj,'#7fd4ff'));
+  if(!MEASURE.pts.length)return;
+  let live=null,pts=MEASURE.pts;
+  if(MEASURE.on&&MEASURE.hover&&!is3D){const h=MEASURE.hover,l=MEASURE.pts[MEASURE.pts.length-1];
+    live=[proj(l.E,l.N,l.z??0),proj(h.E,h.N,h.z??0)];pts=[...MEASURE.pts,h];}
+  drawMeasureRun(MEASURE.pts,proj,'#ffd24a');
+  if(live){ctx.save();ctx.strokeStyle='#ffd24a';ctx.lineWidth=1.5;ctx.setLineDash([6,4]);ctx.beginPath();ctx.moveTo(live[0][0],live[0][1]);ctx.lineTo(live[1][0],live[1][1]);ctx.stroke();ctx.restore();
+    const st=measureStats(pts),l=st.legs[st.legs.length-1];ctx.font='700 11px ui-monospace,monospace';
+    drawLabel(measureLegLabel(l),(live[0][0]+live[1][0])/2+6,(live[0][1]+live[1][1])/2-6,'#ffd24a');}
 }
 
 /* ---------- 📐 saved ⛰ Elevation spots ---------- */
@@ -2667,7 +2831,7 @@ function snapPoint(sx,sy){
     if(d<bnd){bnd=d;const[E,N]=S2W(x,y);best={E,N,Z:s.aZ+t*(s.bZ-s.aZ),sx:x,sy:y,type:'nearest',label:'nearest',tin:s.src.startsWith('tin')};}});
   return best;}
 function drawSnapMarker(){
-  const s=(snapOn||elevPick||slopePick||basinPlaceOn)?liveSnap:null;if(!s)return;const x=s.sx,y=s.sy,r=7;ctx.save();
+  const s=(snapOn||elevPick||slopePick||basinPlaceOn||MEASURE.on)?liveSnap:null;if(!s)return;const x=s.sx,y=s.sy,r=7;ctx.save();
   ctx.lineWidth=2;ctx.strokeStyle='#35c184';ctx.fillStyle='rgba(53,193,132,.18)';
   if(s.type==='endpoint'){ctx.fillRect(x-r,y-r,2*r,2*r);ctx.strokeRect(x-r,y-r,2*r,2*r);}
   else if(s.type==='intersection'){ctx.beginPath();ctx.arc(x,y,r,0,7);ctx.fill();ctx.stroke();}
@@ -2679,7 +2843,7 @@ function drawSnapMarker(){
   ctx.restore();}
 function syncSnapBox(){
   const box=$('snapBox');if(!box)return;
-  box.classList.toggle('show',(snapOn||elevPick||slopePick||basinPlaceOn)&&!is3D&&!profileOn);
+  box.classList.toggle('show',(snapOn||elevPick||slopePick||basinPlaceOn||MEASURE.on)&&!is3D&&!profileOn);
   const active=liveSnap&&(liveSnap.type==='center'||liveSnap.type==='quadrant'?'endpoint':liveSnap.type);
   ['snEndpoint','snIntersection','snMidpoint','snNearest'].forEach(id=>{
     const key=id.slice(2).toLowerCase();
@@ -3013,7 +3177,7 @@ function setRainPaint(on,erase){
   if(on){
     if(is3D){rainPaintOn=false;hud('Painting rain areas is 2D plan only — press O or ⟲ 3D to switch back first');updateRainUI();return;}
     elevPick=false;$('elevBtn').classList.remove('on');snapOn=false;$('snapBtn').classList.remove('on');liveSnap=null;
-    waterDumpOn=false;$('waterDumpBtn').classList.remove('on');if(typeof slopePick!=='undefined'&&slopePick)setSlopePick(false);
+    waterDumpOn=false;$('waterDumpBtn').classList.remove('on');if(typeof slopePick!=='undefined'&&slopePick)setSlopePick(false);if(MEASURE.on)setMeasure(false);
     if(basinPlaceOn){basinPlaceOn=false;updateBasinUI();}
     if(!RAIN.erase&&RAIN.mode!=='painted'){RAIN.mode='painted';if(waterOn)initWaterParticles();}
     cv.style.cursor='none';
@@ -3081,7 +3245,7 @@ function setBasinPlace(on){
     if(is3D||profileOn){basinPlaceOn=false;hud('Placing catch basins is 2D plan only — switch back with O / P first');updateBasinUI();return;}
     if(!WATER_CB.on){WATER_CB.on=true;$('cbOnChk').checked=true;}
     if(rainPaintOn)setRainPaint(false);
-    if(typeof slopePick!=='undefined'&&slopePick)setSlopePick(false);
+    if(typeof slopePick!=='undefined'&&slopePick)setSlopePick(false);if(MEASURE.on)setMeasure(false);
     elevPick=false;$('elevBtn').classList.remove('on');snapOn=false;$('snapBtn').classList.remove('on');waterDumpOn=false;$('waterDumpBtn').classList.remove('on');
     hud('🕳 click to place a catch basin (snaps to points/vertices) · click an existing one to remove it · Esc to stop');
   }
@@ -3741,7 +3905,7 @@ function importDXF(text){
   if(!nEnt){hud('no recognized entities found (LINE / ARC / (LW)POLYLINE / SPLINE / ELLIPSE / CIRCLE / POINT / TEXT / MTEXT / HATCH / INSERT / 3DFACE)');return;}
   renderLayerPanel();updateJobPill();scheduleStreetFetch();
   $('fitBtn').disabled=false;$('elevBtn').disabled=SURFACES.length===0;$('waterBtn').disabled=SURFACES.length===0;$('waterDumpBtn').disabled=SURFACES.length===0;$('surfaceDisplayBtn').disabled=SURFACES.length===0;$('elevSpotsBtn').disabled=SURFACES.length===0;$('slopeBtn').disabled=SURFACES.length===0;$('rainPaintToolBtn').disabled=SURFACES.length===0;rainTriCache=null;pipeGraphCache=null;profEGCache.clear();if(PROF.surfaces)SURFACES.forEach(sf=>PROF.surfaces.add(sf.name));renderSlopeSurfSel();
-  $('orbitBtn').disabled=false;$('snapBtn').disabled=false;
+  $('orbitBtn').disabled=false;$('snapBtn').disabled=false;$('measureBtn').disabled=false;
   if(hadNothing)fit();else draw();
   const sk=Object.keys(skipped).filter(t=>!['VIEWPORT','SEQEND','VERTEX','ENDBLK'].includes(t));
   hud(`imported ${nEnt} DXF entit${nEnt===1?'y':'ies'} across ${Object.keys(LAYERS).length} layer(s)`+(sk.length?` · not drawn: ${sk.map(t=>skipped[t]+' '+t).join(', ')}`:''));
@@ -3887,7 +4051,7 @@ function importLandXML(text){
   if(!nSurf&&!nPts&&!nNet&&!nAlign){hud('no <Surface> (TIN), <CgPoint>, <PipeNetwork>, or <Alignment> data found in this file');return;}
   renderLayerPanel();updateJobPill();scheduleStreetFetch();
   $('fitBtn').disabled=false;$('elevBtn').disabled=SURFACES.length===0;$('waterBtn').disabled=SURFACES.length===0;$('waterDumpBtn').disabled=SURFACES.length===0;$('surfaceDisplayBtn').disabled=SURFACES.length===0;$('elevSpotsBtn').disabled=SURFACES.length===0;$('slopeBtn').disabled=SURFACES.length===0;$('rainPaintToolBtn').disabled=SURFACES.length===0;rainTriCache=null;pipeGraphCache=null;profEGCache.clear();if(PROF.surfaces)SURFACES.forEach(sf=>PROF.surfaces.add(sf.name));renderSlopeSurfSel();
-  $('orbitBtn').disabled=false;$('snapBtn').disabled=false;
+  $('orbitBtn').disabled=false;$('snapBtn').disabled=false;$('measureBtn').disabled=false;
   $('geomLabelsBtn').disabled=ALIGNMENTS.length===0;$('cutSheetBtn').disabled=ALIGNMENTS.length===0;
   $('profileBtn').disabled=ALIGNMENTS.length===0;
   if(hadNothing)fit();else draw();
@@ -4012,6 +4176,14 @@ $('slopePickBtn').onclick=()=>{
   setSlopePick(true);hud(`📏 click point A (target: ${SLOPE_TARGET||'topmost visible surface'}) · Esc to stop`);draw();
 };
 $('slopeSurfSel').onchange=()=>{SLOPE_TARGET=$('slopeSurfSel').value;slopeA=null;hud(`slope target surface: ${SLOPE_TARGET||'auto (topmost visible)'}`);draw();};
+$('measureBtn').onclick=()=>{if(!$('measureBtn').disabled)setMeasure(!MEASURE.on);};
+$('measurePickBtn').onclick=()=>setMeasure(!MEASURE.on);
+$('measureFinishBtn').onclick=()=>{measureFinish(false);draw();};
+$('measureUndoBtn').onclick=measureUndo;
+$('measureClearBtn').onclick=()=>{MEASURE.runs=[];MEASURE.pts=[];MEASURE.lastClick=null;renderMeasurePanel();draw();};
+$('measureExportBtn').onclick=()=>{if(!MEASURE.runs.length&&MEASURE.pts.length<2){hud('nothing measured yet');return;}downloadBlob(new Blob([measureCSV()],{type:'text/csv'}),'measurements.csv');};
+$('measureZSel').onchange=()=>{MEASURE.zMode=$('measureZSel').value;hud('🧭 Z for new points: '+$('measureZSel').selectedOptions[0].textContent);};
+$('measureCloseBtn').onclick=()=>{$('measurePanel').classList.remove('show');if(MEASURE.on)setMeasure(false);};
 $('slopeCloseBtn').onclick=()=>{$('slopePanel').classList.remove('show');if(slopePick){setSlopePick(false);draw();}};
 $('slopeClearBtn').onclick=()=>{SLOPE_MEAS=[];slopeA=null;renderSlopeTable();draw();};
 $('slopeExportBtn').onclick=()=>{if(!SLOPE_MEAS.length){hud('no slopes to export yet');return;}
@@ -4053,7 +4225,7 @@ $('elevBtn').onclick=()=>{
   if($('elevBtn').disabled)return;
   if(is3D){hud('Elevation query is 2D only — press O or ⟲ 3D to switch back first');return;}
   if(profileOn){hud('Elevation query is plan-view only — press P or 📈 Profile to switch back first');return;}
-  elevPick=!elevPick;$('elevBtn').classList.toggle('on',elevPick);if(elevPick&&slopePick)setSlopePick(false);
+  elevPick=!elevPick;$('elevBtn').classList.toggle('on',elevPick);if(elevPick&&slopePick)setSlopePick(false);if(elevPick&&MEASURE.on)setMeasure(false);
   hud(elevPick?'click a visible, unlocked TIN surface to save its elevation there (snaps to nearby TIN vertices/wireframe, CAD lines/points first) — click again to save more spots, Esc or ⛰ Elevation to stop':'elevation picking stopped');
 };
 $('waterBtn').onclick=()=>{
@@ -4140,7 +4312,7 @@ $('snapBtn').onclick=()=>{
   if($('snapBtn').disabled)return;
   if(is3D){hud('Snap is 2D only — press O or ⟲ 3D to switch back first');return;}
   if(profileOn){hud('Snap is plan-view only — press P or 📈 Profile to switch back first');return;}
-  snapOn=!snapOn;$('snapBtn').classList.toggle('on',snapOn);liveSnap=null;if(snapOn&&slopePick)setSlopePick(false);
+  snapOn=!snapOn;$('snapBtn').classList.toggle('on',snapOn);liveSnap=null;if(snapOn&&slopePick)setSlopePick(false);if(snapOn&&MEASURE.on)setMeasure(false);
   hud(snapOn?'hover to snap onto an endpoint/intersection/midpoint/nearest point · Esc to cancel':'snap cancelled');
   draw();
 };
@@ -4153,7 +4325,7 @@ $('orbitBtn').onclick=()=>{
   if(is3D&&profileOn){profileOn=false;$('profileBtn').classList.remove('on');$('profilePanel').classList.remove('show');}
   $('legend').style.display=is3D?'none':'';
   $('view3dBox').classList.toggle('show',is3D);orbitHover=null;
-  if(is3D){if(declutterOn)setDeclutter(false);if(basinPlaceOn)setBasinPlace(false);if(rainPaintOn)setRainPaint(false);if(slopePick)setSlopePick(false);$('slopePanel').classList.remove('show');elevPick=false;$('elevBtn').classList.remove('on');snapOn=false;$('snapBtn').classList.remove('on');waterDumpOn=false;$('waterDumpBtn').classList.remove('on');}   // 🌊 Water Flow / a live 💧 dump keep running and rendering in 3D too — only the CLICK-driven tools (which need a screen->world inverse the oblique 3D projection doesn't have) get disarmed here
+  if(is3D){if(MEASURE.on)setMeasure(false);if(declutterOn)setDeclutter(false);if(basinPlaceOn)setBasinPlace(false);if(rainPaintOn)setRainPaint(false);if(slopePick)setSlopePick(false);$('slopePanel').classList.remove('show');elevPick=false;$('elevBtn').classList.remove('on');snapOn=false;$('snapBtn').classList.remove('on');waterDumpOn=false;$('waterDumpBtn').classList.remove('on');}   // 🌊 Water Flow / a live 💧 dump keep running and rendering in 3D too — only the CLICK-driven tools (which need a screen->world inverse the oblique 3D projection doesn't have) get disarmed here
   cv.style.cursor=is3D?'grab':'crosshair';
   fit();hud(is3D?'3D orbit — drag to rotate (re-centers on click), shift-drag or middle-drag to pan, wheel to zoom · touch: one finger to orbit, two fingers to pinch-zoom/pan':'back to 2D plan view');
 };
@@ -4170,6 +4342,7 @@ $('profileBtn').onclick=()=>{
   if(profileOn){
     if(is3D){is3D=false;$('orbitBtn').classList.remove('on');$('view3dBox').classList.remove('show');}
     elevPick=false;$('elevBtn').classList.remove('on');
+    if(MEASURE.on)setMeasure(false);
     if(slopePick)setSlopePick(false);
     if(rainPaintOn)setRainPaint(false);
     if(basinPlaceOn)setBasinPlace(false);
@@ -4257,6 +4430,7 @@ cv.addEventListener('pointerdown',e=>{
   if(basinPlaceOn){basinClick(sx,sy);return;}
   if(rainPaintOn){paintRainAt(sx,sy);drag={rainPaint:true};try{cv.setPointerCapture(e.pointerId);}catch(_){}draw();return;}
   if(declutterOn){const h=declutterHit(sx,sy);if(h)declutterRemove(h);else hud('✂ nothing removable there — click a cut-sheet stake or a 📍 label · Esc to stop');return;}
+  if(MEASURE.on){measureClick(sx,sy);return;}
   if(slopePick){slopeClick(sx,sy);return;}
   if(elevPick){
     // stays armed after the click, so several spots can be saved in a row without re-toggling
@@ -4312,6 +4486,7 @@ cv.addEventListener('pointermove',e=>{
     if(drag&&drag.rainPaint){paintRainAt(sx,sy);if(RAIN.mode==='painted'&&waterOn&&!waterParticles.some(p=>!p.dumped&&isFinite(p.E)))initWaterParticles();}
     draw();return;
   }
+  if(MEASURE.on&&!is3D&&!drag){measureHover(sx,sy);return;}
   if(slopePick&&!is3D&&!drag){
     liveSnap=snapPoint(sx,sy);
     const[E,N]=liveSnap?[liveSnap.E,liveSnap.N]:S2W(sx,sy);
@@ -4378,7 +4553,7 @@ function endTouchPointer(e){                                // shared by pointer
       const dt=performance.now()-tapCandidate.t,moved=Math.hypot(sx-tapCandidate.sx,sy-tapCandidate.sy);
       if(dt<TAP_MAX_MS&&moved<TAP_MAX_MOVE_PX){
         if(lastTap&&performance.now()-lastTap.t<DOUBLE_TAP_MS&&Math.hypot(sx-lastTap.sx,sy-lastTap.sy)<DOUBLE_TAP_PX){
-          if(!$('fitBtn').disabled){fit();hud('double-tap — fit to view');}
+          if(!$('fitBtn').disabled&&!MEASURE.on){fit();hud('double-tap — fit to view');}
           lastTap=null;
         }else lastTap={t:performance.now(),sx,sy};
       }
@@ -4399,7 +4574,8 @@ cv.addEventListener('wheel',e=>{
 window.addEventListener('keydown',e=>{
   if(e.key!=='Escape'&&/^(INPUT|SELECT|TEXTAREA)$/.test((e.target&&e.target.tagName)||''))return;   // typing a station/interval — don't trigger F/O/P
   if(e.key==='Escape'){
-    if(declutterOn){setDeclutter(false);hud('✂ declutter off');}
+    if(MEASURE.on){if(MEASURE.pts.length){const had=MEASURE.pts.length>1;measureFinish(false);if(!had)hud('🧭 point cleared — click to start, Esc again to stop');}else{setMeasure(false);hud('🧭 measure stopped');}draw();}
+    else if(declutterOn){setDeclutter(false);hud('✂ declutter off');}
     else if(profileOn&&PROF.tool){if(PROF.measA){PROF.measA=null;hud('measure point A cleared');}else{PROF.tool=null;hud('profile tool off');}renderProfileExtras();draw();}
     else if(basinPlaceOn){setBasinPlace(false);hud('catch basin placing stopped');}
     else if(rainPaintOn){setRainPaint(false);hud('rain area painting stopped');}
@@ -4408,6 +4584,8 @@ window.addEventListener('keydown',e=>{
     else if(waterDumpOn){waterDumpOn=false;$('waterDumpBtn').classList.remove('on');hud('dump water cancelled');draw();}
     else if(snapOn){snapOn=false;$('snapBtn').classList.remove('on');liveSnap=null;hud('snap cancelled');draw();}
   }
+  else if(MEASURE.on&&e.key==='Enter'){measureFinish(false);draw();}
+  else if(MEASURE.on&&e.key==='Backspace'){e.preventDefault();measureUndo();}
   else if(e.key.toLowerCase()==='f'&&!$('fitBtn').disabled)fit();
   else if(e.key.toLowerCase()==='t'&&!e.ctrlKey&&!e.metaKey)$('themeBtn').onclick();
   else if(e.key.toLowerCase()==='v'&&is3D){$('perspChk').checked=!$('perspChk').checked;$('perspChk').onchange();}
@@ -4583,7 +4761,7 @@ function resetPanels(){
   });
   hud('panels reset to their default positions');
 }
-[['layerPanel'],['curvePanel'],['cutPanel'],['pipeLabelPanel'],['surfaceDisplayPanel'],['geomLabelPanel'],['geomTablePanel'],['elevSpotsPanel'],['slopePanel'],['profilePanel'],
+[['layerPanel'],['curvePanel'],['cutPanel'],['pipeLabelPanel'],['surfaceDisplayPanel'],['geomLabelPanel'],['geomTablePanel'],['elevSpotsPanel'],['slopePanel'],['measurePanel'],['profilePanel'],
  ['view3dBox','⟲ 3D View'],['rainBox','🌧 Rain & Drainage'],['snapBox','🧲 Snap'],['legend','Legend',{collapsed:true}]]
   .forEach(([id,title,opt])=>makeFloating($(id),title||'',opt));
 $('resetPanelsBtn').onclick=resetPanels;
@@ -4605,7 +4783,7 @@ document.addEventListener('pointerdown',e=>{if(!e.target.closest('#importMenu,#i
 
 
 /* ---------- version badge — CHANGED ON EVERY PUSH (new animal + name + build+1; see CLAUDE.md), mirroring FBK-Checker's own fruit badge ---------- */
-const VERSION={animal:'🦎',name:'GECKO',build:38};
+const VERSION={animal:'🦌',name:'DEER',build:39};
 function rotateAnimal(){const b=$('animalBadge');b.style.transform='rotate(360deg)';setTimeout(()=>{b.style.transform='rotate(0deg)';},200);}
 function showVersion(){const b=$('animalBadge');b.textContent=`${VERSION.animal} ${VERSION.name} · b${VERSION.build}`;
   b.title=`Build ${VERSION.build} · ${VERSION.name} — if this matches what Claude pushed, you're on the latest (no cache)`;}

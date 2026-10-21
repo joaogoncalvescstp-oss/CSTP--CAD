@@ -460,6 +460,24 @@ dependencies, and nothing to install.
   8.7 → 18.3 (point categories). It combines with ☀ Light; click 👁 to go
   back to the original palette.
 
+## Measure
+
+- **🧭 Measure** (Surface group, 2D plan) measures with object snaps. Click
+  points; each one snaps to an endpoint, intersection, midpoint or nearest
+  point (the 🧲 Snap box toggles which), else it uses the raw cursor spot.
+  Double-click or **Enter** finishes a run, **Backspace** undoes the last
+  point, **Esc** ends the run and then stops the tool.
+- Each leg shows horizontal distance, slope distance, vertical distance
+  (ΔZ), grade % and its survey quadrant bearing (e.g. `N 45°00'00" E`);
+  each interior vertex shows the angle between its two legs plus the
+  deflection angle (L/R). A dashed rubber band shows the live leg.
+- The panel lists totals for the run: total horizontal distance, total
+  slope distance, net vertical distance (with total rise and fall), and the
+  start→end distance and bearing. Every run is listed in a table and can be
+  exported as CSV.
+- Z for each point comes from the snapped object's own Z, else the topmost
+  visible surface (or the reverse, or none for 2D-only), set in the panel.
+
 ## Slope between two points
 
 - **📏 Slope 2-Pt** measures the slope between two picked points on a
