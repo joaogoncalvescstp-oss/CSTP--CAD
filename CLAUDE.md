@@ -45,6 +45,7 @@ The badge renders as `<emoji> <NAME> · b<build>`.
 | 41 | 🦁 LION | ↥ Import DWG works: LibreDWG (WASM, lazy-loaded from jsDelivr) converts DWG → DXF in the browser, then the DXF importer loads it |
 | 42 | 🐬 DOLPHIN | 🧭 decluttered UI: slim top bar (Import / view / 🔍 Find tool / ⚙ Display ▾), grouped left tool rail (collapsible to icons), Ctrl+K tool search, visible keyboard focus + aria-pressed |
 | 43 | 🦙 LLAMA | 📈 profile: horizontal key-point labels (PC/PT/PI/MID/PCC/PRC, spirals, POB/POE) on the grade line with STA / EL, toggle in the Profile panel |
+| 44 | 🐫 CAMEL | 📍 Auto CL referencing: "CL" alignments = centerlines, "BC" = curbs; curb / pipe points stationed on the nearest CL (curb returns hand off at the curve MID), CL station first + own station second (smaller) |
 
 ## Workflow
 

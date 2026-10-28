@@ -270,6 +270,7 @@ label.btn.file:focus-within{outline:2px solid var(--focus);outline-offset:1px}
       <label style="display:flex;align-items:center;gap:6px;margin-bottom:6px;cursor:pointer"><input type="checkbox" id="plSlope" checked> Pipe % slope</label>
       <label style="display:flex;align-items:center;gap:6px;margin-bottom:6px;cursor:pointer"><input type="checkbox" id="plDia" checked> Pipe diameter</label>
       <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="plInvert" checked> Pipe invert elevations</label>
+      <label style="display:flex;align-items:center;gap:6px;margin-top:6px;cursor:pointer"><input type="checkbox" id="plSta" checked> Structure CL station + offset (nearest "CL" alignment)</label>
     </div>
     <div class="panel" id="surfaceDisplayPanel">
       <h4><span>Surface Display</span><button id="surfaceDisplayCloseBtn" title="Close">✕</button></h4>
@@ -305,7 +306,7 @@ label.btn.file:focus-within{outline:2px solid var(--focus);outline-offset:1px}
     </div>
     <div class="panel" id="geomLabelPanel">
       <h4><span>Label Geometry Points</span><button id="geomLabelCloseBtn" title="Close">✕</button></h4>
-      <details class="help"><summary>ℹ How this works</summary><p class="note">1) Pick the <b>reference alignment</b> — this defines station 0 and direction. 2) Check one or more <b>targets</b> to label: an alignment (its own curves/spirals/profile give real PC/PT/PI/MID/CC/PCC/PRC/TS/SC/CS/ST/SPI/PVC/PVT/PVI/PVCC/PVRC/Hi/Lo/POB/POE/EQN) or a plain line/layer (no curve data, so only its segment MID points can be labeled). Checking several targets at once labels them all together, stationed against the same reference — handy for e.g. labeling a mainline plus every side street off it in one pass. Most types' station is the closest match along the reference (so checking the reference as its own target recovers native stationing); a few — EQN, POT/POC/POS, and every vertical/profile point — always keep the station they're actually defined at, since re-stationing them against an unrelated alignment wouldn't mean anything. CC (circle center) shows no station at all — it's off the physical roadway, at radius distance from the curve.</p></details>
+      <details class="help"><summary>ℹ How this works</summary><p class="note"><b>Auto</b> reference (default when alignments follow the naming convention): an alignment with <b>CL</b> in its name is a road centerline, one with <b>BC</b> is a curb. Every curb / line point is stationed on the nearest CL; on a <b>curb return</b> (a BC curve between two CLs) the curve's <b>MID</b> is the hand-off — points before it use the first street's CL, points after it the cross street's CL, and the MID / PI show both. Labels show the CL station + offset first and the line's own true station second, smaller. Pipe structures get their CL station too (🏷 Pipe Labels). Otherwise: 1) Pick the <b>reference alignment</b> — this defines station 0 and direction. 2) Check one or more <b>targets</b> to label: an alignment (its own curves/spirals/profile give real PC/PT/PI/MID/CC/PCC/PRC/TS/SC/CS/ST/SPI/PVC/PVT/PVI/PVCC/PVRC/Hi/Lo/POB/POE/EQN) or a plain line/layer (no curve data, so only its segment MID points can be labeled). Checking several targets at once labels them all together, stationed against the same reference — handy for e.g. labeling a mainline plus every side street off it in one pass. Most types' station is the closest match along the reference (so checking the reference as its own target recovers native stationing); a few — EQN, POT/POC/POS, and every vertical/profile point — always keep the station they're actually defined at, since re-stationing them against an unrelated alignment wouldn't mean anything. CC (circle center) shows no station at all — it's off the physical roadway, at radius distance from the curve.</p></details>
       <label style="display:block;margin-bottom:4px;font-size:11px;color:var(--mut)">Reference alignment (stationing)</label>
       <select id="geomRefSel" style="width:100%;margin-bottom:8px;background:var(--panel2);color:var(--text);border:1px solid var(--rule);border-radius:5px;padding:5px"></select>
       <label style="display:block;margin-bottom:4px;font-size:11px;color:var(--mut)">Target alignment(s)/line(s) to label — check one or more</label>
@@ -459,7 +460,7 @@ let ENTITIES=[];                                           // imported DXF entit
 let SURFACES=[];                                           // imported LandXML TIN surfaces: {name,layer,tris:[[{E,N,Z}x3],...]}
 let POINTS=[];                                             // imported LandXML CgPoints: {id,E,N,Z,code}
 let PIPE_NETWORKS=[];                                       // imported LandXML Civil3D pipe networks: {name,type,layer,structs:[{name,desc,E,N,rim,sump,shape,diameter,dummy,inverts:[{elev,dir,pipe}]}],pipes:[{name,desc,startName,endName,length,slope,diameter,material}]}
-let PIPE_LABEL_SHOW={rim:true,depth:true,slope:true,diameter:true,invert:true};   // which fields the pipe/manhole labels show
+let PIPE_LABEL_SHOW={rim:true,depth:true,slope:true,diameter:true,invert:true,station:true};   // which fields the pipe/manhole labels show
 let ALIGNMENTS=[];                                          // imported LandXML horizontal alignments: {name,layer,elements:[{type:'line'|'curve'|'spiral',start,end,staStart,length,center?,radius?,rot?,a0?,a1?}]} — the only import source with real PC/PT/station data (a plain DXF line has no curve/chainage info at all)
 let GEOM_POINTS=[];                                          // last "📍 Label Points" result: [{type:'PC'|'PT'|'MID',E,N,Z,sta}], sta = station along the chosen reference alignment (null if it couldn't be projected)
 let GEOM_LABEL_SHOW={horizontal:true,spiral:true,vertical:true,reference:true,custom:true};   // which point-type categories currently draw (independent of what was computed)
@@ -1044,20 +1045,24 @@ function drawLabel(text,x,y,color){
 // and tries again, a few times, rather than silently overlapping or hiding real data.
 let labelOccupied=[];
 function rectsOverlap(a,b){return a.x0<b.x1&&a.x1>b.x0&&a.y0<b.y1&&a.y1>b.y0;}
+// a line is a plain string (drawn in the current ctx.font) or {t,font,color} — e.g. a
+// secondary station line in a smaller font under the primary one
 function placeLabelBlock(lines,x,y0,color,lh){
-  const w=Math.max(...lines.map(l=>ctx.measureText(l).width))+4;
+  const base=ctx.font,L=lines.map(l=>typeof l==='string'?{t:l,font:base}:{font:base,...l});
+  const w=Math.max(...L.map(l=>{ctx.font=l.font;return ctx.measureText(l.t).width;}))+4;
+  const drawAll=y=>{L.forEach((l,i)=>{ctx.font=l.font;drawLabel(l.t,x,y+lh*i,l.color||color);});ctx.font=base;};
   let y=y0;
   for(let attempt=0;attempt<6;attempt++){
-    const rect={x0:x-2,y0:y-lh,x1:x+w,y1:y+lh*(lines.length-1)+4};
+    const rect={x0:x-2,y0:y-lh,x1:x+w,y1:y+lh*(L.length-1)+4};
     if(!labelOccupied.some(r=>rectsOverlap(r,rect))){
-      lines.forEach((ln,i)=>drawLabel(ln,x,y+lh*i,color));
+      drawAll(y);
       labelOccupied.push(rect);
       return;
     }
-    y+=lh*lines.length+4;
+    y+=lh*L.length+4;
   }
-  lines.forEach((ln,i)=>drawLabel(ln,x,y+lh*i,color));   // out of dodge attempts — draw anyway, never silently drop real data
-  labelOccupied.push({x0:x-2,y0:y-lh,x1:x+w,y1:y+lh*(lines.length-1)+4});
+  drawAll(y);   // out of dodge attempts — draw anyway, never silently drop real data
+  labelOccupied.push({x0:x-2,y0:y-lh,x1:x+w,y1:y+lh*(L.length-1)+4});
 }
 function resize(){const r=cv.parentElement.getBoundingClientRect();
   cv.width=r.width*devicePixelRatio;cv.height=r.height*devicePixelRatio;
@@ -1283,7 +1288,7 @@ const PIPE_LABEL_MIN_ZOOM=1.2;   // below this scale, too many real manholes can
 // proj(E,N,Z) -> [x,y] screen coords — W2S (Z ignored) for 2D, P3 for 3D orbit; scale is
 // view.s/orbit.s respectively, used only to decide whether labels are legible yet.
 function drawPipeNetworks(proj,scale){
-  const showLabels=scale>PIPE_LABEL_MIN_ZOOM;
+  const showLabels=scale>PIPE_LABEL_MIN_ZOOM,cls=showLabels&&PIPE_LABEL_SHOW.station?clAlignments():[];
   PIPE_NETWORKS.forEach(net=>{
     const ly=LAYERS[net.layer];if(ly&&!ly.visible)return;
     ctx.globalAlpha=ly&&ly.locked?0.5:1;
@@ -1320,6 +1325,8 @@ function drawPipeNetworks(proj,scale){
       const lines=[s.name.replace(/\s*\([^)]*\)\s*$/,'')];   // drop the "(NETWORK-NAME)" suffix Civil3D appends to every struct/pipe name
       if(PIPE_LABEL_SHOW.rim&&s.rim!=null)lines.push(`RIM ${s.rim.toFixed(2)}`);
       if(PIPE_LABEL_SHOW.depth){const d=structDepth(s);if(d!=null)lines.push(`DEPTH ${d.toFixed(2)}`);}
+      if(PIPE_LABEL_SHOW.station&&cls.length){const r=nearestCLRef(s.E,s.N,cls);
+        if(r){lines.push({t:`STA ${formatStation(r.sta)}${r.side?` ${r.off.toFixed(2)}' ${r.side}`:''}`,color:'#ffd24a'});lines.push({t:r.name,font:STA_SUB_FONT,color:'#ffd24a'});}}
       ctx.font='700 10px ui-monospace,monospace';
       placeLabelBlock(lines,x+9,y-9,'#e7ecf7',11);
     });
@@ -1399,6 +1406,62 @@ function projectStation(alignment,E,N){
   let best=null;
   alignment.elements.forEach(el=>{const r=projectOntoElement(el,E,N);if(!best||r.dist<best.dist)best=r;});
   return best?best.sta:null;
+}
+/* ---------- 🛣 auto CL referencing ----------
+   Naming convention: an alignment with "CL" in its name is a road centerline, one with "BC"
+   (back of curb) is a curb line. In the "Auto" reference mode every curb point (and every
+   pipe structure) is stationed against the nearest CL — with one exception: on a curb RETURN
+   (a BC curve whose start and end sit nearest two different CLs, i.e. the corner between a
+   street and its cross street) the curve's MID is the hand-off point — everything before MID
+   is stationed on the CL at the curve's start, everything after on the CL at its end, and the
+   MID / PI themselves show both CL stations. */
+const CL_NAME_RE=/(^|[^a-z])(c\/?l|centerline|centreline)([^a-z]|$)/i;
+const BC_NAME_RE=/(^|[^a-z])(bc|boc|curb)([^a-z]|$)/i;
+function clAlignments(){
+  let cl=ALIGNMENTS.filter(a=>CL_NAME_RE.test(a.name)&&!BC_NAME_RE.test(a.name));
+  if(!cl.length)cl=ALIGNMENTS.filter(a=>!BC_NAME_RE.test(a.name)&&!CURB_RE.test(a.name));
+  return cl;
+}
+// station + signed offset of (E,N) on one alignment: {name,sta,off,side,dist}
+function stationOffset(a,E,N){
+  let best=null;a.elements.forEach(el=>{const r=projectOntoElement(el,E,N);if(!best||r.dist<best.dist)best=r;});
+  if(!best)return null;
+  const P=stationToPoint(a,best.sta),end=a.elements[a.elements.length-1],sEnd=end.staStart+end.length;
+  const ds=best.sta+0.5<=sEnd?0.5:-0.5,Q=stationToPoint(a,best.sta+ds);
+  const cross=((Q.E-P.E)*(N-P.N)-(Q.N-P.N)*(E-P.E))*Math.sign(ds);
+  const off=Math.hypot(E-P.E,N-P.N);
+  return{name:a.name,sta:best.sta,off,side:off<0.005?'':cross>0?'LT':'RT',dist:best.dist};
+}
+function nearestCLRef(E,N,cls,exclude){
+  let best=null;(cls||clAlignments()).forEach(a=>{if(a===exclude)return;const r=stationOffset(a,E,N);if(r&&(!best||r.dist<best.dist))best=r;});
+  return best;
+}
+// CL reference(s) for one key point of a target alignment (or plain line): [] when the target is
+// itself a CL (its own stationing is already the CL's), else 1 ref — or 2 at a curb return's MID/PI
+function autoCLRefs(p,align,cls){
+  cls=cls||clAlignments();
+  if(!cls.length||p.type==='CC'||(align&&cls.includes(align)))return [];
+  const el=align&&(p.curve||(p.ownSta!=null?align.elements.find(e=>e.type==='curve'&&p.ownSta>=e.staStart-1e-6&&p.ownSta<=e.staStart+e.length+1e-6):null));
+  if(el&&el.type==='curve'){
+    const a=nearestCLRef(el.start.E,el.start.N,cls),b=nearestCLRef(el.end.E,el.end.N,cls);
+    if(a&&b&&a.name!==b.name){                                  // curb return between two CLs
+      const A=cls.find(c=>c.name===a.name),B=cls.find(c=>c.name===b.name),mid=el.staStart+el.length/2;
+      if(p.ownSta==null||Math.abs(p.ownSta-mid)<0.01)return [stationOffset(A,p.E,p.N),stationOffset(B,p.E,p.N)];
+      return [stationOffset(p.ownSta<mid?A:B,p.E,p.N)];
+    }
+  }
+  const r=nearestCLRef(p.E,p.N,cls);return r?[r]:[];
+}
+// label lines for a point's station: referenced CL station(s) first, the line's own true
+// station second in a smaller font
+const STA_SUB_FONT='600 9px ui-monospace,monospace';
+function stationLabelLines(p){
+  if(p.refs&&p.refs.length){
+    const out=p.refs.map(r=>`STA ${formatStation(r.sta)}${r.side?` ${r.off.toFixed(2)}' ${r.side}`:''} ${r.name}`);
+    if(p.ownSta!=null)out.push({t:`(${BC_NAME_RE.test(p.target||'')?'BC':'own'} STA ${formatStation(p.ownSta)})`,font:STA_SUB_FONT});
+    return out;
+  }
+  return p.sta!=null?[`STA ${formatStation(p.sta)}`]:[];
 }
 // inverse of projectStation: given a station along an alignment's own chain, the (E,N,Z) it
 // falls at. A station outside the whole chain clamps to the nearest end rather than
@@ -1736,7 +1799,8 @@ function drawProfile(){
     const[x,y]=STA2S(p.sta,elev),color=GEOM_CATEGORY_COLOR[GEOM_TYPE_CATEGORY[p.type]]||'#ff7ab3';
     drawGeomMarker(x,y,p.type,color);
     ctx.font='700 10px ui-monospace,monospace';
-    placeLabelBlock([p.type,`STA ${formatStation(p.sta)}`,`EL ${elev.toFixed(2)}`],x+6,y+18,color,11);
+    const q={...p,ownSta:p.sta,target:a.name};q.refs=autoCLRefs(q,a);
+    placeLabelBlock([p.type,...stationLabelLines(q),`EL ${elev.toFixed(2)}`],x+6,y+18,color,11);
   });
   drawProfileGrades(a);
   if(PROF.tool==='adjust'&&hasProfile)a.profile.pvis.forEach((p,i)=>{const[x,y]=STA2S(p.sta,p.elev);
@@ -2338,8 +2402,7 @@ function drawGeomLabels(proj){
     const color=GEOM_CATEGORY_COLOR[cat];
     drawGeomMarker(x,y,p.type,color);
     ctx.font='700 10px ui-monospace,monospace';
-    const lines=[p.type];
-    if(p.sta!=null)lines.push(`STA ${formatStation(p.sta)}`);
+    const lines=[p.type,...stationLabelLines(p)];
     const elev=geomPointElev(p);   // a vertical/profile point's own design elevation, or the point's plain geometry Z otherwise — same fallback the table uses, so every category shows an elevation whenever the source data actually carries one
     if(elev!=null)lines.push(`EL ${elev.toFixed(2)}${p.elevSrc==='surface'?' (EG)':''}`);
     if(p.note)lines.push(p.note);
@@ -2427,10 +2490,10 @@ function renderGeomLabelSelects(){
   // "none" = don't re-station anything: every alignment point keeps the station its own
   // LandXML defines (a plain line/layer has none, so its MIDs show no station)
   refSel.innerHTML=ALIGNMENTS.length
-    ?'<option value="none">None — each alignment\'s own XML stationing</option>'+ALIGNMENTS.map(a=>`<option value="align:${a.name}">${a.name}</option>`).join('')
+    ?'<option value="auto">Auto — CL stations for BC curbs (curb returns switch CL at curve MID)</option><option value="none">None — each alignment\'s own XML stationing</option>'+ALIGNMENTS.map(a=>`<option value="align:${a.name}">${a.name}</option>`).join('')
     :'<option value="">— import a LandXML file with an Alignment first —</option>';
   if(prevRef&&[...refSel.options].some(o=>o.value===prevRef))refSel.value=prevRef;
-  else if(ALIGNMENTS.length)refSel.value='align:'+ALIGNMENTS[0].name;
+  else if(ALIGNMENTS.length)refSel.value=ALIGNMENTS.some(a=>CL_NAME_RE.test(a.name))&&ALIGNMENTS.some(a=>BC_NAME_RE.test(a.name))?'auto':'align:'+ALIGNMENTS[0].name;
 
   // target is a checklist (not a single <select>) so several alignments/lines can be
   // labeled together in one pass — e.g. a mainline plus every side street off it.
@@ -2487,24 +2550,30 @@ function renderGeomTable(){
   const tbl=$('geomTable');
   if(!GEOM_POINTS.length){tbl.innerHTML='<tr><td class="note" style="padding:6px">no points labeled yet — use 📍 Label Points first</td></tr>';return;}
   const rows=geomTableRows();
-  const heads=['#','Type','Category','Target','Station','Northing','Easting','Elevation','Note'];
+  const heads=['#','Type','Category','Target','Station','Offset','Ref. CL','Line STA','Northing','Easting','Elevation','Note'];
   let html='<thead><tr>'+heads.map(h=>`<th style="text-align:left;padding:3px 8px;border-bottom:1px solid var(--rule);position:sticky;top:0;background:var(--panel)">${h}</th>`).join('')+'</tr></thead><tbody>';
   rows.forEach((p,i)=>{
     const cat=GEOM_TYPE_CATEGORY[p.type]||'reference';
     const elev=geomPointElev(p);
-    const cells=[i+1,p.type,cat,p.target||'',p.sta!=null?formatStation(p.sta):'—',p.N.toFixed(3),p.E.toFixed(3),elev!=null?elev.toFixed(2):'—',geomElevNote(p)];
+    const cells=[i+1,p.type,cat,p.target||'',...geomRefCells(p,'—'),p.N.toFixed(3),p.E.toFixed(3),elev!=null?elev.toFixed(2):'—',geomElevNote(p)];
     html+='<tr>'+cells.map(v=>`<td style="padding:3px 8px;border-bottom:1px solid var(--rule)">${v}</td>`).join('')+'</tr>';
   });
   tbl.innerHTML=html+'</tbody>';
 }
+// Station / Offset / Ref. CL / Line STA cells — a curb return's MID lists both CLs, "A / B"
+function geomRefCells(p,blank){
+  const R=p.refs&&p.refs.length?p.refs:null;
+  return R?[R.map(r=>formatStation(r.sta)).join(' / '),R.map(r=>r.side?`${r.off.toFixed(2)} ${r.side}`:'0.00').join(' / '),R.map(r=>r.name).join(' / '),p.ownSta!=null?formatStation(p.ownSta):blank]
+    :[p.sta!=null?formatStation(p.sta):blank,blank,blank,blank];
+}
 function geomCSVField(v){v=String(v??'');return/[",\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v;}
 function geomTableCSV(){
-  const heads=['#','Type','Category','Target','Station','Northing','Easting','Elevation','Note'];
+  const heads=['#','Type','Category','Target','Station','Offset','Ref. CL','Line STA','Northing','Easting','Elevation','Note'];
   const lines=[heads.join(',')];
   geomTableRows().forEach((p,i)=>{
     const cat=GEOM_TYPE_CATEGORY[p.type]||'reference';
     const elev=geomPointElev(p);
-    lines.push([i+1,p.type,cat,p.target||'',p.sta!=null?formatStation(p.sta):'',p.N.toFixed(3),p.E.toFixed(3),elev!=null?elev.toFixed(2):'',geomElevNote(p)].map(geomCSVField).join(','));
+    lines.push([i+1,p.type,cat,p.target||'',...geomRefCells(p,''),p.N.toFixed(3),p.E.toFixed(3),elev!=null?elev.toFixed(2):'',geomElevNote(p)].map(geomCSVField).join(','));
   });
   return lines.join('\r\n');
 }
@@ -4226,7 +4295,7 @@ $('layersBtn').onclick=()=>{renderLayerPanel();$('layerPanel').classList.toggle(
 $('layerCloseBtn').onclick=()=>$('layerPanel').classList.remove('show');
 $('pipeLabelsBtn').onclick=()=>$('pipeLabelPanel').classList.toggle('show');
 $('pipeLabelCloseBtn').onclick=()=>$('pipeLabelPanel').classList.remove('show');
-[['plRim','rim'],['plDepth','depth'],['plSlope','slope'],['plDia','diameter'],['plInvert','invert']].forEach(([id,key])=>{
+[['plRim','rim'],['plDepth','depth'],['plSlope','slope'],['plDia','diameter'],['plInvert','invert'],['plSta','station']].forEach(([id,key])=>{
   $(id).onchange=()=>{PIPE_LABEL_SHOW[key]=$(id).checked;draw();};
 });
 $('geomLabelsBtn').onclick=()=>{if($('geomLabelsBtn').disabled)return;renderGeomLabelSelects();$('geomLabelPanel').classList.toggle('show');};
@@ -4262,23 +4331,25 @@ $('curveCloseBtn').onclick=()=>{$('curvePanel').classList.remove('show');draw();
 $('curveCsvBtn').onclick=()=>{if(!CURVE_SEL)return;const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([curveCSV()],{type:'text/csv'}));
   a.download=`${CURVE_SEL.align?CURVE_SEL.align.name:'curve'}-curve-${curveProps(CURVE_SEL.el,CURVE_SEL.align).idx}.csv`;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);};
 $('geomApplyBtn').onclick=()=>{
-  const refVal=$('geomRefSel').value||'',noRef=refVal==='none';
-  const ref=noRef?null:ALIGNMENTS.find(a=>a.name===refVal.slice(6));
+  const refVal=$('geomRefSel').value||'',noRef=refVal==='none',auto=refVal==='auto';
+  const ref=noRef||auto?null:ALIGNMENTS.find(a=>a.name===refVal.slice(6));
   const targets=Array.from(document.querySelectorAll('#geomTargetList input.geomTgt:checked')).map(c=>resolveTargetRef(c.value)).filter(Boolean);
-  if((!ref&&!noRef)||!targets.length){$('geomLabelStatus').textContent='pick a reference alignment (or None) and at least one target first.';return;}
+  if((!ref&&!noRef&&!auto)||!targets.length){$('geomLabelStatus').textContent='pick a reference alignment (or None) and at least one target first.';return;}
   const extraStations=parseStationList($('geomStationInput').value);
   let raw=[];
   targets.forEach(target=>{
     const targetName=target.kind==='alignment'?target.obj.name:target.name;
     const pts=collectKeyPoints(target,target.kind==='alignment'?extraStations:[]);
-    pts.forEach(p=>p.target=targetName);
+    pts.forEach(p=>{p.target=targetName;p.targetAlign=target.kind==='alignment'?target.obj:null;});
     raw=raw.concat(pts);
   });
-  GEOM_POINTS=noRef?raw:raw.map(p=>GEOM_REPROJECT.has(p.type)?{...p,sta:projectStation(ref,p.E,p.N)}:p);
+  const cls=auto?clAlignments():null;
+  GEOM_POINTS=auto?raw.map(p=>{const q={...p,ownSta:p.sta};q.refs=autoCLRefs(q,p.targetAlign,cls);if(q.refs.length)q.sta=q.refs[0].sta;return q;})
+    :noRef?raw:raw.map(p=>GEOM_REPROJECT.has(p.type)?{...p,sta:projectStation(ref,p.E,p.N)}:p);
   const targetNames=targets.map(t=>t.kind==='alignment'?t.obj.name:t.name).join(', ');
   const counts={};GEOM_POINTS.forEach(p=>{counts[p.type]=(counts[p.type]||0)+1;});
   const summary=Object.keys(counts).sort().map(t=>`${counts[t]} ${t}`).join(', ')||'none';
-  let msg=`labeled ${GEOM_POINTS.length} point(s) on ${targets.length} target(s) [${targetNames}] — ${summary} — ${noRef?'original stationing from each alignment\'s own XML (no reference)':`stationed along "${ref.name}"`}`;
+  let msg=`labeled ${GEOM_POINTS.length} point(s) on ${targets.length} target(s) [${targetNames}] — ${summary} — ${auto?`auto: BC curbs / lines stationed on the nearest CL (${cls.map(c=>c.name).join(', ')||'no CL alignment found'}), curb returns switch CL at the curve MID`:noRef?'original stationing from each alignment\'s own XML (no reference)':`stationed along "${ref.name}"`}`;
   if(targets.some(t=>t.kind==='layer'))msg+=noRef?' (plain line/layer target(s) have no stationing of their own — their MIDs show no station without a reference)':' (plain line/layer target(s) have no curve/profile data — only MID computed there)';
   if(GEOM_REMOVED.size)GEOM_POINTS=GEOM_POINTS.filter(q=>!GEOM_REMOVED.has(geomPtKey(q)));   // stay removed across re-labels
   $('geomLabelStatus').textContent=msg;hud(msg);
@@ -5052,7 +5123,7 @@ window.addEventListener('keydown',e=>{
 
 
 /* ---------- version badge — CHANGED ON EVERY PUSH (new animal + name + build+1; see CLAUDE.md), mirroring FBK-Checker's own fruit badge ---------- */
-const VERSION={animal:'🦙',name:'LLAMA',build:43};
+const VERSION={animal:'🐫',name:'CAMEL',build:44};
 function rotateAnimal(){const b=$('animalBadge');b.style.transform='rotate(360deg)';setTimeout(()=>{b.style.transform='rotate(0deg)';},200);}
 function showVersion(){const b=$('animalBadge');b.textContent=`${VERSION.animal} ${VERSION.name} · b${VERSION.build}`;
   b.title=`Build ${VERSION.build} · ${VERSION.name} — if this matches what Claude pushed, you're on the latest (no cache)`;}
