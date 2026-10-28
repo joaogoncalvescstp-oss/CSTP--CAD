@@ -430,9 +430,21 @@ dependencies, and nothing to install.
 
 ## Toolbar and panels
 
-- The toolbar is grouped: **↥ Import ▾** (DXF / LandXML / DWG in one menu)
-  and **▣ Reset panels**, then View, Surface & survey tools, Water, and
-  Labels.
+- The **top bar** is kept short: **↥ Import ▾** (DXF / LandXML / DWG in one
+  menu), the view controls (**⊡ Fit**, **⟲ 3D**, **📈 Profile**, **🗺 Map**,
+  **📑 Layers**), **🔍 Find tool** and **⚙ Display ▾**. The Display menu
+  holds 🏷 Streets, 👁 Deutan, ☀ Light / ☾ Dark and ▣ Reset panels.
+- **Every analysis tool is in the tool rail** on the left, grouped as
+  Measure, Surface, Water, Labels and Reports. **« Tools** folds the rail
+  down to icons only, which leaves more room for the drawing. The choice is
+  remembered, and narrow screens start folded. Until a drawing is loaded,
+  a hint at the top of the rail explains why its tools are greyed out.
+- **🔍 Find tool** (**Ctrl+K** / **⌘K**, or **/**) opens a search box over
+  every tool, menu item and import. Type part of a name ("contour", "cut",
+  "water"), pick with ↑↓ and press Enter to run it. A tool that can't run
+  yet says what it needs, for example "needs a TIN surface (LandXML)".
+- Keyboard focus is always visible: a gold ring in dark theme, a blue ring
+  in light theme. Toggle buttons report on/off to screen readers.
 - **Every panel is a floating window**: all the tool panels plus the 3D
   View box, Rain & Drainage box, Snap box and Legend. Drag the title bar
   to move it, **▾/▸** (or double-click the title) to collapse it to just
@@ -443,13 +455,13 @@ dependencies, and nothing to install.
   (the body scrolls). The Legend starts collapsed.
 - Long explanations sit behind an **ℹ How this works** toggle.
 - F / O / P shortcuts are ignored while typing in a text field.
-- **☀ Light / ☾ Dark** (toolbar, or the **T** key) switches the theme; the
+- **☀ Light / ☾ Dark** (⚙ Display menu, or the **T** key) switches the theme; the
   choice is remembered in this browser. The page chrome switches via CSS
   variables. On the canvas, light theme runs every drawing color through the
   same hue with flipped lightness, so pale lines, labels and water turn into
   deep versions of themselves and the dark label halos turn light. Surface
   shaders are exempt, so hillshade light and shadow never invert.
-- **👁 Deutan** (toolbar, **on by default**, remembered) switches every
+- **👁 Deutan** (⚙ Display menu, **on by default**, remembered) switches every
   color scheme to deutan-safe colors, for red-green color-blindness
   (deuteranopia). It uses the Okabe-Ito color-blind-safe palette for layer
   and point-category colors, blue → orange for slope shading and the slope
