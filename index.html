@@ -420,6 +420,7 @@ label.btn.file:focus-within{outline:2px solid var(--focus);outline-offset:1px}
       <label style="display:block;margin-bottom:4px;font-size:11px;color:var(--mut)">Existing ground from surface(s)</label>
       <div id="profSurfList" style="display:flex;flex-direction:column;gap:3px;margin-bottom:8px;font-size:12px"></div>
       <label style="margin-bottom:6px;font-size:12px"><input type="checkbox" id="profGradesChk" checked> Show % grades (and curve L / K)</label>
+      <label style="margin-bottom:6px;font-size:12px"><input type="checkbox" id="profHLabelsChk" checked> Show horizontal labels (PC/PT/PI/MID/PCC/PRC, spirals, POB/POE)</label>
       <div style="display:flex;align-items:center;justify-content:space-between;font-size:11px;color:var(--mut);margin:6px 0 2px"><span>Vertical exaggeration <b id="profVEVal" style="color:var(--gold)">—</b></span><label style="font-size:11px"><input type="checkbox" id="profVEAuto" checked> Auto</label></div>
       <input type="range" id="profVE" min="1" max="50" step="0.5" value="10" style="width:100%;margin-bottom:10px">
       <div style="display:flex;gap:6px;margin-bottom:6px">
@@ -1565,7 +1566,7 @@ function profileLineFor(alignment){return alignment.profile?sampleProfileLine(al
    ΔSta, ΔElev, grade % and slope length; 'adjust' = drag a PVI of the design profile (up/down
    for elevation, Shift-drag to slide its station between its neighbors) — grades, curves and
    PVC/PVT/Hi/Lo update live; Reset restores the imported profile. */
-const PROF={surfaces:null,grades:true,ve:null,tool:null,meas:[],measA:null,hover:null,dragPvi:null};
+const PROF={surfaces:null,grades:true,hLabels:true,ve:null,tool:null,meas:[],measA:null,hover:null,dragPvi:null};
 const profEGCache=new Map();
 function profileGroundLine(a,s){
   const key=a.name+'|'+s.name+'|'+s.tris.length;
@@ -1625,6 +1626,16 @@ function drawProfileGrades(a){
     ctx.font='600 10px ui-monospace,monospace';drawLabel(`L=${L.toFixed(0)}  K=${isFinite(K)?K.toFixed(1):'∞'}  ${A>0?'sag':'crest'}`,x-40,y+(A>0?30:-30),'#c792ff');}
   ctx.restore();
 }
+// horizontal/spiral/reference key points of an alignment that sit at a station along it, for the
+// profile view — CC/SPI are off the roadway and skipped; a curve's PI gets its conventional
+// station PC + T (T = R·tan(Δ/2)) since the plan-view collector leaves it unstationed.
+function profileHorizontalPoints(a){
+  return collectAlignmentKeyPoints(a).map(p=>{
+    if(p.type==='PI'&&p.curve&&p.sta==null){const el=p.curve,d=el.length/el.radius;
+      return d<Math.PI-1e-6?{...p,sta:el.staStart+el.radius*Math.tan(d/2)}:null;}
+    return p.sta!=null&&p.type!=='CC'?p:null;
+  }).filter(Boolean);
+}
 function profileVE(){return pview.sy/pview.sx;}
 function setProfileVE(ve){                                      // rescale vertically about the view's center
   const h=cv.height/devicePixelRatio,[,ec]=S2STA(0,h/2);
@@ -1634,7 +1645,7 @@ function renderProfileExtras(){
   const list=$('profSurfList');if(!list)return;
   profSurfacesShown();
   list.innerHTML=SURFACES.length?SURFACES.map(s=>`<label><input type="checkbox" class="profSurf" value="${s.name.replace(/"/g,'&quot;')}"${PROF.surfaces.has(s.name)?' checked':''}> ⛰ ${s.name}</label>`).join(''):'<span class="note">no surface loaded — import a LandXML TIN to draw existing ground</span>';
-  $('profGradesChk').checked=PROF.grades;$('profVEAuto').checked=PROF.ve==null;
+  $('profGradesChk').checked=PROF.grades;$('profHLabelsChk').checked=PROF.hLabels;$('profVEAuto').checked=PROF.ve==null;
   const ve=PROF.ve??profileVE();$('profVE').value=Math.min(50,ve);$('profVEVal').textContent=ve.toFixed(1)+'×';
   $('profMeasureBtn').classList.toggle('on',PROF.tool==='measure');$('profAdjustBtn').classList.toggle('on',PROF.tool==='adjust');
   const a=ALIGNMENTS.find(x=>x.name===profileAlignName);
@@ -1683,12 +1694,15 @@ function drawProfile(){
   ctx.fillStyle='#8a99b8';ctx.font='10px ui-monospace,monospace';
   for(let s=Math.ceil(tl[0]/stepX)*stepX;s<br[0];s+=stepX){const[x]=STA2S(s,0);ctx.fillText(formatStation(s),x+2,h-4);}
   for(let e=Math.ceil(br[1]/stepY)*stepY;e<tl[1];e+=stepY){const[,y]=STA2S(0,e);ctx.fillText(e.toFixed(1),4,y-2);}
-  // vertical tick + label at each horizontal PC/PT station — the plan/profile sheet convention
-  // of showing where the plan-view curves fall along this same profile.
-  collectAlignmentKeyPoints(a).filter(p=>p.type==='PC'||p.type==='PT').forEach(p=>{
+  // vertical tick at each horizontal key station (PC/PT/PI/MID/PCC/PRC, spirals, POB/POE/EQN) —
+  // the plan/profile sheet convention of showing where the plan-view geometry falls along this
+  // same profile; with "horizontal labels" on, each also gets a marker on the grade line plus a
+  // type / STA / EL label block (drawn after the grade line, below).
+  const hPts=profileHorizontalPoints(a);
+  hPts.forEach(p=>{
     const[x]=STA2S(p.sta,0);
-    ctx.strokeStyle='rgba(231,236,247,.18)';ctx.lineWidth=1;
-    ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,h);ctx.stroke();
+    ctx.strokeStyle='rgba(231,236,247,.18)';ctx.lineWidth=1;ctx.setLineDash(p.type==='PI'||p.type==='MID'?[2,4]:[]);
+    ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,h);ctx.stroke();ctx.setLineDash([]);
     ctx.fillStyle='#cfe0ff';ctx.font='9px ui-monospace,monospace';ctx.fillText(p.type,x+2,12);
   });
   // existing-ground line(s) from the loaded surface(s)
@@ -1716,6 +1730,14 @@ function drawProfile(){
       placeLabelBlock(lines,x+6,y-6,color,11);
     });
   }
+  // horizontal key-point labels on the grade line (design profile, else geometry elevation)
+  if(PROF.hLabels)hPts.forEach(p=>{
+    const elev=lineElevAt(line,p.sta);if(elev==null)return;
+    const[x,y]=STA2S(p.sta,elev),color=GEOM_CATEGORY_COLOR[GEOM_TYPE_CATEGORY[p.type]]||'#ff7ab3';
+    drawGeomMarker(x,y,p.type,color);
+    ctx.font='700 10px ui-monospace,monospace';
+    placeLabelBlock([p.type,`STA ${formatStation(p.sta)}`,`EL ${elev.toFixed(2)}`],x+6,y+18,color,11);
+  });
   drawProfileGrades(a);
   if(PROF.tool==='adjust'&&hasProfile)a.profile.pvis.forEach((p,i)=>{const[x,y]=STA2S(p.sta,p.elev);
     ctx.strokeStyle=PROF.dragPvi===i?'#f1b434':'#7fd4ff';ctx.lineWidth=2;ctx.strokeRect(x-6,y-6,12,12);});   // draggable handles
@@ -4505,6 +4527,7 @@ $('profileCloseBtn').onclick=()=>{if(!$('profileBtn').disabled)$('profileBtn').o
 $('profileAlignSel').onchange=()=>{profileAlignName=$('profileAlignSel').value;PROF.meas=[];PROF.measA=null;fit();};
 $('profSurfList').addEventListener('change',e=>{if(!e.target.classList.contains('profSurf'))return;e.target.checked?PROF.surfaces.add(e.target.value):PROF.surfaces.delete(e.target.value);draw();});
 $('profGradesChk').onchange=()=>{PROF.grades=$('profGradesChk').checked;draw();};
+$('profHLabelsChk').onchange=()=>{PROF.hLabels=$('profHLabelsChk').checked;draw();};
 $('profVEAuto').onchange=()=>{PROF.ve=$('profVEAuto').checked?null:+$('profVE').value;fitProfile();draw();};
 $('profVE').oninput=()=>{PROF.ve=+$('profVE').value;$('profVEAuto').checked=false;setProfileVE(PROF.ve);renderProfileExtras();draw();};
 $('profMeasureBtn').onclick=()=>setProfTool('measure');
@@ -5029,7 +5052,7 @@ window.addEventListener('keydown',e=>{
 
 
 /* ---------- version badge — CHANGED ON EVERY PUSH (new animal + name + build+1; see CLAUDE.md), mirroring FBK-Checker's own fruit badge ---------- */
-const VERSION={animal:'🐬',name:'DOLPHIN',build:42};
+const VERSION={animal:'🦙',name:'LLAMA',build:43};
 function rotateAnimal(){const b=$('animalBadge');b.style.transform='rotate(360deg)';setTimeout(()=>{b.style.transform='rotate(0deg)';},200);}
 function showVersion(){const b=$('animalBadge');b.textContent=`${VERSION.animal} ${VERSION.name} · b${VERSION.build}`;
   b.title=`Build ${VERSION.build} · ${VERSION.name} — if this matches what Claude pushed, you're on the latest (no cache)`;}

@@ -44,6 +44,7 @@ The badge renders as `<emoji> <NAME> · b<build>`.
 | 40 | 🦭 SEAL | 🧭 Measure works in 3D orbit view too (snaps to points / vertices / edge midpoints / nearest on edges, else the surface under the cursor) |
 | 41 | 🦁 LION | ↥ Import DWG works: LibreDWG (WASM, lazy-loaded from jsDelivr) converts DWG → DXF in the browser, then the DXF importer loads it |
 | 42 | 🐬 DOLPHIN | 🧭 decluttered UI: slim top bar (Import / view / 🔍 Find tool / ⚙ Display ▾), grouped left tool rail (collapsible to icons), Ctrl+K tool search, visible keyboard focus + aria-pressed |
+| 43 | 🦙 LLAMA | 📈 profile: horizontal key-point labels (PC/PT/PI/MID/PCC/PRC, spirals, POB/POE) on the grade line with STA / EL, toggle in the Profile panel |
 
 ## Workflow
 
