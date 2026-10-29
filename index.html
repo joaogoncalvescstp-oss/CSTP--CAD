@@ -178,6 +178,7 @@ label.btn.file:focus-within{outline:2px solid var(--focus);outline-offset:1px}
     </div>
     <div class="rg" data-name="Labels" role="group" aria-labelledby="rgLabels"><div class="rgh" id="rgLabels">Labels</div>
       <button class="btn" id="geomLabelsBtn" data-need="an alignment (LandXML)" disabled title="Label key geometry points — horizontal (PC/PT/PI/MID/CC/PCC/PRC), spiral (TS/SC/CS/ST/SPI/SS), vertical/profile (PVC/PVT/PVI/PVCC/PVRC/Hi/Lo), reference (POB/POE/EQN), and custom stations (POT/POC/POS). Pick a reference alignment for stationing, then one or more alignments/lines to label (needs a LandXML file with an Alignment)">📍 Label Points</button>
+      <button class="btn" id="staOffBtn" data-need="an alignment (LandXML)" disabled title="🎯 Station / Offset — 1) click an alignment on the map (or pick it in the panel), 2) click any object (snaps to endpoints / intersections / midpoints / nearest, manholes, points) to label its station and offset (LT/RT) along that alignment. Stays armed for more picks; Esc goes back to picking an alignment, Esc again stops — 2D plan">🎯 Sta / Offset</button>
       <button class="btn" id="pipeLabelsBtn" title="Choose which manhole/pipe fields show as on-canvas labels">🏷 Pipe Labels</button>
       <button class="btn" id="declutterBtn" title="✂ Declutter — click a cut-sheet stake or a 📍 point label on the map to remove it (Esc stops); restore from the Cut Sheet / Label Points panels">✂ Declutter</button>
     </div>
@@ -355,6 +356,20 @@ label.btn.file:focus-within{outline:2px solid var(--focus);outline-offset:1px}
       <div style="overflow:auto;max-height:min(45vh,360px)">
         <table id="slopeTable" style="width:100%;border-collapse:collapse;font-size:11px;white-space:nowrap"></table>
       </div>
+    </div>
+    <div class="panel" id="staOffPanel" style="width:440px;left:auto;right:12px;z-index:2">
+      <h4><span>🎯 Station / Offset</span><button id="staOffCloseBtn" title="Close">✕</button></h4>
+      <details class="help"><summary>ℹ How this works</summary><p class="note">1) Select the <b>reference alignment</b>: click it on the map (it highlights) or pick it below. 2) Click <b>any object</b> — it snaps (🧲 endpoint / intersection / midpoint / nearest, manholes and points) when one is in range, else the raw cursor spot. Each pick is labeled on the map with its <b>station</b> and <b>offset</b> (LT / RT of the alignment's direction) and a dashed perpendicular back to the alignment. A pick past the alignment's POB / POE is flagged. Esc returns to step 1; Esc again stops the tool. 2D plan only.</p></details>
+      <label style="display:block;margin-bottom:4px;font-size:11px;color:var(--mut)">Reference alignment</label>
+      <select id="staOffSel" style="width:100%;margin-bottom:8px;background:var(--panel2);color:var(--text);border:1px solid var(--rule);border-radius:5px;padding:5px"></select>
+      <div style="display:flex;gap:6px;margin-bottom:8px">
+        <button class="btn gold" id="staOffPickBtn" style="flex:1">▶ Pick</button>
+        <button class="btn" id="staOffUndoBtn" style="flex:1" title="Remove the last pick">↶ Undo</button>
+        <button class="btn" id="staOffClearBtn" style="flex:1">Clear</button>
+        <button class="btn" id="staOffCsvBtn" style="flex:1">⬇ CSV</button>
+      </div>
+      <p class="note" id="staOffInfo" style="margin-bottom:6px"></p>
+      <div style="overflow:auto;max-height:min(40vh,320px)"><table id="staOffTable" style="width:100%;border-collapse:collapse;font-size:11px;white-space:nowrap"></table></div>
     </div>
     <div class="panel" id="measurePanel" style="width:470px;left:auto;right:12px;z-index:2">
       <h4><span>🧭 Measure</span><button id="measureCloseBtn" title="Close">✕</button></h4>
@@ -1193,6 +1208,7 @@ function draw2D(){
   ctx.globalAlpha=1;
   drawSlopeMeasurements((E,N)=>W2S(E,N));
   drawMeasurements((E,N)=>W2S(E,N));
+  drawStaOff((E,N)=>W2S(E,N));
   drawStreetNames((E,N)=>W2S(E,N),false);
   drawMapError();
   drawSnapMarker();
@@ -2729,10 +2745,101 @@ function measureCSV(){
     if(s.legs.length)lines.push([ri+1,'TOTAL','','','','',s.h.toFixed(3),s.d!=null?s.d.toFixed(3):'',s.dz!=null?s.dz.toFixed(3):'','',s.direct.bearing,'',''].map(geomCSVField).join(','));});
   return lines.join('\r\n');
 }
+/* ---------- 🎯 quick station / offset ----------
+   step 1: pick the reference alignment (click it on the map, or the panel's dropdown);
+   step 2: every click on any object (snapped like 🧲 Snap, else the raw cursor spot) adds a
+   pick labeled with its station + offset along that alignment. STAOFF.align is the chosen
+   alignment's name; null = still on step 1. */
+const STAOFF={on:false,align:null,picks:[],hover:null,hoverAlign:null};
+const soEsc=v=>String(v).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
+function staOffAlignment(){return ALIGNMENTS.find(a=>a.name===STAOFF.align)||null;}
+function alignmentAtScreen(sx,sy,tolPx=10){
+  const[E,N]=S2W(sx,sy);let best=null,bd=tolPx;
+  ALIGNMENTS.forEach(a=>{const ly=LAYERS[a.layer];if(ly&&!ly.visible)return;const r=stationOffset(a,E,N);if(r&&r.dist*view.s<bd){bd=r.dist*view.s;best=a;}});
+  return best;
+}
+// station / offset of (E,N) on an alignment, flagging a point beyond its POB / POE (where the
+// projection clamps to the end, so the "offset" isn't perpendicular)
+function staOffMeasure(a,E,N){
+  const r=stationOffset(a,E,N);if(!r)return null;
+  const s0=a.elements[0].staStart,last=a.elements[a.elements.length-1],s1=last.staStart+last.length;
+  let beyond='';
+  if(r.off>0.01&&(Math.abs(r.sta-s0)<1e-6||Math.abs(r.sta-s1)<1e-6)){
+    const atStart=Math.abs(r.sta-s0)<1e-6,P=stationToPoint(a,r.sta),Q=stationToPoint(a,r.sta+(atStart?0.5:-0.5));
+    const tx=(P.E-Q.E)*(atStart?-1:1),ty=(P.N-Q.N)*(atStart?-1:1),tl=Math.hypot(tx,ty)||1;
+    const along=((E-P.E)*tx+(N-P.N)*ty)/tl;
+    if(atStart&&along<-0.01)beyond='before POB';if(!atStart&&along>0.01)beyond='past POE';
+  }
+  const foot=stationToPoint(a,r.sta);
+  return{...r,beyond,footE:foot.E,footN:foot.N};
+}
+function staOffText(m){return[`STA ${formatStation(m.sta)}`,`${m.off.toFixed(2)}' ${m.side||'(on line)'}`];}
+function setStaOff(on){
+  if(on&&(is3D||profileOn)){hud('🎯 Station / Offset is 2D plan only — press O / P to switch back first');on=false;}
+  if(on){disarmOtherPickTools();if(MEASURE.on)setMeasure(false);}
+  STAOFF.on=on;STAOFF.hover=null;STAOFF.hoverAlign=null;liveSnap=null;
+  $('staOffBtn').classList.toggle('on',on);$('staOffPickBtn').textContent=on?'■ Stop':'▶ Pick';
+  if(on){$('staOffPanel').classList.add('show');renderStaOffPanel();hud(STAOFF.align?`🎯 click any object for its station / offset on "${STAOFF.align}" · Esc to pick another alignment`:'🎯 step 1: click an alignment on the map (or pick it in the panel)');}
+  else renderStaOffPanel();
+  draw();
+}
+function renderStaOffPanel(){
+  const sel=$('staOffSel');
+  sel.innerHTML='<option value="">— click an alignment on the map —</option>'+ALIGNMENTS.map(a=>`<option value="${soEsc(a.name)}"${a.name===STAOFF.align?' selected':''}>${soEsc(a.name)}</option>`).join('');
+  $('staOffInfo').textContent=!STAOFF.on?'press ▶ Pick to start':STAOFF.align?`step 2: click any object — stationing on "${STAOFF.align}" · Esc = pick another alignment`:'step 1: click an alignment on the map';
+  const heads=['#','Alignment','Station','Offset','Side','Northing','Easting','Object',''];
+  $('staOffTable').innerHTML=STAOFF.picks.length?'<thead><tr>'+heads.map(h=>`<th style="text-align:left;padding:3px 6px;border-bottom:1px solid var(--rule);position:sticky;top:0;background:var(--panel)">${h}</th>`).join('')+'</tr></thead><tbody>'
+    +STAOFF.picks.map((k,i)=>`<tr>${[i+1,soEsc(k.align),formatStation(k.sta)+(k.beyond?` <span style="color:var(--gold)">(${k.beyond})</span>`:''),k.off.toFixed(2),k.side||'—',k.N.toFixed(3),k.E.toFixed(3),soEsc(k.label||'free')].map(v=>`<td style="padding:3px 6px;border-bottom:1px solid var(--rule)">${v}</td>`).join('')}<td style="padding:3px 6px;border-bottom:1px solid var(--rule)"><button class="btn staOffDel" data-i="${i}" title="Remove this pick" style="padding:0 6px">✕</button></td></tr>`).join('')+'</tbody>'
+    :'<tr><td class="note" style="padding:6px">no picks yet</td></tr>';
+}
+function staOffCSV(){
+  const lines=['#,Alignment,Station,Offset,Side,Note,Northing,Easting,Object'];
+  STAOFF.picks.forEach((k,i)=>lines.push([i+1,k.align,formatStation(k.sta),k.off.toFixed(2),k.side,k.beyond,k.N.toFixed(3),k.E.toFixed(3),k.label||'free'].map(geomCSVField).join(',')));
+  return lines.join('\r\n');
+}
+function staOffClick(sx,sy){
+  if(!STAOFF.align){
+    const a=alignmentAtScreen(sx,sy);
+    if(!a){hud('🎯 no alignment there — click right on an alignment line (or pick one in the panel)');return;}
+    STAOFF.align=a.name;STAOFF.hoverAlign=null;renderStaOffPanel();hud(`🎯 "${a.name}" selected — now click any object for its station / offset · Esc to pick another alignment`);draw();return;
+  }
+  const a=staOffAlignment();if(!a){STAOFF.align=null;renderStaOffPanel();return;}
+  const sn=snapPoint(sx,sy),[E,N]=sn?[sn.E,sn.N]:S2W(sx,sy),m=staOffMeasure(a,E,N);if(!m)return;
+  STAOFF.picks.push({align:a.name,E,N,label:sn?sn.label:null,...m});if(STAOFF.picks.length>500)STAOFF.picks.shift();
+  renderStaOffPanel();
+  hud(`🎯 ${sn?sn.label+' · ':''}${staOffText(m).join(' · ')} on "${a.name}"${m.beyond?' — '+m.beyond:''} · click another object, Esc to pick another alignment`);draw();
+}
+function staOffHover(sx,sy){
+  if(!STAOFF.align){const a=alignmentAtScreen(sx,sy);STAOFF.hoverAlign=a?a.name:null;liveSnap=null;
+    hud(a?`🎯 click to select "${a.name}"`:'🎯 step 1: click an alignment on the map');cv.style.cursor=a?'pointer':'crosshair';draw();return;}
+  const a=staOffAlignment();if(!a)return;cv.style.cursor='crosshair';
+  liveSnap=snapPoint(sx,sy);const[E,N]=liveSnap?[liveSnap.E,liveSnap.N]:S2W(sx,sy);
+  const m=staOffMeasure(a,E,N);STAOFF.hover=m?{E,N,...m}:null;
+  if(m)hud(`🎯 ${liveSnap?liveSnap.label+' · ':''}${staOffText(m).join(' · ')}${m.beyond?' — '+m.beyond:''} · click to label`);
+  draw();
+}
+function drawStaOff(proj){
+  const hiName=STAOFF.on?(STAOFF.align||STAOFF.hoverAlign):null,hi=hiName&&ALIGNMENTS.find(a=>a.name===hiName);
+  if(hi){ctx.save();ctx.strokeStyle='#f1b434';ctx.lineWidth=5;ctx.globalAlpha=STAOFF.align?0.45:0.3;ctx.lineCap='round';ctx.beginPath();
+    hi.elements.forEach(el=>{const pts=el.type==='curve'?sampleArc(el,32):[el.start,el.end];pts.forEach((q,i)=>{const[x,y]=proj(q.E,q.N,0);i?ctx.lineTo(x,y):ctx.moveTo(x,y);});});
+    ctx.stroke();ctx.restore();}
+  const one=(k,live)=>{
+    const[x,y]=proj(k.E,k.N,0),[fx,fy]=proj(k.footE,k.footN,0),col=live?'#ffd24a':'#35c184';
+    ctx.save();ctx.strokeStyle=col;ctx.lineWidth=1.2;ctx.setLineDash([5,4]);ctx.beginPath();ctx.moveTo(fx,fy);ctx.lineTo(x,y);ctx.stroke();ctx.setLineDash([]);
+    ctx.fillStyle=col;ctx.beginPath();ctx.arc(x,y,3.5,0,Math.PI*2);ctx.fill();ctx.strokeRect(fx-3,fy-3,6,6);ctx.restore();
+    ctx.font='700 10px ui-monospace,monospace';
+    const lines=staOffText(k);if(k.beyond)lines.push({t:k.beyond,font:STA_SUB_FONT});
+    if(!live&&k.label)lines.push({t:k.label,font:STA_SUB_FONT,color:'#a8b6e0'});
+    placeLabelBlock(lines,x+8,y-8,col,11);
+  };
+  STAOFF.picks.forEach(k=>one(k,false));
+  if(STAOFF.on&&STAOFF.align&&STAOFF.hover)one(STAOFF.hover,true);
+}
 function disarmOtherPickTools(){
   elevPick=false;$('elevBtn').classList.remove('on');snapOn=false;$('snapBtn').classList.remove('on');
   waterDumpOn=false;$('waterDumpBtn').classList.remove('on');
   if(slopePick)setSlopePick(false);if(declutterOn)setDeclutter(false);if(rainPaintOn)setRainPaint(false);if(basinPlaceOn)setBasinPlace(false);
+  if(STAOFF.on)setStaOff(false);
 }
 function setMeasure(on){
   if(on&&profileOn){hud('🧭 Measure works in 2D plan and 3D, not the profile view — press P to switch back first');on=false;}
@@ -3033,7 +3140,7 @@ function snapPoint(sx,sy){
     if(d<bnd){bnd=d;const[E,N]=S2W(x,y);best={E,N,Z:s.aZ+t*(s.bZ-s.aZ),sx:x,sy:y,type:'nearest',label:'nearest',tin:s.src.startsWith('tin')};}});
   return best;}
 function drawSnapMarker(){
-  const s=(snapOn||elevPick||slopePick||basinPlaceOn||MEASURE.on)?liveSnap:null;if(!s)return;const x=s.sx,y=s.sy,r=7;ctx.save();
+  const s=(snapOn||elevPick||slopePick||basinPlaceOn||MEASURE.on||(STAOFF.on&&STAOFF.align))?liveSnap:null;if(!s)return;const x=s.sx,y=s.sy,r=7;ctx.save();
   ctx.lineWidth=2;ctx.strokeStyle='#35c184';ctx.fillStyle='rgba(53,193,132,.18)';
   if(s.type==='endpoint'){ctx.fillRect(x-r,y-r,2*r,2*r);ctx.strokeRect(x-r,y-r,2*r,2*r);}
   else if(s.type==='intersection'){ctx.beginPath();ctx.arc(x,y,r,0,7);ctx.fill();ctx.stroke();}
@@ -3045,7 +3152,7 @@ function drawSnapMarker(){
   ctx.restore();}
 function syncSnapBox(){
   const box=$('snapBox');if(!box)return;
-  box.classList.toggle('show',((snapOn||elevPick||slopePick||basinPlaceOn)&&!is3D||MEASURE.on)&&!profileOn);
+  box.classList.toggle('show',((snapOn||elevPick||slopePick||basinPlaceOn||STAOFF.on)&&!is3D||MEASURE.on)&&!profileOn);
   const active=liveSnap&&(liveSnap.type==='center'||liveSnap.type==='quadrant'?'endpoint':liveSnap.type);
   ['snEndpoint','snIntersection','snMidpoint','snNearest'].forEach(id=>{
     const key=id.slice(2).toLowerCase();
@@ -4254,7 +4361,7 @@ function importLandXML(text){
   renderLayerPanel();updateJobPill();scheduleStreetFetch();
   $('fitBtn').disabled=false;$('elevBtn').disabled=SURFACES.length===0;$('waterBtn').disabled=SURFACES.length===0;$('waterDumpBtn').disabled=SURFACES.length===0;$('surfaceDisplayBtn').disabled=SURFACES.length===0;$('elevSpotsBtn').disabled=SURFACES.length===0;$('slopeBtn').disabled=SURFACES.length===0;$('rainPaintToolBtn').disabled=SURFACES.length===0;rainTriCache=null;pipeGraphCache=null;profEGCache.clear();if(PROF.surfaces)SURFACES.forEach(sf=>PROF.surfaces.add(sf.name));renderSlopeSurfSel();
   $('orbitBtn').disabled=false;$('snapBtn').disabled=false;$('measureBtn').disabled=false;
-  $('geomLabelsBtn').disabled=ALIGNMENTS.length===0;$('cutSheetBtn').disabled=ALIGNMENTS.length===0;
+  $('geomLabelsBtn').disabled=ALIGNMENTS.length===0;$('staOffBtn').disabled=ALIGNMENTS.length===0;$('cutSheetBtn').disabled=ALIGNMENTS.length===0;
   $('profileBtn').disabled=ALIGNMENTS.length===0;
   if(hadNothing)fit();else draw();
   const parts=[];
@@ -4380,6 +4487,14 @@ $('slopePickBtn').onclick=()=>{
   setSlopePick(true);hud(`📏 click point A (target: ${SLOPE_TARGET||'topmost visible surface'}) · Esc to stop`);draw();
 };
 $('slopeSurfSel').onchange=()=>{SLOPE_TARGET=$('slopeSurfSel').value;slopeA=null;hud(`slope target surface: ${SLOPE_TARGET||'auto (topmost visible)'}`);draw();};
+$('staOffBtn').onclick=()=>{if(!$('staOffBtn').disabled)setStaOff(!STAOFF.on);};
+$('staOffPickBtn').onclick=()=>setStaOff(!STAOFF.on);
+$('staOffCloseBtn').onclick=()=>{$('staOffPanel').classList.remove('show');if(STAOFF.on)setStaOff(false);};
+$('staOffSel').onchange=()=>{STAOFF.align=$('staOffSel').value||null;STAOFF.hover=null;if(!STAOFF.on&&STAOFF.align)setStaOff(true);else{renderStaOffPanel();draw();}};
+$('staOffUndoBtn').onclick=()=>{STAOFF.picks.pop();renderStaOffPanel();draw();};
+$('staOffClearBtn').onclick=()=>{STAOFF.picks=[];renderStaOffPanel();draw();};
+$('staOffCsvBtn').onclick=()=>{if(STAOFF.picks.length)downloadBlob(new Blob([staOffCSV()],{type:'text/csv'}),'station-offset.csv');};
+$('staOffTable').addEventListener('click',e=>{const b=e.target.closest('.staOffDel');if(!b)return;STAOFF.picks.splice(+b.dataset.i,1);renderStaOffPanel();draw();});
 $('measureBtn').onclick=()=>{if(!$('measureBtn').disabled)setMeasure(!MEASURE.on);};
 $('measurePickBtn').onclick=()=>setMeasure(!MEASURE.on);
 $('measureFinishBtn').onclick=()=>{measureFinish(false);draw();};
@@ -4559,7 +4674,7 @@ $('orbitBtn').onclick=()=>{
   if(is3D&&profileOn){profileOn=false;$('profileBtn').classList.remove('on');$('profilePanel').classList.remove('show');}
   $('legend').style.display=is3D?'none':'';
   $('view3dBox').classList.toggle('show',is3D);orbitHover=null;
-  if(is3D){if(declutterOn)setDeclutter(false);if(basinPlaceOn)setBasinPlace(false);if(rainPaintOn)setRainPaint(false);if(slopePick)setSlopePick(false);$('slopePanel').classList.remove('show');elevPick=false;$('elevBtn').classList.remove('on');snapOn=false;$('snapBtn').classList.remove('on');waterDumpOn=false;$('waterDumpBtn').classList.remove('on');}   // 🌊 Water Flow / a live 💧 dump keep running and rendering in 3D too — only the CLICK-driven tools (which need a screen->world inverse the oblique 3D projection doesn't have) get disarmed here
+  if(is3D){if(STAOFF.on)setStaOff(false);if(declutterOn)setDeclutter(false);if(basinPlaceOn)setBasinPlace(false);if(rainPaintOn)setRainPaint(false);if(slopePick)setSlopePick(false);$('slopePanel').classList.remove('show');elevPick=false;$('elevBtn').classList.remove('on');snapOn=false;$('snapBtn').classList.remove('on');waterDumpOn=false;$('waterDumpBtn').classList.remove('on');}   // 🌊 Water Flow / a live 💧 dump keep running and rendering in 3D too — only the CLICK-driven tools (which need a screen->world inverse the oblique 3D projection doesn't have) get disarmed here
   cv.style.cursor=is3D?'grab':'crosshair';
   fit();hud(is3D?'3D orbit — drag to rotate (re-centers on click), shift-drag or middle-drag to pan, wheel to zoom · touch: one finger to orbit, two fingers to pinch-zoom/pan':'back to 2D plan view');
 };
@@ -4575,6 +4690,7 @@ $('profileBtn').onclick=()=>{
   profileOn=!profileOn;$('profileBtn').classList.toggle('on',profileOn);
   if(profileOn){
     if(is3D){is3D=false;$('orbitBtn').classList.remove('on');$('view3dBox').classList.remove('show');}
+    if(STAOFF.on)setStaOff(false);
     elevPick=false;$('elevBtn').classList.remove('on');
     if(MEASURE.on)setMeasure(false);
     if(slopePick)setSlopePick(false);
@@ -4667,6 +4783,7 @@ cv.addEventListener('pointerdown',e=>{
   if(rainPaintOn){paintRainAt(sx,sy);drag={rainPaint:true};try{cv.setPointerCapture(e.pointerId);}catch(_){}draw();return;}
   if(declutterOn){const h=declutterHit(sx,sy);if(h)declutterRemove(h);else hud('✂ nothing removable there — click a cut-sheet stake or a 📍 label · Esc to stop');return;}
   if(MEASURE.on){measureClick(sx,sy);return;}
+  if(STAOFF.on){staOffClick(sx,sy);return;}
   if(slopePick){slopeClick(sx,sy);return;}
   if(elevPick){
     // stays armed after the click, so several spots can be saved in a row without re-toggling
@@ -4723,6 +4840,7 @@ cv.addEventListener('pointermove',e=>{
     draw();return;
   }
   if(MEASURE.on&&!is3D&&!drag){measureHover(sx,sy);return;}
+  if(STAOFF.on&&!is3D&&!profileOn&&!drag){staOffHover(sx,sy);return;}
   if(slopePick&&!is3D&&!drag){
     liveSnap=snapPoint(sx,sy);
     const[E,N]=liveSnap?[liveSnap.E,liveSnap.N]:S2W(sx,sy);
@@ -4818,6 +4936,7 @@ window.addEventListener('keydown',e=>{
   if(e.key!=='Escape'&&/^(INPUT|SELECT|TEXTAREA)$/.test((e.target&&e.target.tagName)||''))return;   // typing a station/interval — don't trigger F/O/P
   if(e.key==='Escape'){
     if(MEASURE.on){if(MEASURE.pts.length){const had=MEASURE.pts.length>1;measureFinish(false);if(!had)hud('🧭 point cleared — click to start, Esc again to stop');}else{setMeasure(false);hud('🧭 measure stopped');}draw();}
+    else if(STAOFF.on){if(STAOFF.align){STAOFF.align=null;STAOFF.hover=null;liveSnap=null;renderStaOffPanel();hud('🎯 step 1: click an alignment on the map · Esc again stops');}else{setStaOff(false);hud('🎯 station / offset stopped');}draw();}
     else if(declutterOn){setDeclutter(false);hud('✂ declutter off');}
     else if(profileOn&&PROF.tool){if(PROF.measA){PROF.measA=null;hud('measure point A cleared');}else{PROF.tool=null;hud('profile tool off');}renderProfileExtras();draw();}
     else if(basinPlaceOn){setBasinPlace(false);hud('catch basin placing stopped');}
@@ -5004,7 +5123,7 @@ function resetPanels(){
   });
   hud('panels reset to their default positions');
 }
-[['layerPanel'],['curvePanel'],['cutPanel'],['pipeLabelPanel'],['surfaceDisplayPanel'],['geomLabelPanel'],['geomTablePanel'],['elevSpotsPanel'],['slopePanel'],['measurePanel'],['profilePanel'],
+[['layerPanel'],['curvePanel'],['cutPanel'],['pipeLabelPanel'],['surfaceDisplayPanel'],['geomLabelPanel'],['geomTablePanel'],['elevSpotsPanel'],['slopePanel'],['measurePanel'],['staOffPanel'],['profilePanel'],
  ['view3dBox','⟲ 3D View'],['rainBox','🌧 Rain & Drainage'],['snapBox','🧲 Snap'],['legend','Legend',{collapsed:true}]]
   .forEach(([id,title,opt])=>makeFloating($(id),title||'',opt));
 $('resetPanelsBtn').onclick=resetPanels;
@@ -5050,7 +5169,7 @@ try{const s=localStorage.getItem('cstp.rail');setRailMini(s?s==='mini':innerWidt
 // the "import a drawing first" hint shows only while every rail tool that needs data is still disabled
 function updateRailHint(){$('railHint').hidden=[...document.querySelectorAll('#toolRail .btn[data-need]')].some(b=>!b.disabled);}
 // toggle buttons announce their state to screen readers (aria-pressed follows the .on class)
-const TOGGLE_IDS=['orbitBtn','profileBtn','mapBtn','streetBtn','cvdBtn','measureBtn','slopeBtn','snapBtn','elevBtn','waterBtn','rainPaintToolBtn','waterDumpBtn','declutterBtn'];
+const TOGGLE_IDS=['orbitBtn','profileBtn','mapBtn','streetBtn','cvdBtn','measureBtn','slopeBtn','snapBtn','elevBtn','waterBtn','rainPaintToolBtn','waterDumpBtn','declutterBtn','staOffBtn'];
 const syncPressed=()=>{TOGGLE_IDS.forEach(id=>{const b=$(id);if(b)b.setAttribute('aria-pressed',b.classList.contains('on'));});updateRailHint();};
 new MutationObserver(syncPressed).observe(document.querySelector('.app'),{subtree:true,attributes:true,attributeFilter:['class','disabled']});
 syncPressed();
@@ -5123,7 +5242,7 @@ window.addEventListener('keydown',e=>{
 
 
 /* ---------- version badge — CHANGED ON EVERY PUSH (new animal + name + build+1; see CLAUDE.md), mirroring FBK-Checker's own fruit badge ---------- */
-const VERSION={animal:'🐫',name:'CAMEL',build:44};
+const VERSION={animal:'🦅',name:'EAGLE',build:45};
 function rotateAnimal(){const b=$('animalBadge');b.style.transform='rotate(360deg)';setTimeout(()=>{b.style.transform='rotate(0deg)';},200);}
 function showVersion(){const b=$('animalBadge');b.textContent=`${VERSION.animal} ${VERSION.name} · b${VERSION.build}`;
   b.title=`Build ${VERSION.build} · ${VERSION.name} — if this matches what Claude pushed, you're on the latest (no cache)`;}

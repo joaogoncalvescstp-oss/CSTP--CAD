@@ -46,6 +46,7 @@ The badge renders as `<emoji> <NAME> · b<build>`.
 | 42 | 🐬 DOLPHIN | 🧭 decluttered UI: slim top bar (Import / view / 🔍 Find tool / ⚙ Display ▾), grouped left tool rail (collapsible to icons), Ctrl+K tool search, visible keyboard focus + aria-pressed |
 | 43 | 🦙 LLAMA | 📈 profile: horizontal key-point labels (PC/PT/PI/MID/PCC/PRC, spirals, POB/POE) on the grade line with STA / EL, toggle in the Profile panel |
 | 44 | 🐫 CAMEL | 📍 Auto CL referencing: "CL" alignments = centerlines, "BC" = curbs; curb / pipe points stationed on the nearest CL (curb returns hand off at the curve MID), CL station first + own station second (smaller) |
+| 45 | 🦅 EAGLE | 🎯 Sta / Offset tool: pick an alignment (click it or the panel), then click any object (snapped) for its station + offset LT/RT, labeled on the map, table + CSV |
 
 ## Workflow
 
