@@ -182,6 +182,10 @@ label.btn.file:focus-within{outline:2px solid var(--focus);outline-offset:1px}
       <button class="btn" id="pipeLabelsBtn" title="Choose which manhole/pipe fields show as on-canvas labels">🏷 Pipe Labels</button>
       <button class="btn" id="declutterBtn" title="✂ Declutter — click a cut-sheet stake or a 📍 point label on the map to remove it (Esc stops); restore from the Cut Sheet / Label Points panels">✂ Declutter</button>
     </div>
+    <div class="rg" data-name="Edit" role="group" aria-labelledby="rgEdit"><div class="rgh" id="rgEdit">Edit</div>
+      <button class="btn" id="deleteBtn" data-need="a drawing" disabled title="🗑 Delete — hover an object (it turns red) and click to delete it: DXF lines / polylines / arcs / circles / points / text / hatches, whole alignments, survey points, manholes / catch basins (with their pipes), single pipes, 🎯 station-offset picks and ⛰ elevation spots. Objects on locked layers are skipped. Ctrl+Z or ↶ Undo delete brings the last one back; Esc stops — 2D plan">🗑 Delete</button>
+      <button class="btn" id="deleteUndoBtn" disabled title="Undo the last delete (Ctrl+Z)">↶ Undo delete</button>
+    </div>
     <div class="rg" data-name="Reports" role="group" aria-labelledby="rgReports"><div class="rgh" id="rgReports">Reports</div>
       <button class="btn" id="cutSheetBtn" data-need="an alignment (LandXML)" disabled title="Cut sheet report — stations along a main centerline at set intervals on tangents and curves, with left/right curb offsets and design grades, exported into your Excel cut-sheet template">📋 Cut Sheet</button>
       <button class="btn" id="geomTableBtn" data-need="labeled points (📍 Label Points first)" disabled title="View every currently labeled point as a table — station, northing, easting, elevation — a quick reference sheet for field stakeout, with CSV export">📋 Points Table</button>
@@ -1209,6 +1213,7 @@ function draw2D(){
   drawSlopeMeasurements((E,N)=>W2S(E,N));
   drawMeasurements((E,N)=>W2S(E,N));
   drawStaOff((E,N)=>W2S(E,N));
+  drawDeleteHover();
   drawStreetNames((E,N)=>W2S(E,N),false);
   drawMapError();
   drawSnapMarker();
@@ -2835,11 +2840,103 @@ function drawStaOff(proj){
   STAOFF.picks.forEach(k=>one(k,false));
   if(STAOFF.on&&STAOFF.align&&STAOFF.hover)one(STAOFF.hover,true);
 }
+/* ---------- 🗑 delete objects ----------
+   Hover finds the object under the cursor (smallest things first: picks / spots / points /
+   manholes, then lines, then hatch fills), click deletes it. Every delete pushes a restore
+   function onto DEL.undo, so Ctrl+Z / ↶ Undo delete brings objects back in LIFO order — which
+   is what lets entity restores splice straight back into their original array indices. */
+const DEL={on:false,hover:null,undo:[]};
+function delLayerOk(name){const ly=LAYERS[name];return!(ly&&(!ly.visible||ly.locked));}
+function segDistPx(sx,sy,A,B){const a=W2S(A.E,A.N),b=W2S(B.E,B.N),t=Math.max(0,Math.min(1,projParam(sx,sy,a[0],a[1],b[0],b[1])));return Math.hypot(a[0]+t*(b[0]-a[0])-sx,a[1]+t*(b[1]-a[1])-sy);}
+function polyHit(sx,sy,pts,closed,tol){for(let k=0;k<pts.length-1;k++)if(segDistPx(sx,sy,pts[k],pts[k+1])<tol)return true;
+  return closed&&pts.length>2&&segDistPx(sx,sy,pts[pts.length-1],pts[0])<tol;}
+function pointInLoops(E,N,loops){let inside=false;loops.forEach(L=>{for(let i=0,j=L.length-1;i<L.length;j=i++){const a=L[i],b=L[j];
+  if((a.N>N)!==(b.N>N)&&E<(b.E-a.E)*(N-a.N)/((b.N-a.N)||1e-12)+a.E)inside=!inside;}});return inside;}
+function deleteHit(sx,sy){
+  const PT=10,LN=7,near=(E,N)=>{const q=W2S(E,N);return Math.hypot(q[0]-sx,q[1]-sy);};
+  let best=null,bd=PT;const take=(d,h)=>{if(d<bd){bd=d;best=h;}};
+  STAOFF.picks.forEach((k,i)=>take(near(k.E,k.N),{kind:'staoff',i,desc:`🎯 pick STA ${formatStation(k.sta)}`}));
+  ELEV_SPOTS.forEach((p,i)=>take(near(p.E,p.N),{kind:'spot',i,desc:`⛰ spot Z=${p.z.toFixed(3)}`}));
+  POINTS.forEach((p,i)=>{take(near(p.E,p.N),{kind:'cgpt',i,desc:`point ${p.id}`});});
+  PIPE_NETWORKS.forEach(net=>{if(!delLayerOk(net.layer))return;net.structs.forEach(st=>{if(!st.dummy)take(near(st.E,st.N),{kind:'struct',net,st,desc:`structure ${st.name.replace(/\s*\([^)]*\)\s*$/,'')}`});});});
+  ENTITIES.forEach((e,i)=>{if(!delLayerOk(e.layer))return;if(e.type==='point'||e.type==='text')take(near(e.pts[0].E,e.pts[0].N),{kind:'ent',e,desc:`${e.type==='text'?'text "'+String(e.text).slice(0,24)+'"':'point'} · ${e.layer}`});});
+  if(best)return best;
+  bd=LN;
+  PIPE_NETWORKS.forEach(net=>{if(!delLayerOk(net.layer))return;net.pipes.forEach(pp=>{const a=net.structByName[pp.startName],b=net.structByName[pp.endName];if(a&&b)take(segDistPx(sx,sy,a,b),{kind:'pipe',net,pp,desc:`pipe ${pp.name.replace(/\s*\([^)]*\)\s*$/,'')}`});});});
+  ENTITIES.forEach(e=>{if(!delLayerOk(e.layer))return;
+    if(e.type==='circle'){const c=W2S(e.pts[0].E,e.pts[0].N);take(Math.abs(Math.hypot(c[0]-sx,c[1]-sy)-e.r*view.s),{kind:'ent',e,desc:`circle · ${e.layer}`});return;}
+    if((e.type==='line'||e.type==='poly')&&polyHit(sx,sy,e.pts,e.closed,bd)){
+      let d=Infinity;for(let k=0;k<e.pts.length-1;k++)d=Math.min(d,segDistPx(sx,sy,e.pts[k],e.pts[k+1]));if(e.closed&&e.pts.length>2)d=Math.min(d,segDistPx(sx,sy,e.pts[e.pts.length-1],e.pts[0]));
+      const al=e.layer.startsWith('ALIGN-')&&ALIGNMENTS.find(a=>a.layer===e.layer);
+      take(d,al?{kind:'align',a:al,desc:`alignment ${al.name} (whole alignment)`}:{kind:'ent',e,desc:`${e.type==='line'?'line':'polyline'} · ${e.layer}`});}});
+  if(best)return best;
+  const[E,N]=S2W(sx,sy);
+  for(let i=ENTITIES.length-1;i>=0;i--){const e=ENTITIES[i];if(e.type==='hatch'&&delLayerOk(e.layer)&&pointInLoops(E,N,e.loops))return{kind:'ent',e,desc:`hatch · ${e.layer}`};}
+  return null;
+}
+function deleteDo(h){
+  let restore;
+  if(h.kind==='staoff'){const k=STAOFF.picks.splice(h.i,1)[0];restore=()=>STAOFF.picks.splice(h.i,0,k);}
+  else if(h.kind==='spot'){const k=ELEV_SPOTS.splice(h.i,1)[0];restore=()=>ELEV_SPOTS.splice(h.i,0,k);}
+  else if(h.kind==='cgpt'){const k=POINTS.splice(h.i,1)[0];restore=()=>POINTS.splice(h.i,0,k);}
+  else if(h.kind==='ent'){const i=ENTITIES.indexOf(h.e);if(i<0)return;ENTITIES.splice(i,1);restore=()=>ENTITIES.splice(i,0,h.e);}
+  else if(h.kind==='pipe'){const i=h.net.pipes.indexOf(h.pp);h.net.pipes.splice(i,1);restore=()=>h.net.pipes.splice(i,0,h.pp);}
+  else if(h.kind==='struct'){const net=h.net,si=net.structs.indexOf(h.st),key=Object.keys(net.structByName).find(k=>net.structByName[k]===h.st);
+    const pipes=net.pipes.map((pp,i)=>[i,pp]).filter(([,pp])=>net.structByName[pp.startName]===h.st||net.structByName[pp.endName]===h.st);
+    net.structs.splice(si,1);if(key!=null)delete net.structByName[key];for(let k=pipes.length-1;k>=0;k--)net.pipes.splice(pipes[k][0],1);
+    restore=()=>{pipes.forEach(([i,pp])=>net.pipes.splice(i,0,pp));net.structs.splice(si,0,h.st);if(key!=null)net.structByName[key]=h.st;};
+    if(pipes.length)h.desc+=` + ${pipes.length} pipe(s)`;}
+  else if(h.kind==='align'){const a=h.a,ai=ALIGNMENTS.indexOf(a),ents=ENTITIES.map((e,i)=>[i,e]).filter(([,e])=>e.layer===a.layer),ly=LAYERS[a.layer];
+    const geom=GEOM_POINTS.slice(),streets=JSON.parse(JSON.stringify(CUT.streets)),prof=profileAlignName,so=STAOFF.align;
+    ALIGNMENTS.splice(ai,1);for(let k=ents.length-1;k>=0;k--)ENTITIES.splice(ents[k][0],1);delete LAYERS[a.layer];
+    GEOM_POINTS=GEOM_POINTS.filter(q=>q.target!==a.name);
+    CUT.streets=CUT.streets.filter(st=>st.main!==a.name);CUT.streets.forEach(st=>{st.lt=st.lt.filter(n=>n!==a.name);st.rt=st.rt.filter(n=>n!==a.name);});
+    if(profileAlignName===a.name)profileAlignName=ALIGNMENTS[0]?.name||null;if(STAOFF.align===a.name)STAOFF.align=null;
+    restore=()=>{ALIGNMENTS.splice(ai,0,a);ents.forEach(([i,e])=>ENTITIES.splice(i,0,e));if(ly)LAYERS[a.layer]=ly;GEOM_POINTS=geom;CUT.streets=streets;profileAlignName=prof;STAOFF.align=so;};}
+  DEL.undo.push({restore,desc:h.desc});if(DEL.undo.length>200)DEL.undo.shift();
+  deleteRefresh();hud(`🗑 deleted ${h.desc} · Ctrl+Z to undo`);
+}
+function deleteUndo(){const u=DEL.undo.pop();if(!u){hud('nothing to undo');return;}u.restore();deleteRefresh();hud(`↶ restored ${u.desc}`);}
+// everything derived from the object arrays
+function deleteRefresh(){
+  DEL.hover=null;pipeGraphCache=null;
+  const hasAl=ALIGNMENTS.length>0;['geomLabelsBtn','cutSheetBtn','staOffBtn','profileBtn'].forEach(id=>{const b=$(id);if(b)b.disabled=!hasAl;});
+  $('geomTableBtn').disabled=GEOM_POINTS.length===0;$('deleteUndoBtn').disabled=!DEL.undo.length;
+  renderLayerPanel();updateJobPill();renderGeomLabelSelects();renderGeomTable();renderStaOffPanel();
+  if($('elevSpotsPanel').classList.contains('show'))renderElevSpotsTable();
+  if($('cutPanel').classList.contains('show')){renderCutStreets();renderCutPreview();}
+  if(profileOn){if(!hasAl)$('profileBtn').onclick();else{renderProfileAlignSelect();fitProfile();}}
+  draw();
+}
+function setDelete(on){
+  if(on&&(is3D||profileOn)){hud('🗑 Delete is 2D plan only — press O / P to switch back first');on=false;}
+  if(on){disarmOtherPickTools();if(MEASURE.on)setMeasure(false);}
+  DEL.on=on;DEL.hover=null;$('deleteBtn').classList.toggle('on',on);cv.style.cursor='crosshair';
+  hud(on?'🗑 hover an object (red) and click to delete it · Ctrl+Z undoes · Esc stops':'🗑 delete off');draw();
+}
+function drawDeleteHover(){
+  const h=DEL.on&&DEL.hover;if(!h)return;
+  ctx.save();ctx.strokeStyle='#ff4d4d';ctx.fillStyle='rgba(255,77,77,.25)';ctx.lineWidth=4;ctx.lineCap='round';ctx.lineJoin='round';
+  const ring=(E,N)=>{const[x,y]=W2S(E,N);ctx.beginPath();ctx.arc(x,y,9,0,Math.PI*2);ctx.fill();ctx.stroke();};
+  const path=(pts,closed)=>{ctx.beginPath();pts.forEach((q,i)=>{const[x,y]=W2S(q.E,q.N);i?ctx.lineTo(x,y):ctx.moveTo(x,y);});if(closed)ctx.closePath();ctx.stroke();};
+  if(h.kind==='staoff')ring(STAOFF.picks[h.i].E,STAOFF.picks[h.i].N);
+  else if(h.kind==='spot')ring(ELEV_SPOTS[h.i].E,ELEV_SPOTS[h.i].N);
+  else if(h.kind==='cgpt')ring(POINTS[h.i].E,POINTS[h.i].N);
+  else if(h.kind==='struct'){ring(h.st.E,h.st.N);h.net.pipes.forEach(pp=>{const a=h.net.structByName[pp.startName],b=h.net.structByName[pp.endName];if(a&&b&&(a===h.st||b===h.st))path([a,b]);});}
+  else if(h.kind==='pipe')path([h.net.structByName[h.pp.startName],h.net.structByName[h.pp.endName]]);
+  else if(h.kind==='align')ENTITIES.forEach(e=>{if(e.layer===h.a.layer)path(e.pts,false);});
+  else if(h.kind==='ent'){const e=h.e;
+    if(e.type==='point'||e.type==='text')ring(e.pts[0].E,e.pts[0].N);
+    else if(e.type==='circle'){const[x,y]=W2S(e.pts[0].E,e.pts[0].N);ctx.beginPath();ctx.arc(x,y,e.r*view.s,0,Math.PI*2);ctx.stroke();}
+    else if(e.type==='hatch'){e.loops.forEach(L=>path(L,true));ctx.beginPath();e.loops.forEach(L=>{L.forEach((q,i)=>{const[x,y]=W2S(q.E,q.N);i?ctx.lineTo(x,y):ctx.moveTo(x,y);});ctx.closePath();});ctx.fill('evenodd');}
+    else path(e.pts,e.closed);}
+  ctx.restore();
+}
 function disarmOtherPickTools(){
   elevPick=false;$('elevBtn').classList.remove('on');snapOn=false;$('snapBtn').classList.remove('on');
   waterDumpOn=false;$('waterDumpBtn').classList.remove('on');
   if(slopePick)setSlopePick(false);if(declutterOn)setDeclutter(false);if(rainPaintOn)setRainPaint(false);if(basinPlaceOn)setBasinPlace(false);
-  if(STAOFF.on)setStaOff(false);
+  if(STAOFF.on)setStaOff(false);if(DEL.on)setDelete(false);
 }
 function setMeasure(on){
   if(on&&profileOn){hud('🧭 Measure works in 2D plan and 3D, not the profile view — press P to switch back first');on=false;}
@@ -4214,7 +4311,7 @@ function importDXF(text){
   if(!nEnt){hud('no recognized entities found (LINE / ARC / (LW)POLYLINE / SPLINE / ELLIPSE / CIRCLE / POINT / TEXT / MTEXT / HATCH / INSERT / 3DFACE)');return;}
   renderLayerPanel();updateJobPill();scheduleStreetFetch();
   $('fitBtn').disabled=false;$('elevBtn').disabled=SURFACES.length===0;$('waterBtn').disabled=SURFACES.length===0;$('waterDumpBtn').disabled=SURFACES.length===0;$('surfaceDisplayBtn').disabled=SURFACES.length===0;$('elevSpotsBtn').disabled=SURFACES.length===0;$('slopeBtn').disabled=SURFACES.length===0;$('rainPaintToolBtn').disabled=SURFACES.length===0;rainTriCache=null;pipeGraphCache=null;profEGCache.clear();if(PROF.surfaces)SURFACES.forEach(sf=>PROF.surfaces.add(sf.name));renderSlopeSurfSel();
-  $('orbitBtn').disabled=false;$('snapBtn').disabled=false;$('measureBtn').disabled=false;
+  $('orbitBtn').disabled=false;$('snapBtn').disabled=false;$('measureBtn').disabled=false;$('deleteBtn').disabled=false;
   if(hadNothing)fit();else draw();
   const sk=Object.keys(skipped).filter(t=>!['VIEWPORT','SEQEND','VERTEX','ENDBLK'].includes(t));
   hud(`imported ${nEnt} DXF entit${nEnt===1?'y':'ies'} across ${Object.keys(LAYERS).length} layer(s)`+(sk.length?` · not drawn: ${sk.map(t=>skipped[t]+' '+t).join(', ')}`:''));
@@ -4360,7 +4457,7 @@ function importLandXML(text){
   if(!nSurf&&!nPts&&!nNet&&!nAlign){hud('no <Surface> (TIN), <CgPoint>, <PipeNetwork>, or <Alignment> data found in this file');return;}
   renderLayerPanel();updateJobPill();scheduleStreetFetch();
   $('fitBtn').disabled=false;$('elevBtn').disabled=SURFACES.length===0;$('waterBtn').disabled=SURFACES.length===0;$('waterDumpBtn').disabled=SURFACES.length===0;$('surfaceDisplayBtn').disabled=SURFACES.length===0;$('elevSpotsBtn').disabled=SURFACES.length===0;$('slopeBtn').disabled=SURFACES.length===0;$('rainPaintToolBtn').disabled=SURFACES.length===0;rainTriCache=null;pipeGraphCache=null;profEGCache.clear();if(PROF.surfaces)SURFACES.forEach(sf=>PROF.surfaces.add(sf.name));renderSlopeSurfSel();
-  $('orbitBtn').disabled=false;$('snapBtn').disabled=false;$('measureBtn').disabled=false;
+  $('orbitBtn').disabled=false;$('snapBtn').disabled=false;$('measureBtn').disabled=false;$('deleteBtn').disabled=false;
   $('geomLabelsBtn').disabled=ALIGNMENTS.length===0;$('staOffBtn').disabled=ALIGNMENTS.length===0;$('cutSheetBtn').disabled=ALIGNMENTS.length===0;
   $('profileBtn').disabled=ALIGNMENTS.length===0;
   if(hadNothing)fit();else draw();
@@ -4487,6 +4584,8 @@ $('slopePickBtn').onclick=()=>{
   setSlopePick(true);hud(`📏 click point A (target: ${SLOPE_TARGET||'topmost visible surface'}) · Esc to stop`);draw();
 };
 $('slopeSurfSel').onchange=()=>{SLOPE_TARGET=$('slopeSurfSel').value;slopeA=null;hud(`slope target surface: ${SLOPE_TARGET||'auto (topmost visible)'}`);draw();};
+$('deleteBtn').onclick=()=>{if(!$('deleteBtn').disabled)setDelete(!DEL.on);};
+$('deleteUndoBtn').onclick=deleteUndo;
 $('staOffBtn').onclick=()=>{if(!$('staOffBtn').disabled)setStaOff(!STAOFF.on);};
 $('staOffPickBtn').onclick=()=>setStaOff(!STAOFF.on);
 $('staOffCloseBtn').onclick=()=>{$('staOffPanel').classList.remove('show');if(STAOFF.on)setStaOff(false);};
@@ -4674,7 +4773,7 @@ $('orbitBtn').onclick=()=>{
   if(is3D&&profileOn){profileOn=false;$('profileBtn').classList.remove('on');$('profilePanel').classList.remove('show');}
   $('legend').style.display=is3D?'none':'';
   $('view3dBox').classList.toggle('show',is3D);orbitHover=null;
-  if(is3D){if(STAOFF.on)setStaOff(false);if(declutterOn)setDeclutter(false);if(basinPlaceOn)setBasinPlace(false);if(rainPaintOn)setRainPaint(false);if(slopePick)setSlopePick(false);$('slopePanel').classList.remove('show');elevPick=false;$('elevBtn').classList.remove('on');snapOn=false;$('snapBtn').classList.remove('on');waterDumpOn=false;$('waterDumpBtn').classList.remove('on');}   // 🌊 Water Flow / a live 💧 dump keep running and rendering in 3D too — only the CLICK-driven tools (which need a screen->world inverse the oblique 3D projection doesn't have) get disarmed here
+  if(is3D){if(STAOFF.on)setStaOff(false);if(DEL.on)setDelete(false);if(declutterOn)setDeclutter(false);if(basinPlaceOn)setBasinPlace(false);if(rainPaintOn)setRainPaint(false);if(slopePick)setSlopePick(false);$('slopePanel').classList.remove('show');elevPick=false;$('elevBtn').classList.remove('on');snapOn=false;$('snapBtn').classList.remove('on');waterDumpOn=false;$('waterDumpBtn').classList.remove('on');}   // 🌊 Water Flow / a live 💧 dump keep running and rendering in 3D too — only the CLICK-driven tools (which need a screen->world inverse the oblique 3D projection doesn't have) get disarmed here
   cv.style.cursor=is3D?'grab':'crosshair';
   fit();hud(is3D?'3D orbit — drag to rotate (re-centers on click), shift-drag or middle-drag to pan, wheel to zoom · touch: one finger to orbit, two fingers to pinch-zoom/pan':'back to 2D plan view');
 };
@@ -4690,7 +4789,7 @@ $('profileBtn').onclick=()=>{
   profileOn=!profileOn;$('profileBtn').classList.toggle('on',profileOn);
   if(profileOn){
     if(is3D){is3D=false;$('orbitBtn').classList.remove('on');$('view3dBox').classList.remove('show');}
-    if(STAOFF.on)setStaOff(false);
+    if(STAOFF.on)setStaOff(false);if(DEL.on)setDelete(false);
     elevPick=false;$('elevBtn').classList.remove('on');
     if(MEASURE.on)setMeasure(false);
     if(slopePick)setSlopePick(false);
@@ -4784,6 +4883,7 @@ cv.addEventListener('pointerdown',e=>{
   if(declutterOn){const h=declutterHit(sx,sy);if(h)declutterRemove(h);else hud('✂ nothing removable there — click a cut-sheet stake or a 📍 label · Esc to stop');return;}
   if(MEASURE.on){measureClick(sx,sy);return;}
   if(STAOFF.on){staOffClick(sx,sy);return;}
+  if(DEL.on){const h=deleteHit(sx,sy);if(h)deleteDo(h);else hud('🗑 nothing to delete there (locked / hidden layers are skipped) · Esc to stop');return;}
   if(slopePick){slopeClick(sx,sy);return;}
   if(elevPick){
     // stays armed after the click, so several spots can be saved in a row without re-toggling
@@ -4841,6 +4941,7 @@ cv.addEventListener('pointermove',e=>{
   }
   if(MEASURE.on&&!is3D&&!drag){measureHover(sx,sy);return;}
   if(STAOFF.on&&!is3D&&!profileOn&&!drag){staOffHover(sx,sy);return;}
+  if(DEL.on&&!is3D&&!profileOn&&!drag){const h=deleteHit(sx,sy);if((h&&h.desc)!==(DEL.hover&&DEL.hover.desc)||(h&&DEL.hover&&(h.e||h.st||h.pp||h.a)!==(DEL.hover.e||DEL.hover.st||DEL.hover.pp||DEL.hover.a))){DEL.hover=h;draw();}cv.style.cursor=h?'pointer':'crosshair';hud(h?`🗑 click to delete ${h.desc}`:'🗑 hover an object to delete · Esc stops');return;}
   if(slopePick&&!is3D&&!drag){
     liveSnap=snapPoint(sx,sy);
     const[E,N]=liveSnap?[liveSnap.E,liveSnap.N]:S2W(sx,sy);
@@ -4936,6 +5037,7 @@ window.addEventListener('keydown',e=>{
   if(e.key!=='Escape'&&/^(INPUT|SELECT|TEXTAREA)$/.test((e.target&&e.target.tagName)||''))return;   // typing a station/interval — don't trigger F/O/P
   if(e.key==='Escape'){
     if(MEASURE.on){if(MEASURE.pts.length){const had=MEASURE.pts.length>1;measureFinish(false);if(!had)hud('🧭 point cleared — click to start, Esc again to stop');}else{setMeasure(false);hud('🧭 measure stopped');}draw();}
+    else if(DEL.on){setDelete(false);}
     else if(STAOFF.on){if(STAOFF.align){STAOFF.align=null;STAOFF.hover=null;liveSnap=null;renderStaOffPanel();hud('🎯 step 1: click an alignment on the map · Esc again stops');}else{setStaOff(false);hud('🎯 station / offset stopped');}draw();}
     else if(declutterOn){setDeclutter(false);hud('✂ declutter off');}
     else if(profileOn&&PROF.tool){if(PROF.measA){PROF.measA=null;hud('measure point A cleared');}else{PROF.tool=null;hud('profile tool off');}renderProfileExtras();draw();}
@@ -4946,6 +5048,7 @@ window.addEventListener('keydown',e=>{
     else if(waterDumpOn){waterDumpOn=false;$('waterDumpBtn').classList.remove('on');hud('dump water cancelled');draw();}
     else if(snapOn){snapOn=false;$('snapBtn').classList.remove('on');liveSnap=null;hud('snap cancelled');draw();}
   }
+  else if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='z'&&DEL.undo.length){e.preventDefault();deleteUndo();}
   else if(MEASURE.on&&e.key==='Enter'){measureFinish(false);draw();}
   else if(MEASURE.on&&e.key==='Backspace'){e.preventDefault();measureUndo();}
   else if(e.key.toLowerCase()==='f'&&!$('fitBtn').disabled)fit();
@@ -5169,7 +5272,7 @@ try{const s=localStorage.getItem('cstp.rail');setRailMini(s?s==='mini':innerWidt
 // the "import a drawing first" hint shows only while every rail tool that needs data is still disabled
 function updateRailHint(){$('railHint').hidden=[...document.querySelectorAll('#toolRail .btn[data-need]')].some(b=>!b.disabled);}
 // toggle buttons announce their state to screen readers (aria-pressed follows the .on class)
-const TOGGLE_IDS=['orbitBtn','profileBtn','mapBtn','streetBtn','cvdBtn','measureBtn','slopeBtn','snapBtn','elevBtn','waterBtn','rainPaintToolBtn','waterDumpBtn','declutterBtn','staOffBtn'];
+const TOGGLE_IDS=['orbitBtn','profileBtn','mapBtn','streetBtn','cvdBtn','measureBtn','slopeBtn','snapBtn','elevBtn','waterBtn','rainPaintToolBtn','waterDumpBtn','declutterBtn','staOffBtn','deleteBtn'];
 const syncPressed=()=>{TOGGLE_IDS.forEach(id=>{const b=$(id);if(b)b.setAttribute('aria-pressed',b.classList.contains('on'));});updateRailHint();};
 new MutationObserver(syncPressed).observe(document.querySelector('.app'),{subtree:true,attributes:true,attributeFilter:['class','disabled']});
 syncPressed();
@@ -5242,7 +5345,7 @@ window.addEventListener('keydown',e=>{
 
 
 /* ---------- version badge — CHANGED ON EVERY PUSH (new animal + name + build+1; see CLAUDE.md), mirroring FBK-Checker's own fruit badge ---------- */
-const VERSION={animal:'🦅',name:'EAGLE',build:45};
+const VERSION={animal:'🐝',name:'BEE',build:46};
 function rotateAnimal(){const b=$('animalBadge');b.style.transform='rotate(360deg)';setTimeout(()=>{b.style.transform='rotate(0deg)';},200);}
 function showVersion(){const b=$('animalBadge');b.textContent=`${VERSION.animal} ${VERSION.name} · b${VERSION.build}`;
   b.title=`Build ${VERSION.build} · ${VERSION.name} — if this matches what Claude pushed, you're on the latest (no cache)`;}
