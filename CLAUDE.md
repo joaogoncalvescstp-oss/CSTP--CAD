@@ -48,6 +48,7 @@ The badge renders as `<emoji> <NAME> · b<build>`.
 | 44 | 🐫 CAMEL | 📍 Auto CL referencing: "CL" alignments = centerlines, "BC" = curbs; curb / pipe points stationed on the nearest CL (curb returns hand off at the curve MID), CL station first + own station second (smaller) |
 | 45 | 🦅 EAGLE | 🎯 Sta / Offset tool: pick an alignment (click it or the panel), then click any object (snapped) for its station + offset LT/RT, labeled on the map, table + CSV |
 | 46 | 🐝 BEE | 🗑 Delete tool (Edit group): hover = red highlight, click deletes DXF entities / whole alignments / points / manholes (+ pipes) / pipes / picks / spots; Ctrl+Z / ↶ Undo delete |
+| 47 | 🐳 WHALE | 🚰 pipes at true size from the XML diameter: long-short dash CL, thin dashed inner walls, heavier solid outer walls (file thickness or D/12+1"), trimmed at structure walls |
 
 ## Workflow
 
